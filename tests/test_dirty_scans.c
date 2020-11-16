@@ -60,13 +60,14 @@ int main()
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + 99);
 	k->key_size = strlen(k->key_buf) + 1;
 	init_dirty_scanner(sc, hd, (key *)k, GREATER);
-	assert(sc->keyValue != NULL);
+	assert(isValid(sc));
 	memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + 100);
 	k->key_size = strlen(k->key_buf) + 1;
-	if (memcmp(k->key_buf, sc->keyValue + sizeof(uint32_t), k->key_size) != 0) {
+	void *keyptr = getKeyPtr(sc);
+	if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 		log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
-			  *(uint32_t *)sc->keyValue, sc->keyValue + sizeof(uint32_t));
+			  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 		exit(EXIT_FAILURE);
 	}
 	log_info("milestone 1");
@@ -74,12 +75,14 @@ int main()
 	memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + 101);
 	k->key_size = strlen(k->key_buf) + 1;
-	if (memcmp(k->key_buf, sc->keyValue + sizeof(uint32_t), k->key_size) != 0) {
+
+	keyptr = getKeyPtr(sc);
+	if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 		log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
-			  *(uint32_t *)sc->keyValue, sc->keyValue + sizeof(uint32_t));
+			  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 		exit(EXIT_FAILURE);
 	}
-	close_dirty_scanner(sc);
+	closeScanner(sc);
 	log_info("milestone 2");
 	log_info("Cornercase scenario...DONE");
 
@@ -91,12 +94,13 @@ int main()
 		k->key_size = strlen(k->key_buf) + 1;
 
 		init_dirty_scanner(sc, hd, (key *)k, GREATER_OR_EQUAL);
-		assert(sc->keyValue != NULL);
+		assert(isValid(sc));
 		//log_info("key is %d:%s  malloced %d scanner size %d",k->key_size,k->key_buf,sc->malloced,sizeof(scannerHandle));
 		//log_info("key of scanner %d:%s",*(uint32_t *)sc->keyValue,sc->keyValue + sizeof(uint32_t));
-		if (memcmp(k->key_buf, sc->keyValue + sizeof(uint32_t), k->key_size) != 0) {
+		keyptr = getKeyPtr(sc);
+		if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 			log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
-				  *(uint32_t *)sc->keyValue, sc->keyValue + sizeof(uint32_t));
+				  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 			exit(EXIT_FAILURE);
 		}
 		//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
@@ -113,9 +117,10 @@ int main()
 				log_warn("DB end at key %s is this correct? yes", k->key_buf);
 				break;
 			}
-			if (memcmp(k, sc->keyValue, k->key_size) != 0) {
+			keyptr = getKeyPtr(sc);
+			if (memcmp(k, keyptr, k->key_size) != 0) {
 				log_fatal("Test failed key %s not found scanner instead returned %s", k->key_buf,
-					  sc->keyValue + sizeof(uint32_t));
+					  keyptr + sizeof(uint32_t));
 				exit(EXIT_FAILURE);
 			}
 			//log_info("done");
@@ -123,7 +128,7 @@ int main()
 
 		if (i % 100000 == 0)
 			log_info("</Scan no %llu>", i);
-		close_dirty_scanner(sc);
+		closeScanner(sc);
 	}
 	log_info("scan test Successfull");
 	free(k);

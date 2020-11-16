@@ -26,7 +26,7 @@ static int sh_cmp_heap_nodes(struct sh_min_heap *hp, struct sh_heap_node *nd_1, 
 void sh_init_heap(struct sh_min_heap *heap, int active_tree)
 {
 	heap->size = 0;
-	heap->active_tree = active_tree;
+	//heap->active_tree = active_tree;
 }
 
 /*
@@ -58,26 +58,36 @@ static inline void heapify(struct sh_min_heap *hp, int i)
 static int sh_cmp_heap_nodes(struct sh_min_heap *hp, struct sh_heap_node *nd_1, struct sh_heap_node *nd_2)
 {
 	int64_t ret;
-	ret = _tucana_key_cmp(nd_1->KV, nd_2->KV, nd_1->type, nd_2->type);
+
+	if (nd_1->type == KV_FORMAT && nd_2->type == KV_FORMAT)
+		ret = bt_key_cmp(nd_1->key_value.kv, nd_2->key_value.kv, KV_FORMAT, KV_FORMAT);
+
+	else if (nd_1->type == KV_FORMAT && nd_2->type == KV_PREFIX)
+		ret = bt_key_cmp(nd_1->key_value.kv, &nd_2->kv_prefix, KV_FORMAT, KV_PREFIX);
+
+	else if (nd_1->type == KV_PREFIX && nd_2->type == KV_FORMAT)
+		ret = bt_key_cmp(&nd_1->kv_prefix, nd_2->key_value.kv, KV_PREFIX, KV_FORMAT);
+
+	else if (nd_1->type == KV_PREFIX && nd_2->type == KV_PREFIX)
+		ret = bt_key_cmp(&nd_1->kv_prefix, &nd_2->kv_prefix, KV_PREFIX, KV_PREFIX);
+
+	else {
+		log_fatal("unknown combination");
+		raise(SIGINT);
+		exit(EXIT_FAILURE);
+	}
+
 	if (ret == 0) {
-		/* duplicatelicate detected smallest level_id wins, needs more thinking */
-		if (nd_1->level_id == hp->active_tree) {
-			nd_2->duplicate = 1;
-			return 1;
-		} else if (nd_2->level_id == hp->active_tree) {
-			nd_1->duplicate = 1;
-			return -1;
-		}
+		/* duplicate detected smallest level_id wins, others are duplicates*/
 		if (nd_1->level_id < nd_2->level_id) {
 			nd_2->duplicate = 1;
-			return 1;
+			return -1;
 		} else if (nd_1->level_id > nd_2->level_id) {
 			nd_1->duplicate = 1;
-			return -1;
+			return 1;
 		} else {
-			log_fatal("cannot resolve tie active tree = %d nd_1 level_id = %d nd_2 "
-				  "level_id = %d",
-				  hp->active_tree, nd_1->level_id, nd_2->level_id);
+			log_fatal("cannot resolve tie");
+			assert(0);
 			exit(EXIT_FAILURE);
 		}
 	}

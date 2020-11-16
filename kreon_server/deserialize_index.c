@@ -51,10 +51,10 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 	header->v1 = 0;
 	header->v2 = 0;
 	for (int i = 0; i < header->numberOfEntriesInNode; i++) {
-		uint64_t offt_in_segment = leaf->pointer[i] % SEGMENT_SIZE;
+		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
 		// log_info("offt = %llu leaf pointer[%d] =
 		// %llu",offt_in_segment,i,leaf->pointer[i]);
-		uint64_t primary_segment_offt = leaf->pointer[i] - offt_in_segment;
+		uint64_t primary_segment_offt = leaf->kv_entry[i].device_offt - offt_in_segment;
 		/*do the lookup in the hash table, where have I stored the segment?*/
 		struct krm_segment_entry *entry;
 
@@ -66,7 +66,7 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 			exit(EXIT_FAILURE);
 		}
 		// log_info("Found translated!");
-		leaf->pointer[i] = entry->my_seg + offt_in_segment;
+		leaf->kv_entry[i].device_offt = entry->my_seg + offt_in_segment;
 		// void *s = MAPPED + leaf->pointer[i];
 		// log_info("key is %s", s + 4);
 	}

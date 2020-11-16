@@ -1,3 +1,4 @@
+#if 0
 #include "btree.h"
 #pragma once
 
@@ -32,3 +33,4 @@ void __find_position_in_index(index_node *node, struct splice *key, rotate_data 
 int8_t check_for_underflow_in_leaf(leaf_node *leaf, rotate_data *siblings, delete_request *req);
 
 int8_t merge_with_index_neighbor(index_node *curr, index_node *parent, rotate_data *siblings, delete_request *req);
+#endif
