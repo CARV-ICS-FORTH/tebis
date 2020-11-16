@@ -289,8 +289,8 @@ void *compaction(void *_comp_req)
 		int32_t num_of_keys = (SPILL_BUFFER_SIZE - (2 * sizeof(uint32_t))) / (PREFIX_SIZE + sizeof(uint64_t));
 		enum sh_heap_status stat = GOT_MIN_HEAP;
 		do {
-			while (handle.volume_desc->snap_preemption == SNAP_INTERRUPT_ENABLE)
-				usleep(50000);
+			//while (handle.volume_desc->snap_preemption == SNAP_INTERRUPT_ENABLE)
+			//	usleep(50000);
 
 			db_desc->dirty = 0x01;
 			if (handle.db_desc->stat == DB_IS_CLOSING) {
@@ -316,7 +316,8 @@ void *compaction(void *_comp_req)
 				// log_info("Compacting key %s from level %d",
 				//	 (*(uint64_t *)(ins_req.key_value_buf + PREFIX_SIZE)) + 4,
 				// nd_min.level_id);
-				_insert_key_value(&ins_req);
+				if (!nd_min.duplicate)
+					_insert_key_value(&ins_req);
 				// log_info("level size
 				// %llu",comp_req->db_desc->levels[comp_req->dst_level].level_size[comp_req->dst_tree]);
 				/*refill from the appropriate level*/
