@@ -131,7 +131,7 @@ static struct ds_root_server *root_server;
 
 typedef struct spill_task_descriptor {
 	pthread_t spill_worker_context;
-	//bt_spill_request *spill_req;
+	// bt_spill_request *spill_req;
 	/*XXX TODO XXX, add appropriate fields*/
 	struct krm_work_task task;
 	struct _tucana_region_S *region;
@@ -661,33 +661,36 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	int worker_id = spinner->next_worker_to_submit_job;
 
 	/* Regular tasks scheduling policy
+* Assign tasks to one worker until he is swamped, then start assigning
+* to the next one. Once all workers are swamped it will essentially
+* become a round robin policy since the worker_id will be incremented
+* at for every task.
+*/
+
+	/* Regular tasks scheduling policy
    * Assign tasks to one worker until he is swamped, then start assigning
    * to the next one. Once all workers are swamped it will essentially
    * become a round robin policy since the worker_id will be incremented
    * at for every task.
    */
-
-	/* Regular tasks scheduling policy
-	 * Assign tasks to one worker until he is swamped, then start assigning
-	 * to the next one. Once all workers are swamped it will essentially
-	 * become a round robin policy since the worker_id will be incremented
-	 * at for every task.
-	 */
 	// 1. Round robin with threshold
 	if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
 		/* Find an active worker with used_slots < max_queued_jobs
-		 * If there's none, wake up a sleeping worker
-		 * If all worker's are running, pick the one with least load
-		 * NOTE a worker's work can only increase through this function call, which is only called by the spinning
-		 * thread. Each worker is assigned to one spinning thread, therefore a worker can't wake up or have its
-		 * work increased during the duration of a single call of this function
-		 */
+     * If there's none, wake up a sleeping worker
+     * If all worker's are running, pick the one with least load
+     * NOTE a worker's work can only increase through this function call, which
+     * is only called by the spinning
+     * thread. Each worker is assigned to one spinning thread, therefore a
+     * worker can't wake up or have its
+     * work increased during the duration of a single call of this function
+     */
 
 		// Find active worker with min worker_queued_jobs
 		int current_choice = worker_id; // worker_id is most likely not sleeping
 		int a_sleeping_worker_id = -1;
 		for (int i = 0; i < spinner->num_workers; ++i) {
-			// Keep note of a sleeping worker in case we need to wake him up for this task
+			// Keep note of a sleeping worker in case we need to wake him up for this
+			// task
 			if (spinner->worker[i].status == IDLE_SLEEPING) {
 				if (a_sleeping_worker_id == -1)
 					a_sleeping_worker_id = i;
@@ -869,7 +872,7 @@ static void *server_spinning_thread_kernel(void *args)
 		//	sem_wait(&channel->sem_spinning[spinning_thread_id]);
 
 		/*gesalous, iterate the connection list of this channel for new
-		* messages*/
+    * messages*/
 		if (count < 10) {
 			node = spinner->conn_list->first;
 			spinning_list_type = HIGH_PRIORITY;
@@ -926,8 +929,8 @@ static void *server_spinning_thread_kernel(void *args)
 					request->reply_message = hdr;
 					request->ack_arrived = KR_REP_ARRIVED;
 					/*No more waking ups, spill thread will poll (with yield) to see
-					* the
-					* message*/
+          * the
+          * message*/
 					// sem_post(&((msg_header
 					// *)hdr->request_message_local_addr)->sem);
 				} else {
@@ -936,20 +939,20 @@ static void *server_spinning_thread_kernel(void *args)
 					rc = assign_job_to_worker(spinner, conn, hdr, NULL);
 					if (rc == KREON_FAILURE) {
 						/*all workers are busy let's see messages from other
-						 * connections*/
+             * connections*/
 						//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
 						/*Caution! message not consumed leave the rendezvous points as
-						 * is*/
+             * is*/
 						hdr->receive = recv;
 						goto iterate_next_element;
 					}
 				}
 
 				/**
-				* Set the new rendezvous point, be careful for the case that the
-				* rendezvous is
-				* outsize of the rdma_memory_regions->remote_memory_buffer
-				* */
+        * Set the new rendezvous point, be careful for the case that the
+        * rendezvous is
+        * outsize of the rdma_memory_regions->remote_memory_buffer
+        * */
 				_update_rendezvous_location(conn, message_size);
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
@@ -2517,7 +2520,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				value = __find_key(r_desc->db, put_offt_req->kv, SEARCH_DIRTY_TREE);
 
 				void *new_value = malloc(SEGMENT_SIZE - sizeof(segment_header)); /*remove this later
-   when test passes*/
+when test passes*/
 				memset(new_value, 0x00, SEGMENT_SIZE - sizeof(segment_header));
 				/*copy key*/
 				memcpy(new_value, put_offt_req->kv, sizeof(msg_put_key) + K->key_size);
@@ -2787,10 +2790,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		sc = (scannerHandle *)malloc(sizeof(scannerHandle));
 
 		if (multi_get->seek_mode != FETCH_FIRST) {
-			//log_info("seeking at key %s", multi_get->seek_key);
+			// log_info("seeking at key %s", multi_get->seek_key);
 			init_dirty_scanner(sc, r_desc->db, &multi_get->seek_key_size, multi_get->seek_mode);
 		} else {
-			//log_info("seeking at key first key of region");
+			// log_info("seeking at key first key of region");
 			init_dirty_scanner(sc, r_desc->db, NULL, GREATER_OR_EQUAL);
 		}
 
@@ -2807,14 +2810,13 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		buf->remaining = buf->capacity;
 		buf->pos = 0;
 		buf->num_entries = 0;
-		if (sc->keyValue != NULL) {
-			msg_key *key = sc->keyValue;
-
-			msg_value *value = (msg_value *)((uint64_t)key + sizeof(msg_key) + key->size);
+		if (isValid(sc)) {
+			msg_key *key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
+			struct msg_value *value = NULL;
 			if (multi_get->fetch_keys_only)
 				value = (msg_value *)&zero_value;
 			else
-				value = (msg_value *)((uint64_t)key + sizeof(msg_key) + key->size);
+				value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
 
 			if (msg_push_to_multiget_buf(key, value, buf) == KREON_SUCCESS) {
 				while (buf->num_entries <= multi_get->max_num_entries) {
@@ -2822,11 +2824,11 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 						buf->end_of_region = 1;
 						break;
 					}
-					key = sc->keyValue;
+					key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
 					if (multi_get->fetch_keys_only)
 						value = (msg_value *)&zero_value;
 					else
-						value = (msg_value *)((uint64_t)key + sizeof(msg_key) + key->size);
+						value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
 
 					if (msg_push_to_multiget_buf(key, value, buf) == KREON_FAILURE) {
 						break;
@@ -2904,8 +2906,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 
 		uint32_t *tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->pay_len +
 					      task->reply_msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
-		/*log_info("tail - reply = %"PRId64"\n", (uint64_t)tail - (uint64_t)task->reply_msg);*/
-		/*log_info("reply_msg = {.pay_len = %llu, padding_and_tail = %llu}", task->reply_msg->pay_len, task->reply_msg->padding_and_tail);*/
+		/*log_info("tail - reply = %"PRId64"\n", (uint64_t)tail -
+     * (uint64_t)task->reply_msg);*/
+		/*log_info("reply_msg = {.pay_len = %llu, padding_and_tail = %llu}",
+     * task->reply_msg->pay_len, task->reply_msg->padding_and_tail);*/
 		*tail = TU_RDMA_REGULAR_MSG;
 
 		/*piggyback info for use with the client*/

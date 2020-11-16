@@ -398,19 +398,23 @@ int64_t _tucana_key_cmp(void *index_key_buf, void *query_key_buf, char index_key
 		void *index_full_key = (void *)*(uint64_t *)(index_key_buf + PREFIX_SIZE);
 		void *query_full_key = (void *)*(uint64_t *)(query_key_buf + PREFIX_SIZE);
 		uint32_t size = *(uint32_t *)index_full_key;
-		char index_smaller = 0;
 		size = *(uint32_t *)query_full_key;
 		if (size > *(uint32_t *)index_full_key) {
 			size = *(uint32_t *)index_full_key;
-			index_smaller = 1;
 		}
 		ret = memcmp(index_full_key, query_full_key, size);
+
 		if (ret != 0)
 			return ret;
-		if (index_smaller)
-			return -1;
-		else
-			return 1;
+		else if (ret == 0 && *(uint32_t *)index_key_buf == *(uint32_t *)query_key_buf)
+			return 0;
+		else {
+			/*larger key wins*/
+			if (*(uint32_t *)index_key_buf > *(uint32_t *)query_key_buf)
+				return 1;
+			else
+				return -1;
+		}
 	}
 	return 0;
 }

@@ -259,7 +259,6 @@ void close_dirty_scanner(scannerHandle *sc)
 		RWLOCK_UNLOCK(&db_desc->levels[i].guard_of_level.rx_lock);
 }
 
-/*XXX TODO XXX, please check if this is legal*/
 int isValid(scannerHandle *sc)
 {
 	if (sc->keyValue != NULL)
@@ -288,7 +287,7 @@ void *getValuePtr(scannerHandle *sc)
 {
 	int32_t key_size = getKeySize(sc);
 	char *val_ptr = (char *)(sc->keyValue) + sizeof(int32_t) + key_size;
-	return val_ptr + sizeof(int32_t);
+	return val_ptr + sizeof(uint32_t);
 }
 
 int32_t _seek_scanner(level_scanner *level_sc, void *start_key_buf, SEEK_SCANNER_MODE mode)
