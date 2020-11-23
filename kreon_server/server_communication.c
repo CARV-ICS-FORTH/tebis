@@ -66,14 +66,23 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 		req_type = type;
 		rep_type = FLUSH_COMMAND_REP;
 		break;
+	case REPLICA_INDEX_GET_BUFFER_REQ:
+		req_type = type;
+		rep_type = REPLICA_INDEX_FLUSH_REP;
+		break;
+	case REPLICA_INDEX_FLUSH_REQ:
+		req_type = type;
+		rep_type = REPLICA_INDEX_FLUSH_REP;
+		break;
 	default:
 		log_fatal("Unsupported message type %d", type);
 		exit(EXIT_FAILURE);
 	}
 	/*The idea is the following, if we are not able to allocate both
-		 * buffers while acquiring the lock we should rollback. Also we need to
-		 * allocate receive buffer first and then send buffer.
-		 */
+           * buffers while acquiring the lock we should rollback. Also we need
+   * to
+           * allocate receive buffer first and then send buffer.
+           */
 	/*first allocate the receive buffer, aka where we expect the reply*/
 	rep.stat = allocate_space_from_circular_buffer(conn->recv_circular_buf, actual_reply_size, &addr);
 	switch (rep.stat) {
@@ -97,8 +106,8 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 		msg->type = RESET_RENDEZVOUS;
 		msg->local_offset = addr - conn->recv_circular_buf->memory_region;
 		msg->remote_offset = addr - conn->recv_circular_buf->memory_region;
-		//log_info("Sending to remote offset %llu\n", msg->remote_offset);
-		msg->ack_arrived = 0; //maybe?
+		// log_info("Sending to remote offset %llu\n", msg->remote_offset);
+		msg->ack_arrived = 0; // maybe?
 		msg->request_message_local_addr = NULL;
 		msg->reply = NULL;
 		msg->reply_length = 0;
@@ -146,10 +155,10 @@ init_messages : {
 			msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
 			msg->next = msg->data;
 			/*set the tail to the proper value*/
-			if (i == 0) //this is the request
+			if (i == 0) // this is the request
 				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
 					      sizeof(uint32_t)) = receive_type;
-			else //this is the reply
+			else // this is the reply
 				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
 					      sizeof(uint32_t)) = 0;
 		} else {
@@ -195,6 +204,7 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	request = p->request;
 	reply = p->reply;
 	assert(request->reply_length != 0);
+	_zero_rendezvous_locations_l(reply, request->reply_length);
 	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply, request->reply_length);
 
 	if (request->pay_len == 0) {
@@ -225,7 +235,7 @@ struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostna
 				exit(EXIT_FAILURE);
 			}
 			char *IP = cps->server.RDMA_IP_addr;
-			cps->conn = crdma_client_create_connection_list_hosts(globals_get_rdma_channel(), &IP, 1,
+			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(mydesc), &IP, 1,
 									      MASTER_TO_REPLICA_CONNECTION);
 
 			/*init list here*/

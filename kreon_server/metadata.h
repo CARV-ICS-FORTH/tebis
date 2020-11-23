@@ -26,9 +26,11 @@
 #define KRM_REGIONS_PATH "/regions"
 
 #define RU_REPLICA_NUM_SEGMENTS 1
-#define RU_REGION_KEY_SIZE 256
+#define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
 #define RU_MAX_NUM_REPLICAS 2
+//#define RU_MAX_INDEX_SEGMENTS 4
+
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
 
 enum krm_server_state {
@@ -79,14 +81,15 @@ enum krm_work_task_status {
 	SEND_FLUSH_COMMANDS,
 	WAIT_FOR_FLUSH_REPLIES,
 	REGION_HALTED,
-	TASK_SUSPENDED,
+	TASK_SUSPENDED
 };
 
 /*server to server communication related staff*/
 struct sc_msg_pair {
-	struct connection_rdma *conn;
+	/*out variables*/
 	struct msg_header *request;
 	struct msg_header *reply;
+	struct connection_rdma *conn;
 	enum circular_buffer_op_status stat;
 };
 
@@ -110,6 +113,7 @@ struct krm_work_task {
 	void *notification_addr;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;
+	struct krm_replica_index_state *index;
 	int server_id;
 	int thread_id;
 	int error_code;
@@ -138,7 +142,7 @@ struct ru_rdma_buffer {
 	uint8_t seg[SEGMENT_SIZE];
 };
 
-struct ru_rmplica_log_segment {
+struct ru_replica_log_segment {
 	struct ru_rdma_buffer *rdma_local_buf;
 	struct ru_rdma_buffer *rdma_remote_buf;
 	int64_t bytes_wr_per_seg;
@@ -190,6 +194,9 @@ struct ru_replica_log_buffer_seg {
 };
 
 struct ru_replica_state {
+	/*for the index staff*/
+	struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
+	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	int num_buffers;
 	struct ru_replica_log_buffer_seg seg[];
@@ -275,6 +282,7 @@ struct krm_server_desc {
 	pthread_mutex_t msg_list_lock;
 	LIST *msg_list;
 	zhandle_t *zh;
+	struct rco_pool *compaction_pool;
 	uint8_t IP[IP_SIZE];
 	uint8_t RDMA_IP[IP_SIZE];
 	enum krm_server_role role;
@@ -302,13 +310,29 @@ void *krm_metadata_server(void *args);
 struct krm_region_desc *krm_get_region(struct krm_server_desc *server_desc, char *key, uint32_t key_size);
 int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
-int ru_flush_replica_log_buffer(db_handle *handle, segment_header *master_log_segment, void *buffer,
-				uint64_t end_of_log, uint64_t bytes_to_pad, uint64_t segment_id);
+struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc);
 
-void ru_calculate_btree_index_nodes(struct ru_replica_state *r_state, uint64_t num_of_keys);
+/*remote compaction related staff*/
+struct rco_task_queue {
+	pthread_t cnxt;
+	pthread_mutex_t queue_lock;
+	pthread_cond_t queue_monitor;
+	int my_id;
+	int sleeping;
+	LIST *task_queue;
+};
 
-void ru_append_entry_to_leaf_node(struct krm_region_desc *r_desc, void *pointer_to_kv_pair, void *prefix,
-				  int32_t tree_id);
+struct rco_pool {
+	pthread_mutex_t pool_lock;
+	struct krm_server_desc *rco_server;
+	int curr_worker_id;
+	int num_workers;
+	struct rco_task_queue worker_queue[];
+};
+#define RCO_POOL_SIZE 4
+struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size);
+void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
+int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,

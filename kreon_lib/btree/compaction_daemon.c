@@ -224,6 +224,7 @@ void *compaction(void *_comp_req)
 	handle.volume_desc = comp_req->volume_desc;
 
 	struct node_header *src_root = NULL;
+
 	if (handle.db_desc->levels[comp_req->src_level].root_w[comp_req->src_tree] != NULL)
 		src_root = handle.db_desc->levels[comp_req->src_level].root_w[comp_req->src_tree];
 	else if (handle.db_desc->levels[comp_req->src_level].root_r[comp_req->src_tree] != NULL)
@@ -266,13 +267,13 @@ void *compaction(void *_comp_req)
 		}
 		struct sh_min_heap *m_heap = (struct sh_min_heap *)malloc(sizeof(struct sh_min_heap));
 		sh_init_heap(m_heap, comp_req->src_level);
+		struct sh_heap_node nd_min = {
+			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
+		};
 		struct sh_heap_node nd_src = {
 			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
 		};
 		struct sh_heap_node nd_dst = {
-			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
-		};
-		struct sh_heap_node nd_min = {
 			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
 		};
 
@@ -464,6 +465,20 @@ void *compaction(void *_comp_req)
 		 "cleaning src level",
 		 comp_req->src_level, comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);
 
+	/*send index to replicas if needed*/
+	if (comp_req->db_desc->t != NULL) {
+		log_info("Sending index to my replica group for db %s", comp_req->db_desc->db_name);
+		//Caution new level has been created
+		struct bt_compaction_callback_args c = { .db_desc = comp_req->db_desc,
+							 .src_level = comp_req->src_level,
+							 .src_tree = comp_req->src_tree,
+							 .dst_level = comp_req->dst_level,
+							 .dst_local_tree = 0,
+							 .dst_remote_tree = 1 };
+
+		(*db_desc->t)(&c);
+		log_info("Done sending to group for db %s", comp_req->db_desc->db_name);
+	}
 	db_desc->levels[comp_req->src_level].tree_status[comp_req->src_tree] = NO_SPILLING;
 
 	db_desc->levels[comp_req->dst_level].tree_status[0] = NO_SPILLING;
@@ -475,6 +490,7 @@ void *compaction(void *_comp_req)
 	// comp_req->src_level, comp_req->src_tree);
 	/*interrupt compaction daemon*/
 	snapshot(comp_req->volume_desc);
+
 	/*wake up clients*/
 	if (comp_req->src_level == 0) {
 		pthread_mutex_lock(&comp_req->db_desc->client_barrier_lock);

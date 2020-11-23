@@ -101,7 +101,7 @@ static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circ
 {
 	assert(size % c->memory_size_represented_per_bit == 0);
 	assert(size <= c->total_memory_size);
-	int preallocated_control_space;
+	uint32_t preallocated_control_space;
 	switch (c->type) {
 	case RECEIVE_BUFFER:
 		preallocated_control_space = c->memory_size_represented_per_bit;
@@ -131,7 +131,8 @@ static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circ
 			return ALLOCATION_IS_SUCCESSFULL;
 		} else {
 			/*space not freed yet*/
-			//log_warn("Space not ready size requested %u remaining %u\n", size, c->remaining_space);
+			//log_warn("Space not ready size requested %u remaining %u preallocated control space %u\n", size,
+			//	 c->remaining_space, preallocated_control_space);
 			return SPACE_NOT_READY_YET;
 		}
 	} else {

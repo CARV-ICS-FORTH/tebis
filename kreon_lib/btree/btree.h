@@ -77,14 +77,18 @@ extern unsigned long long ins_prefix_miss_l1;
 extern int32_t leaf_order;
 extern int32_t index_order;
 
-/*gxanth staff structures*/
-typedef struct thread_dest {
-	volatile struct thread_dest *next;
-	volatile void *kv_dest;
-	volatile unsigned kv_size;
-	volatile short ready;
-	char pad[40];
-} thread_dest;
+struct bt_compaction_callback_args {
+	sem_t sem;
+	struct db_descriptor *db_desc;
+	int src_level;
+	int src_tree;
+	int dst_level;
+	int dst_local_tree;
+	int dst_remote_tree;
+};
+
+typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
+void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t);
 
 struct lookup_reply {
 	void *addr;
@@ -138,7 +142,7 @@ typedef struct IN_log_header {
 /*leaf or internal node metadata, place always in the first 4KB data block*/
 typedef struct node_header {
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
-                     perform copy on write*/
+               perform copy on write*/
 	uint64_t fragmentation;
 	volatile uint64_t v1;
 	volatile uint64_t v2;
@@ -147,7 +151,7 @@ typedef struct node_header {
 	IN_log_header *last_IN_log_header;
 	uint64_t key_log_size;
 	int32_t height; /*0 are leaves, 1 are Bottom Internal nodes, and then we have
-                     INs and root*/
+               INs and root*/
 	nodeType_t type; /*internal or leaf node*/
 	uint64_t numberOfEntriesInNode;
 	char pad[8];
@@ -214,19 +218,6 @@ typedef struct commit_log_info {
 	char pad[4072];
 } commit_log_info;
 
-#if 0
-/*used for tiering compactions at replicas*/
-#define MAX_FOREST_SIZE 124
-typedef struct forest {
-	node_header *tree_roots[MAX_FOREST_SIZE];
-	segment_header *tree_segment_list[MAX_FOREST_SIZE];
-	uint64_t total_keys_per_tree[MAX_FOREST_SIZE];
-	uint64_t end_of_log[MAX_FOREST_SIZE];
-	char tree_status[MAX_FOREST_SIZE];
-	char pad[4];
-} forest;
-#endif
-
 /**
  * db_descriptor is a soft state descriptor per open database. superindex
 *structure
@@ -270,8 +261,8 @@ typedef struct level_descriptor {
 	segment_header *first_segment[NUM_TREES_PER_LEVEL];
 	segment_header *last_segment[NUM_TREES_PER_LEVEL];
 	uint64_t offset[NUM_TREES_PER_LEVEL];
-	//Since we perform always KV separation we express it
-	//in number of keys
+	// Since we perform always KV separation we express it
+	// in number of keys
 	uint64_t level_size[NUM_TREES_PER_LEVEL];
 	uint64_t max_level_size;
 	int64_t active_writers;
@@ -289,11 +280,12 @@ typedef struct db_descriptor {
 #else
 	pthread_spinlock_t lock_log;
 #endif
-	//compaction daemon staff
+	// compaction daemon staff
 	pthread_t compaction_daemon;
 	sem_t compaction_daemon_interrupts;
 	pthread_cond_t client_barrier;
 	pthread_mutex_t client_barrier_lock;
+	bt_compaction_callback t;
 
 	pthread_spinlock_t back_up_segment_table_lock;
 	volatile segment_header *KV_log_first_segment;
@@ -362,7 +354,7 @@ typedef struct bt_mutate_req {
 	uint32_t log_padding;
 	uint32_t kv_size;
 	uint8_t level_id;
-	//uint32_t active_tree;
+	// uint32_t active_tree;
 	/*only for inserts >= level_1*/
 	uint8_t tree_id;
 	char key_format;
@@ -395,10 +387,14 @@ typedef struct delete_request {
 	void *key_buf;
 } delete_request;
 
-/* In case more operations are tracked in the log in the future such as transactions
-  you will need to change the request_type enumerator and the log_operation struct.
-  In the request_type you will add the name of the operation i.e. transactionOp and
-  in the log_operation you will add a pointer in the union with the new operation i.e. transaction_request.
+/* In case more operations are tracked in the log in the future such as
+  transactions
+  you will need to change the request_type enumerator and the log_operation
+  struct.
+  In the request_type you will add the name of the operation i.e. transactionOp
+  and
+  in the log_operation you will add a pointer in the union with the new
+  operation i.e. transaction_request.
 */
 typedef enum { insertOp, deleteOp, unknownOp } request_type;
 
@@ -460,8 +456,6 @@ int8_t delete_key(db_handle *handle, void *key, uint32_t size);
 
 int64_t _tucana_key_cmp(void *index_key_buf, void *query_key_buf, char index_key_format, char query_key_format);
 int prefix_compare(char *l, char *r, size_t unused);
-
-void free_buffered(void *_handle, void *address, uint32_t num_bytes, int height);
 
 /*functions used from other parts except btree/btree.c*/
 
