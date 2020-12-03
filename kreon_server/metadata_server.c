@@ -766,15 +766,23 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			/*open kreon db*/
 			r_desc->db =
 				db_open(globals_get_mount_point(), 0, globals_get_dev_size(), region->id, CREATE_DB);
-			/*set the callback and context for remote compaction*/
-			bt_set_compaction_callback(r_desc->db->db_desc, &rco_send_index_to_group);
 
 			r_desc->replica_bufs_initialized = 0;
 			r_desc->region_halted = 0;
 			pthread_mutex_init(&r_desc->region_lock, NULL);
 			utils_queue_init(&r_desc->halted_tasks);
 			r_desc->status = KRM_OPEN;
+			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
+			/*find system ref*/
+			struct krm_region_desc *t = krm_get_region(server, region->min_key, region->min_key_size);
+			/*set the callback and context for remote compaction*/
+			bt_set_db_in_replicated_mode(t->db);
+			bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
+			bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
+			rco_add_db_to_pool(server->compaction_pool, t);
+			free(r_desc);
+
 			reply.type =
 				(msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_ACK_OPEN_PRIMARY : KRM_ACK_OPEN_BACKUP;
 			reply.error_code = KRM_SUCCESS;
@@ -1169,14 +1177,21 @@ void *krm_metadata_server(void *args)
 				// open Kreon db
 				r_desc->db = db_open(globals_get_mount_point(), 0, globals_get_dev_size(),
 						     r_desc->region->id, CREATE_DB);
-				/*set the callback and context for remote compaction*/
-				rco_add_db_to_pool(my_desc->compaction_pool, r_desc);
-				bt_set_compaction_callback(r_desc->db->db_desc, &rco_send_index_to_group);
 
 				assert(r_desc->status = KRM_OPENING);
 				r_desc->status = KRM_OPEN;
 
+				/*this copies r_desc struct to the regions array!*/
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
+				/*find system ref*/
+				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,
+									   current->lr_state.region->min_key_size);
+				/*set the callback and context for remote compaction*/
+				bt_set_db_in_replicated_mode(t->db);
+				bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
+				bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
+				rco_add_db_to_pool(my_desc->compaction_pool, t);
+				free(r_desc);
 			}
 			my_desc->state = KRM_WAITING_FOR_MSG;
 			break;

@@ -205,8 +205,8 @@ struct msg_flush_cmd_req {
 	uint64_t segment_id;
 	uint64_t end_of_log;
 	uint64_t log_padding;
-
 	uint64_t tail;
+	uint32_t is_partial;
 	uint32_t log_buffer_id;
 	uint32_t region_key_size;
 	char region_key[];
@@ -218,6 +218,7 @@ struct msg_flush_cmd_rep {
 
 /*server2server index transfers*/
 struct msg_replica_index_get_buffer_req {
+	uint64_t index_offset;
 	int level_id;
 	int buffer_size;
 	int num_buffers;
@@ -233,10 +234,14 @@ struct msg_replica_index_get_buffer_rep {
 
 struct msg_replica_index_flush_req {
 	uint64_t primary_segment_offt;
+	uint64_t seg_hash;
+	uint64_t root_w;
+	uint64_t root_r;
 	int level_id;
 	int tree_id;
 	int seg_id;
 	int is_last;
+
 	uint32_t region_key_size;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 };

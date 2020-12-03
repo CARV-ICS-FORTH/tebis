@@ -35,6 +35,9 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 		MUTEX_UNLOCK(&volume_desc->allocator_lock);
 		if (level_desc->offset[tree_id]) {
 			//log_info("Adding another index segmet for [%u] available_space = %d", tree_id, available_space);
+			int *pad = (int *)((uint64_t)level_desc->last_segment[tree_id] +
+					   (level_desc->offset[tree_id] % SEGMENT_SIZE));
+			*pad = paddedSpace;
 			/*chain segments*/
 			new_segment->next_segment = NULL;
 			new_segment->prev_segment =
@@ -88,6 +91,7 @@ index_node *seg_get_index_node(volume_descriptor *volume_desc, level_descriptor 
 
 	/*private key log for index nodes*/
 	bh = (IN_log_header *)((uint64_t)ptr + INDEX_NODE_SIZE);
+	bh->type = keyBlockHeader;
 	bh->next = (void *)NULL;
 	ptr->header.first_IN_log_header = (IN_log_header *)((uint64_t)bh - MAPPED);
 	ptr->header.last_IN_log_header = ptr->header.first_IN_log_header;

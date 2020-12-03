@@ -36,6 +36,7 @@
 #include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_lib/btree/conf.h"
 #include "../utilities/queue.h"
+#include "djb2.h"
 #include <log.h>
 #include "stats.h"
 
@@ -1437,12 +1438,13 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 				break;
 			} else {
 				task->kreon_operation_status = TASK_COMPLETE;
-				return;
+				break;
 			}
 		}
 
 		case FLUSH_REPLICA_BUFFERS: {
 			struct krm_region_desc *r_desc = task->r_desc;
+
 			uint64_t next_segment_to_flush = r_desc->next_segment_to_flush;
 			// pthread_mutex_lock(&task->r_desc->region_lock);
 			/*Is it my turn to flush or can I resume?*/
@@ -1541,8 +1543,10 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 									     sizeof(struct msg_header));
 
 					/*where primary has stored its segment*/
+					f_req->is_partial = 0;
 					f_req->log_buffer_id = task->seg_id_to_flush;
 					f_req->master_segment = task->ins_req.metadata.log_segment_addr;
+					//log_info("Sending flush command for segment %llu", f_req->master_segment);
 					f_req->segment_id = task->ins_req.metadata.segment_id;
 					f_req->end_of_log = task->ins_req.metadata.end_of_log;
 					f_req->log_padding = task->ins_req.metadata.log_padding;
@@ -1718,6 +1722,7 @@ r_desc->m_state->r_buf[i].segment[j].end);
 			break;
 		}
 		case TASK_COMPLETE:
+			bt_decrease_level0_writers(task->r_desc->db);
 			return;
 
 		default:
@@ -1777,6 +1782,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			exit(EXIT_FAILURE);
 		}
 		pthread_mutex_unlock(&r_desc->region_lock);
+		r_desc->level_cursor[g_req->level_id].state = DI_INIT;
+		r_desc->level_cursor[g_req->level_id].max_offset = g_req->index_offset;
+		log_info("Index offset set at %llu", r_desc->level_cursor[g_req->level_id].max_offset);
 		for (int i = 0; i < g_req->num_buffers; i++) {
 			void *addr = malloc(SEGMENT_SIZE);
 			if (r_desc->r_state->index_buffers[g_req->level_id][i] == NULL) {
@@ -1842,10 +1850,82 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				       1);
 		struct segment_header *seg = seg_get_raw_index_segment(
 			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
+		seg->next_segment = NULL;
+		//uint64_t s =
+		//	djb2_hash((unsigned char *)r_desc->r_state
+		//			  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
+		//			  ->addr,
+		//		  SEGMENT_SIZE);
+		//assert(s == f_req->seg_hash);
+		//log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
 		memcpy(seg,
 		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr,
 		       SEGMENT_SIZE);
+		// add mapping to level's hash table
+		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+		e->master_seg = f_req->primary_segment_offt;
+		e->my_seg = (uint64_t)seg - MAPPED;
+		HASH_ADD_PTR(r_desc->replica_index_map[f_req->level_id], master_seg, e);
+
+		di_rewrite_index(r_desc, f_req->level_id, f_req->tree_id);
 		if (f_req->is_last) {
+			if (r_desc->level_cursor[f_req->level_id].state != DI_COMPLETE) {
+				log_fatal("Failed to rewrite index");
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+			/*translate root*/
+			if (!f_req->root_w && !f_req->root_r) {
+				log_fatal("Both roots can't be NULL");
+				exit(EXIT_FAILURE);
+			}
+			struct krm_segment_entry *index_entry;
+			uint64_t primary_segment_offt;
+			uint64_t primary_segment;
+			if (f_req->root_w) {
+				primary_segment_offt = f_req->root_w % SEGMENT_SIZE;
+				primary_segment = f_req->root_w - primary_segment_offt;
+				HASH_FIND_PTR(r_desc->replica_index_map[f_req->level_id], &primary_segment,
+					      index_entry);
+				if (index_entry == NULL) {
+					log_fatal("Cannot translate root_w for primary's segment %llu of db %s",
+						  primary_segment_offt, r_desc->db->db_desc->db_name);
+					exit(EXIT_FAILURE);
+				}
+				r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] =
+					(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
+				assert(r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id]->type ==
+					       leafRootNode ||
+				       r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id]->type ==
+					       rootNode);
+				//log_info("Ok translated root_w[%u][%u]", f_req->level_id, f_req->tree_id);
+			} else {
+				r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] = NULL;
+				//log_info("Ok primary says root_w[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+			}
+			if (f_req->root_r) {
+				primary_segment_offt = f_req->root_r % SEGMENT_SIZE;
+				primary_segment = f_req->root_r - primary_segment_offt;
+				HASH_FIND_PTR(r_desc->replica_index_map[f_req->level_id], &primary_segment,
+					      index_entry);
+				if (index_entry == NULL) {
+					log_fatal("Cannot translate root_r for primary's segment %llu of db %s",
+						  primary_segment_offt, r_desc->db->db_desc->db_name);
+					raise(SIGINT);
+					exit(EXIT_FAILURE);
+				}
+				r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] =
+					(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
+				assert(r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id]->type ==
+					       leafRootNode ||
+				       r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id]->type ==
+					       rootNode);
+				//log_info("Ok translated root_r[%u][%u]", f_req->level_id, f_req->tree_id);
+			} else {
+				r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] = NULL;
+				//log_info("Ok primary says root_r[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+			}
+			//deregistering buffers
 			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
 				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
 				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
@@ -1854,9 +1934,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				}
 				r_desc->r_state->index_buffers[f_req->level_id][i] = NULL;
 			}
-			// log_info("Index transfer ended deregistering buffers for level %d",
-			// f_req->level_id);
-			/*now free src index level and dst and replica then mark new index as valid*/
 			if (f_req->level_id > 1) {
 				log_info("REPLICA: After index transfer freeing  level %d", f_req->level_id - 1);
 				seg_free_level(r_desc->db, f_req->level_id - 1, 0);
@@ -1884,11 +1961,20 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 
 			while (!__sync_bool_compare_and_swap(&l->root_r[0], l->root_r[0], l->root_r[1])) {
 			}
-			// dst->root_r[dst_active_tree] = src->root_r[src_active_tree];
 			l->root_r[1] = NULL;
-			log_info("Snapshotting");
+			log_info("Destroying mappings for index level %d useless now", f_req->level_id);
+
+			/*iterate over regions*/
+			struct krm_segment_entry *current, *tmp;
+
+			HASH_ITER(hh, r_desc->replica_index_map[f_req->level_id], current, tmp)
+			{
+				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
+				free(current);
+			}
+			//log_info("Snapshotting");
 			//snapshot(r_desc->db->volume_desc);
-			log_info("Snapshot done!");
+			//log_info("Snapshot done!");
 		}
 
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1924,7 +2010,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		assert(task->reply_msg->request_message_local_addr != NULL);
 		task->kreon_operation_status = TASK_COMPLETE;
 
-		log_info("REPLICA: Master wants to flush seg id %d  DONE!", f_req->seg_id);
+		//log_info("REPLICA: Successfully flushed index segment id %d", f_req->seg_id);
 		break;
 	}
 	case GET_LOG_BUFFER_REQ: {
@@ -2029,23 +2115,66 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		/*Now take a segment from the allocator and copy the buffer*/
 		volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
 
-		if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
+		uint64_t diff = flush_req->end_of_log - r_desc->db->db_desc->KV_log_size;
+		int exists = 0;
+		if (last_log_segment->segment_id == flush_req->segment_id) {
+			if (r_desc->r_state->next_segment_id_to_flush == 0)
+				++r_desc->r_state->next_segment_id_to_flush;
+
+			// This op should follow after a partial write
+			if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
+				log_fatal("Corruption");
+				exit(EXIT_FAILURE);
+			}
+			exists = 1;
+		} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
 			log_fatal("Corruption non-contiguous segment ids: expected %llu  got "
 				  "flush_req id is %llu",
 				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
+			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
 			exit(EXIT_FAILURE);
 		}
-		++r_desc->r_state->next_segment_id_to_flush;
-		segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
-		memcpy(disk_segment, seg, SEGMENT_SIZE);
-		disk_segment->next_segment = NULL;
-		disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
 
-		if (r_desc->db->db_desc->KV_log_first_segment == NULL)
-			r_desc->db->db_desc->KV_log_first_segment = disk_segment;
+		// log_info("Flushing segment %llu padding is %llu primary offset %llu local
+		// diff is %llu",
+		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log,
+		//diff);
+		if (!exists) {
+			++r_desc->r_state->next_segment_id_to_flush;
+			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
+			memcpy(disk_segment, seg, SEGMENT_SIZE);
+			disk_segment->next_segment = NULL;
+			disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
 
-		r_desc->db->db_desc->KV_log_last_segment = disk_segment;
-		r_desc->db->db_desc->KV_log_size += SEGMENT_SIZE;
+			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
+				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
+			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
+			// add mapping to level's hash table
+			struct krm_segment_entry *e =
+				(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+			assert(flush_req->master_segment % SEGMENT_SIZE == 0);
+			e->master_seg = flush_req->master_segment;
+			e->my_seg = (uint64_t)disk_segment - MAPPED;
+			HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+			//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+		} else {
+			// check if we have the mapping
+			struct krm_segment_entry *index_entry;
+			HASH_FIND_PTR(r_desc->replica_log_map, &flush_req->master_segment, index_entry);
+			if (index_entry == NULL) {
+				// add mapping to level's hash table
+				struct krm_segment_entry *e =
+					(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+				e->master_seg = flush_req->master_segment;
+				e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
+				HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+				//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+			}
+
+			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
+		}
+
+		r_desc->db->db_desc->KV_log_size += diff;
 
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
 		/*time for reply :-)*/
@@ -2079,7 +2208,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// log_info("Responded to server!");
 		break;
 	}
-
+#if 0
 	case PUT_OFFT_REQUEST: {
 		if (task->key == NULL) {
 			put_offt_req = (msg_put_offt_req *)task->msg->data;
@@ -2177,6 +2306,7 @@ when test passes*/
 		}
 		break;
 	}
+#endif
 	case PUT_REQUEST:
 
 		/* retrieve region handle for the corresponding key, find_region
