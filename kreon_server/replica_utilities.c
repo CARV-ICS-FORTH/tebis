@@ -7,6 +7,11 @@
 #define SIZE(x) *(uint32_t *)x
 #define SE floor(log2(BUFFER_SEGMENT_SIZE) + 1);
 
+int ru_send_index_to_replica(struct krm_region_desc *region, uint8_t level_id)
+{
+	//ask from replica a large rdma communication buffer to perform the level's index transfer
+}
+
 typedef struct prefix_table {
 	char prefix[PREFIX_SIZE];
 } prefix_table;

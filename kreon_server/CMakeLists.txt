@@ -49,6 +49,8 @@ add_executable(
   kreon_server
   server.c
   metadata_server.c
+  remote_compaction.c
+  deserialize_index.c
   zk_utils.c
   djb2.c
   replica_utilities.c

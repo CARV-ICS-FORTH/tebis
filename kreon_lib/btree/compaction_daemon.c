@@ -14,7 +14,6 @@ struct compaction_request {
 	db_descriptor *db_desc;
 	volume_descriptor *volume_desc;
 	uint64_t l0_start;
-	uint64_t l0_end;
 	uint8_t src_level;
 	uint8_t src_tree;
 	uint8_t dst_level;
@@ -48,6 +47,10 @@ void *compaction_daemon(void *args)
 			int L1_tree = 0;
 			if (level_1->tree_status[L1_tree] == NO_SPILLING &&
 			    level_1->level_size[L1_tree] < level_1->max_level_size) {
+				if (handle->db_desc->is_in_replicated_mode && handle->db_desc->fl != NULL) {
+					(*handle->db_desc->fl)((void *)handle);
+				}
+
 				/*mark them as spilling L0*/
 				level_0->tree_status[L0_tree] = SPILLING_IN_PROGRESS;
 				/*mark them as spilling L1*/
@@ -59,6 +62,7 @@ void *compaction_daemon(void *args)
 				comp_req->src_level = 0;
 				comp_req->src_tree = L0_tree;
 				comp_req->dst_level = 1;
+
 #ifdef COMPACTION
 				comp_req->dst_tree = 1;
 #else
@@ -79,6 +83,7 @@ void *compaction_daemon(void *args)
 						exit(EXIT_FAILURE);
 					}
 					spin_loop(&(comp_req->db_desc->levels[0].active_writers), 0);
+
 					/*done now atomically change active tree*/
 					db_desc->levels[0].active_tree = i;
 
@@ -224,6 +229,7 @@ void *compaction(void *_comp_req)
 	handle.volume_desc = comp_req->volume_desc;
 
 	struct node_header *src_root = NULL;
+
 	if (handle.db_desc->levels[comp_req->src_level].root_w[comp_req->src_tree] != NULL)
 		src_root = handle.db_desc->levels[comp_req->src_level].root_w[comp_req->src_tree];
 	else if (handle.db_desc->levels[comp_req->src_level].root_r[comp_req->src_tree] != NULL)
@@ -266,13 +272,13 @@ void *compaction(void *_comp_req)
 		}
 		struct sh_min_heap *m_heap = (struct sh_min_heap *)malloc(sizeof(struct sh_min_heap));
 		sh_init_heap(m_heap, comp_req->src_level);
+		struct sh_heap_node nd_min = {
+			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
+		};
 		struct sh_heap_node nd_src = {
 			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
 		};
 		struct sh_heap_node nd_dst = {
-			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
-		};
-		struct sh_heap_node nd_min = {
 			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
 		};
 
@@ -464,17 +470,29 @@ void *compaction(void *_comp_req)
 		 "cleaning src level",
 		 comp_req->src_level, comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);
 
+	/*send index to replicas if needed*/
+	if (comp_req->db_desc->t != NULL) {
+		//log_info("Sending index to my replica group for db %s", comp_req->db_desc->db_name);
+		//Caution new level has been created
+		struct bt_compaction_callback_args c = { .db_desc = comp_req->db_desc,
+							 .src_level = comp_req->src_level,
+							 .src_tree = comp_req->src_tree,
+							 .dst_level = comp_req->dst_level,
+							 .dst_local_tree = 0,
+							 .dst_remote_tree = 1 };
+
+		(*db_desc->t)(&c);
+		log_info("Done sending to group for db %s", comp_req->db_desc->db_name);
+	}
 	db_desc->levels[comp_req->src_level].tree_status[comp_req->src_tree] = NO_SPILLING;
 
 	db_desc->levels[comp_req->dst_level].tree_status[0] = NO_SPILLING;
-
-	if (comp_req->src_tree == 0)
-		db_desc->L0_start_log_offset = comp_req->l0_end;
 
 	// log_info("DONE Cleaning src level tree [%u][%u] snapshotting...",
 	// comp_req->src_level, comp_req->src_tree);
 	/*interrupt compaction daemon*/
 	snapshot(comp_req->volume_desc);
+
 	/*wake up clients*/
 	if (comp_req->src_level == 0) {
 		pthread_mutex_lock(&comp_req->db_desc->client_barrier_lock);

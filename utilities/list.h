@@ -20,6 +20,7 @@ typedef struct LIST {
 LIST *init_list(void (*destroy_node)(NODE *node));
 void add_first(LIST *list, void *data, const char *tag);
 void add_last(LIST *list, void *data, const char *tag);
+void add_last_node(LIST *list, NODE *node);
 void *get_first(LIST *list);
 void *find_element(LIST *list, char *key);
 void *remove_first(LIST *list);

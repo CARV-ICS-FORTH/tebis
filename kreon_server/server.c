@@ -36,6 +36,7 @@
 #include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_lib/btree/conf.h"
 #include "../utilities/queue.h"
+#include "djb2.h"
 #include <log.h>
 #include "stats.h"
 
@@ -43,7 +44,6 @@
 #include "djb2.h"
 #endif
 
-#define TIERING_MAX_CAPACITY 8
 #define LOG_SEGMENT_CHUNK 32 * 1024
 #define MY_MAX_THREADS 2048
 
@@ -51,8 +51,9 @@
 #define WORKER_THREAD_HIGH_PRIORITY_TASKS_PER_TURN 1
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 
-/*block the socket thread if there's no available memory to allocate to an
- * incoming connection*/
+/*block the socket thread if there's no
+                                  * available memory to allocate to an
+                                  * incoming connection*/
 sem_t memory_steal_sem;
 volatile memory_region *backup_region = NULL;
 
@@ -127,26 +128,7 @@ struct ds_root_server {
 };
 
 /*root of everything*/
-static struct ds_root_server *root_server;
-
-typedef struct spill_task_descriptor {
-	pthread_t spill_worker_context;
-	// bt_spill_request *spill_req;
-	/*XXX TODO XXX, add appropriate fields*/
-	struct krm_work_task task;
-	struct _tucana_region_S *region;
-	int standalone;
-	volatile enum krm_work_task_status spill_task_status;
-} spill_task_descriptor;
-
-#ifdef TIERING
-typedef struct replica_tiering_compaction_request {
-	pthread_t tiering_compaction_context;
-	_tucana_region_S *region;
-	int level_id;
-} tiering_compaction_request;
-void tiering_compaction_worker(void *);
-#endif
+static struct ds_root_server *root_server = NULL;
 
 static void handle_task(struct krm_server_desc *my_server, struct krm_work_task *task);
 static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task);
@@ -162,6 +144,12 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 	tu_rdma_init_connection(conn);
 	conn->type = type;
 	conn->channel = channel;
+	return;
+}
+
+struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
+{
+	return root_server->numa_servers[my_desc->root_server_id]->channel;
 }
 
 void *socket_thread(void *args)
@@ -479,7 +467,6 @@ void *worker_thread_kernel(void *args)
 			if (!job) // Which case would result here?
 				continue;
 		}
-	process_task:
 		/*process task*/
 		handle_task(&root_server->numa_servers[worker->root_server_id]->meta_server, job);
 		if (!job->suspended) {
@@ -626,20 +613,24 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 				struct krm_work_task *task)
 {
 	struct krm_work_task *job = NULL;
+	int fifo_ordering = 0;
 	uint8_t is_task_resumed;
 	if (task == NULL) {
 		is_task_resumed = 0;
 		switch (msg->type) {
 		case FLUSH_COMMAND_REQ:
 		case FLUSH_COMMAND_REP:
-		case SPILL_INIT:
-		case SPILL_INIT_ACK:
-		case SPILL_BUFFER_REQUEST:
-		case SPILL_COMPLETE:
-		case SPILL_COMPLETE_ACK:
 		case GET_LOG_BUFFER_REQ:
 		case GET_LOG_BUFFER_REP:
-
+			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
+			if (job == NULL)
+				assert(0);
+			break;
+		case REPLICA_INDEX_GET_BUFFER_REQ:
+		case REPLICA_INDEX_GET_BUFFER_REP:
+		case REPLICA_INDEX_FLUSH_REQ:
+		case REPLICA_INDEX_FLUSH_REP:
+			fifo_ordering = 1;
 			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
 			if (job == NULL)
 				assert(0);
@@ -668,41 +659,47 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 */
 
 	/* Regular tasks scheduling policy
-   * Assign tasks to one worker until he is swamped, then start assigning
-   * to the next one. Once all workers are swamped it will essentially
-   * become a round robin policy since the worker_id will be incremented
-   * at for every task.
-   */
-	// 1. Round robin with threshold
-	if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
-		/* Find an active worker with used_slots < max_queued_jobs
-     * If there's none, wake up a sleeping worker
-     * If all worker's are running, pick the one with least load
-     * NOTE a worker's work can only increase through this function call, which
-     * is only called by the spinning
-     * thread. Each worker is assigned to one spinning thread, therefore a
-     * worker can't wake up or have its
-     * work increased during the duration of a single call of this function
-     */
+* Assign tasks to one worker until he is swamped, then start assigning
+* to the next one. Once all workers are swamped it will essentially
+* become a round robin policy since the worker_id will be incremented
+* at for every task.
+*/
+	if (fifo_ordering)
+		worker_id = msg->session_id % spinner->num_workers;
+	else {
+		// 1. Round robin with threshold
+		if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
+			/* Find an active worker with used_slots < max_queued_jobs
+* If there's none, wake up a sleeping worker
+* If all worker's are running, pick the one with least load
+* NOTE a worker's work can only increase through this function call, which
+* is only called by the spinning
+* thread. Each worker is assigned to one spinning thread, therefore a
+* worker can't wake up or have its
+* work increased during the duration of a single call of this function
+*/
 
-		// Find active worker with min worker_queued_jobs
-		int current_choice = worker_id; // worker_id is most likely not sleeping
-		int a_sleeping_worker_id = -1;
-		for (int i = 0; i < spinner->num_workers; ++i) {
-			// Keep note of a sleeping worker in case we need to wake him up for this
-			// task
-			if (spinner->worker[i].status == IDLE_SLEEPING) {
-				if (a_sleeping_worker_id == -1)
-					a_sleeping_worker_id = i;
-				continue;
+			// Find active worker with min worker_queued_jobs
+			int current_choice = worker_id; // worker_id is most likely not sleeping
+			int a_sleeping_worker_id = -1;
+			for (int i = 0; i < spinner->num_workers; ++i) {
+				// Keep note of a sleeping worker in case we need to wake him up for
+				// this
+				// task
+				if (spinner->worker[i].status == IDLE_SLEEPING) {
+					if (a_sleeping_worker_id == -1)
+						a_sleeping_worker_id = i;
+					continue;
+				}
+				if (worker_queued_jobs(&spinner->worker[i]) <
+				    worker_queued_jobs(&spinner->worker[current_choice]))
+					current_choice = i;
 			}
-			if (worker_queued_jobs(&spinner->worker[i]) <
-			    worker_queued_jobs(&spinner->worker[current_choice]))
-				current_choice = i;
+			worker_id = current_choice;
+			if (a_sleeping_worker_id != -1 &&
+			    worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs)
+				worker_id = a_sleeping_worker_id;
 		}
-		worker_id = current_choice;
-		if (a_sleeping_worker_id != -1 && worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs)
-			worker_id = a_sleeping_worker_id;
 	}
 
 #if 0
@@ -872,7 +869,7 @@ static void *server_spinning_thread_kernel(void *args)
 		//	sem_wait(&channel->sem_spinning[spinning_thread_id]);
 
 		/*gesalous, iterate the connection list of this channel for new
-    * messages*/
+* messages*/
 		if (count < 10) {
 			node = spinner->conn_list->first;
 			spinning_list_type = HIGH_PRIORITY;
@@ -922,37 +919,24 @@ static void *server_spinning_thread_kernel(void *args)
 					/*payload have not arrived yet check next connection*/
 					goto iterate_next_element;
 				}
-				//__sync_fetch_and_add(&conn->pending_received_messages, 1);
-
-				if (hdr->type == SPILL_INIT_ACK || hdr->type == SPILL_COMPLETE_ACK) {
-					msg_header *request = (msg_header *)hdr->request_message_local_addr;
-					request->reply_message = hdr;
-					request->ack_arrived = KR_REP_ARRIVED;
-					/*No more waking ups, spill thread will poll (with yield) to see
-          * the
-          * message*/
-					// sem_post(&((msg_header
-					// *)hdr->request_message_local_addr)->sem);
-				} else {
-					/*normal messages*/
-					hdr->receive = 0;
-					rc = assign_job_to_worker(spinner, conn, hdr, NULL);
-					if (rc == KREON_FAILURE) {
-						/*all workers are busy let's see messages from other
-             * connections*/
-						//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
-						/*Caution! message not consumed leave the rendezvous points as
-             * is*/
-						hdr->receive = recv;
-						goto iterate_next_element;
-					}
+				/*normal messages*/
+				hdr->receive = 0;
+				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
+				if (rc == KREON_FAILURE) {
+					/*all workers are busy let's see messages from other
+* connections*/
+					//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
+					/*Caution! message not consumed leave the rendezvous points as
+* is*/
+					hdr->receive = recv;
+					goto iterate_next_element;
 				}
 
 				/**
-        * Set the new rendezvous point, be careful for the case that the
-        * rendezvous is
-        * outsize of the rdma_memory_regions->remote_memory_buffer
-        * */
+* Set the new rendezvous point, be careful for the case that the
+* rendezvous is
+* outsize of the rdma_memory_regions->remote_memory_buffer
+* */
 				_update_rendezvous_location(conn, message_size);
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
@@ -1132,21 +1116,6 @@ static void *server_spinning_thread_kernel(void *args)
 	return NULL;
 }
 
-#if 0
-/*functions for building index at replicas*/
-void _calculate_btree_index_nodes(_tucana_region_S *region, uint64_t num_of_keys);
-void append_entry_to_leaf_node(_tucana_region_S *region, void *pointer_to_kv_pair, void *prefix, int32_t tree_id);
-struct node_header *_create_tree_node(struct _tucana_region_S *region, int tree_id, int node_height, int type);
-void _append_pivot_to_index(_tucana_region_S *region, node_header *left_brother, void *pivot,
-			    node_header *right_brother, int tree_id, int node_height);
-#endif
-
-// extern _tuzk_server tuzk_S;
-// extern _RegionsSe regions_S;
-// extern tu_storage_device storage_dev;
-// char *Device_name = NULL;
-// uint64_t Device_size = 0;
-
 /*
  * protocol that threads use to inform the system that they perform
  * a region operation (insert,get,delete). Crucial for the case where
@@ -1156,416 +1125,6 @@ void _append_pivot_to_index(_tucana_region_S *region, node_header *left_brother,
 #define ENTERED_REGION 0x02
 #define EXITED_REGION 0x03
 #define THROTTLE 2048
-
-struct msg_header *handle_scan_request(struct msg_header *data_message, void *connection);
-struct msg_header *Server_Handling_Received_Message(struct msg_header *data_message, int reg_num, int next_mail);
-int handle_put_request(msg_header *data_message, connection_rdma *rdma_conn);
-
-#if 0
-_tucana_region_S *get_region(void *key, int key_len)
-{
-	//_tucana_region_S * region = (_tucana_region_S *)find_region_min_key_on_rbtree( &regions_S.tree, key, key_len);
-	_tucana_region_S *region = find_region(key, key_len);
-	if (region == NULL) {
-		DPRINT("FATAL region not found\n");
-		exit(EXIT_FAILURE);
-	}
-	return region;
-}
-#endif
-
-static void kreonR_spill_worker(void *_spill_task_desc)
-{
-// gesalous leave it for later
-#if 0
-	kv_location location;
-	spill_task_descriptor *spill_task_desc = (spill_task_descriptor *)_spill_task_desc;
-	bt_spill_request *spill_req = spill_task_desc->spill_req;
-	msg_header *msg = NULL;
-	msg_header *spill_buffer_msg = NULL;
-	void *spill_buffer;
-	uint64_t log_addr;
-	msg_header *reply = NULL;
-	level_scanner *level_sc = NULL;
-
-	void *free_addr;
-	uint64_t size;
-	void *addr;
-	uint32_t region_key_len;
-	uint32_t keys_batch_to_spill;
-	uint32_t num_of_spilled_keys;
-	int i;
-	int rc;
-
-	while (1) {
-		switch (spill_task_desc->spill_task_status) {
-		case SEND_SPILL_INIT:
-
-			assert(spill_task_desc->standalone == 0);
-			log_info("MASTER: Sending spill init to replica\n");
-
-			region_key_len = *(uint32_t *)spill_task_desc->region->ID_region.minimum_range;
-			msg = __allocate_rdma_message(spill_task_desc->region->replica_next_control_con,
-						      28 + region_key_len, SPILL_INIT, ASYNCHRONOUS, 0,
-						      &spill_task_desc->task);
-			if (spill_task_desc->task.allocation_status != ALLOCATION_SUCCESS) {
-				DPRINT("allocation rollback\n");
-				if (pthread_yield() != 0) {
-					DPRINT("FATAL yield failed\n");
-				}
-				break;
-			}
-			/*reset the status flag for subsequent operations*/
-			spill_task_desc->task.allocation_status = ALLOCATION_START;
-
-			addr = msg->data;
-			/*command */
-			*(uint32_t *)addr = region_key_len;
-			addr += sizeof(int32_t);
-			/*region key for replica to locate the corresponding region*/
-			memcpy(addr, spill_task_desc->region->ID_region.minimum_range + sizeof(uint32_t),
-			       region_key_len);
-			addr += region_key_len;
-			/*L0 start*/
-			*(uint64_t *)addr = spill_task_desc->spill_req->l0_start;
-			addr += sizeof(uint64_t);
-			/*L0 end*/
-			*(uint64_t *)addr = spill_task_desc->spill_req->l0_end;
-			addr += sizeof(uint64_t);
-			/*total keys to spill*/
-			log_info("keys from level:%u tree:%u to spill are are %llu\n", spill_req->src_level,
-				 spill_req->src_tree,
-				 spill_req->db_desc->levels[spill_req->src_tree].total_keys[spill_req->src_tree]);
-			*(uint64_t *)addr =
-				spill_req->db_desc->levels[spill_req->src_level].total_keys[spill_req->src_tree];
-			addr += sizeof(uint64_t);
-			msg->next = addr;
-			msg->request_message_local_addr = msg; /*info to spinning thread to wake us up on reply*/
-			msg->reply_message = NULL;
-			if (send_rdma_message(spill_task_desc->region->replica_next_control_con, msg) !=
-			    KREON_SUCCESS) {
-				log_info("failed to send message\n");
-				exit(EXIT_FAILURE);
-			}
-			log_info(
-				"Sent spill init command to replica to region: %s payload len %u waiting for reply...\n",
-				spill_task_desc->region->ID_region.minimum_range + 4, 24 + region_key_len);
-			spill_task_desc->spill_task_status = WAIT_FOR_SPILL_INIT_REPLY;
-			break;
-
-		case WAIT_FOR_SPILL_INIT_REPLY:
-
-			if (msg->reply_message == NULL) {
-				if (pthread_yield() != 0) {
-					DPRINT("FATAL yield failed\n");
-				}
-				break;
-			}
-			reply = (msg_header *)msg->reply_message;
-
-			if (reply->error_code == KREON_OK) {
-				log_info("MASTER: Replica ready to participate in spill :-)\n");
-			} else if (reply->error_code == REPLICA_PENDING_SPILL) {
-				log_info("FATAL: Replica has unfinished spills, what are you going to do gesalous?\n");
-				exit(EXIT_FAILURE);
-			} else {
-				log_info("FATAL Unknown code\n");
-				raise(SIGINT);
-				exit(EXIT_FAILURE);
-			}
-			free_rdma_received_message(spill_task_desc->region->replica_next_control_con, reply);
-			spill_task_desc->spill_task_status = INIT_SPILL_BUFFER_SCANNER;
-			log_info("MASTER: got SPILL_INIT reply!\n");
-			break;
-
-		case INIT_SPILL_BUFFER_SCANNER:
-
-			DPRINT("MASTER: INIT_SPILL_BUFFER_SCANNER!\n");
-			level_sc = _init_spill_buffer_scanner(spill_task_desc->region->db, spill_req->src_root,
-							      spill_req->start_key);
-
-			assert(level_sc != NULL);
-			keys_batch_to_spill =
-				(SPILL_BUFFER_SIZE - (2 * sizeof(uint32_t))) / (PREFIX_SIZE + sizeof(uint64_t));
-			spill_task_desc->spill_task_status = SPILL_BUFFER_REQ;
-			break;
-
-		case SPILL_BUFFER_REQ:
-
-			if (!spill_task_desc->standalone) {
-				/*allocate buffer*/
-				spill_buffer_msg =
-					__allocate_rdma_message(spill_task_desc->region->replica_next_control_con,
-								SPILL_BUFFER_SIZE, SPILL_BUFFER_REQUEST, ASYNCHRONOUS,
-								0, &spill_task_desc->task);
-				if (spill_task_desc->task.allocation_status != ALLOCATION_SUCCESS) {
-					if (pthread_yield() != 0) {
-						DPRINT("FATAL yield failed\n");
-					}
-					break;
-				}
-				spill_buffer = spill_buffer_msg->data;
-				spill_buffer += sizeof(uint32_t); /*keep 4 bytes for num of entries*/
-				/*reset the status flag for subsequent operations*/
-				spill_task_desc->task.allocation_status = ALLOCATION_START;
-			}
-			num_of_spilled_keys = 0;
-			bt_insert_req req;
-			for (i = 0; i < keys_batch_to_spill; i++) {
-				location.kv_addr = level_sc->keyValue;
-				location.log_offset = 0; /*unused*/
-				req.handle = spill_task_desc->region->db;
-				req.key_value_buf = level_sc->keyValue;
-				req.level_id = spill_req->dst_level;
-				req.tree_id = spill_req->dst_tree;
-				req.key_format = KV_PREFIX;
-				req.append_to_log = 0;
-				req.gc_request = 0;
-				req.recovery_request = 0;
-				_insert_key_value(&req);
-
-				if (!spill_task_desc->standalone) {
-					/*for the replica prefix*/
-					memcpy(spill_buffer, level_sc->keyValue, PREFIX_SIZE);
-					spill_buffer += PREFIX_SIZE;
-					/*relative log address*/
-					log_addr = (*(uint64_t *)(level_sc->keyValue + PREFIX_SIZE)) - MAPPED;
-					memcpy(spill_buffer, &log_addr, sizeof(uint64_t));
-					spill_buffer += sizeof(uint64_t);
-					++num_of_spilled_keys;
-				}
-
-				rc = _get_next_KV(level_sc);
-				if (rc == END_OF_DATABASE) {
-					if (!spill_task_desc->standalone) {
-						spill_task_desc->spill_task_status = SEND_SPILL_COMPLETE;
-						break;
-					} else {
-						spill_task_desc->spill_task_status = CLOSE_SPILL_BUFFER;
-						break;
-					}
-				}
-			}
-
-			if (!spill_task_desc->standalone) {
-				*(uint32_t *)spill_buffer_msg->data = num_of_spilled_keys;
-				if (send_rdma_message(spill_task_desc->region->replica_next_control_con,
-						      spill_buffer_msg) != KREON_SUCCESS) {
-					DPRINT("FATAL failed message\n");
-					exit(EXIT_FAILURE);
-				} else {
-					//DPRINT("MASTER: Just send buffer for spill with keys %d\n",num_of_spilled_keys);
-				}
-			}
-
-			break;
-
-		case CLOSE_SPILL_BUFFER:
-
-			_close_spill_buffer_scanner(level_sc, spill_task_desc->spill_req->src_root);
-			/*sanity check
-					if(spilled_keys != db_desc->total_keys[spill_req->src_tree_id]){
-					printf("[%s:%s:%d] FATAL keys missing --- spilled keys %llu actual %llu spiller id %d\n",__FILE__,__func__,__LINE__,(LLU)spilled_keys,(LLU)db_desc->total_keys[spill_req->src_tree_id], spill_req->src_tree_id);
-					exit(EXIT_FAILURE);
-					}
-					*/
-
-			/*Clean up code, Free the buffer tree was occupying. free_block() used intentionally*/
-			__sync_fetch_and_sub(&spill_task_desc->region->db->db_desc->levels[spill_req->src_level]
-						      .outstanding_spill_ops,
-					     1);
-			assert(spill_task_desc->region->db->db_desc->levels[spill_req->src_level]
-				       .outstanding_spill_ops == 0);
-
-			if (spill_task_desc->region->db->db_desc->levels[spill_req->src_level].outstanding_spill_ops ==
-			    0) {
-				seg_free_level(spill_task_desc->region->db, spill_req->src_level, spill_req->src_tree);
-				if (spill_req->src_level == 0) {
-					spill_task_desc->region->db->db_desc->levels[0].level_size = 0;
-					spill_task_desc->region->db->db_desc->L0_start_log_offset = spill_req->l0_end;
-				}
-				spill_task_desc->region->db->db_desc->levels[spill_req->src_level]
-					.tree_status[spill_req->src_tree] = NO_SPILLING;
-			}
-			free(spill_task_desc);
-			log_info("MASTER spill finished and cleaned remains\n");
-			return;
-
-		case SEND_SPILL_COMPLETE:
-			assert(spill_task_desc->region->replica_next_control_con != NULL);
-
-			region_key_len = *(uint32_t *)spill_task_desc->region->ID_region.minimum_range;
-
-			msg = __allocate_rdma_message(spill_task_desc->region->replica_next_control_con,
-						      20 + region_key_len, SPILL_COMPLETE, ASYNCHRONOUS, 0,
-						      &spill_task_desc->task);
-			if (spill_task_desc->task.allocation_status != ALLOCATION_SUCCESS) {
-				if (pthread_yield() != 0) {
-					DPRINT("FATAL yield failed\n");
-				}
-				break;
-			}
-
-			DPRINT("MASTER: Sending SPILL_COMPLETE message to REPLICA\n");
-			spill_task_desc->task.allocation_status = ALLOCATION_START;
-
-			addr = msg->data;
-			*(uint32_t *)addr = region_key_len;
-			addr += sizeof(int32_t);
-			memcpy(addr, spill_task_desc->region->ID_region.minimum_range + sizeof(uint32_t),
-			       region_key_len);
-			addr += region_key_len;
-			*(uint64_t *)addr = spill_task_desc->spill_req.l0_start;
-			addr += sizeof(uint64_t);
-			*(uint64_t *)addr = spill_task_desc->spill_req.l0_end;
-			addr += sizeof(uint64_t);
-			msg->next = addr;
-			msg->request_message_local_addr = msg;
-			msg->reply_message = NULL;
-			if (send_rdma_message(spill_task_desc->region->replica_next_control_con, msg) !=
-			    KREON_SUCCESS) {
-				DPRINT("FATAL to send spill complete message\n");
-				exit(EXIT_FAILURE);
-			}
-			spill_task_desc->spill_task_status = WAIT_FOR_SPILL_COMPLETE_REPLY;
-			break;
-
-		case WAIT_FOR_SPILL_COMPLETE_REPLY:
-			//DPRINT("MASTER: Waiting for SPILL_COMPLETE reply\n");
-			if (msg->reply_message == NULL) {
-				if (pthread_yield() != 0) {
-					DPRINT("FATAL yield failed\n");
-				}
-				break;
-			}
-			reply = (msg_header *)msg->reply_message;
-
-			if (reply == NULL) {
-				DPRINT("FATAL reply to spill buffer request is NULL\n");
-				exit(EXIT_FAILURE);
-			}
-
-			if (reply->error_code == KREON_OK) {
-				DPRINT("Replica completed remote spill\n");
-				free_rdma_received_message(spill_task_desc->region->replica_next_control_con, reply);
-				spill_task_desc->spill_task_status = CLOSE_SPILL_BUFFER;
-				/*DO THE CLEANINING HERE, and exit thread*/
-				DPRINT("Master: Replica informed that it finished its spill\n");
-				break;
-			} else if (reply->error_code == REPLICA_PENDING_SPILL) {
-				DPRINT("FATAL: Replica has unfinished spills, what are you going to do gesalous?\n");
-				exit(EXIT_FAILURE);
-			} else {
-				DPRINT("Unknown spill completion code\n");
-				exit(EXIT_FAILURE);
-			}
-		default:
-			DPRINT("FATAL unkown state for spill task\n");
-			exit(EXIT_FAILURE);
-		}
-	}
-#endif
-}
-
-#ifdef TIERING
-void tiering_compaction_check(_tucana_region_S *region, int level_id)
-{
-	tiering_compaction_request *request;
-	db_descriptor *db_desc = region->db->db_desc;
-	int level_max_capacity = 4;
-	int level_size = 0;
-	int i;
-
-	/*check if level 1 capacity is full*/
-	for (i = 0; i < level_max_capacity; i++) {
-		if (db_desc->replica_forest.tree_roots[(level_id * level_max_capacity) + i] != NULL) {
-			++level_size;
-		}
-	}
-
-	if (level_size >= level_max_capacity) {
-		request = (tiering_compaction_request *)malloc(sizeof(tiering_compaction_request));
-		request->region = region;
-		request->level_id = 0;
-		DPRINT("REPLICA: Time for a tiering compaction\n");
-		db_desc->db_mode = BACKUP_DB_TIERING_COMPACTION;
-		pthread_setname_np(request->tiering_compaction_context, "replica_tiering_worker");
-		if (pthread_create(&request->tiering_compaction_context, NULL, (void *)tiering_compaction_worker,
-				   (void *)request) != 0) {
-			DPRINT("FATAL: error spawning tiering compaction worker\n");
-			exit(EXIT_FAILURE);
-		}
-	}
-}
-
-void tiering_compaction_worker(void *_tiering_request)
-{
-	tiering_compaction_request *request;
-	min_heap *heap = create_and_initialize_heap(TIERING_MAX_CAPACITY);
-	min_heap_node node;
-	uint64_t total_keys_to_compact;
-	uint64_t actual_compacted_keys;
-	int destination_tree_id;
-	int i;
-	int rc;
-	int scanner_id;
-	int empty_scanners_num = 0;
-
-	request = (tiering_compaction_request *)_tiering_request;
-
-	level_scanner **scanners = (level_scanner **)alloca(sizeof(level_scanner *) * TIERING_MAX_CAPACITY);
-	total_keys_to_compact = 0;
-	actual_compacted_keys = 0;
-
-	for (i = 0; i < TIERING_MAX_CAPACITY; i++) {
-		total_keys_to_compact += request->region->db->db_desc->replica_forest
-						 .total_keys_per_tree[(request->level_id * TIERING_MAX_CAPACITY) + i];
-		scanners[i] =
-			_init_spill_buffer_scanner(request->region->db,
-						   request->region->db->db_desc->replica_forest
-							   .tree_roots[(request->level_id * TIERING_MAX_CAPACITY) + i],
-						   NULL);
-		add_to_min_heap(heap, scanners[i]->keyValue, KV_PREFIX, (request->level_id * TIERING_MAX_CAPACITY) + i);
-	}
-	/*now find an available tree in the id+1 level*/
-	destination_tree_id = -1;
-	for (i = 0; i < TIERING_MAX_CAPACITY; i++) {
-		if (request->region->db->db_desc->replica_forest
-			    .tree_roots[((request->level_id + 1) * TIERING_MAX_CAPACITY) + i] == NULL) {
-			destination_tree_id = ((request->level_id + 1) * TIERING_MAX_CAPACITY) + i;
-			break;
-		}
-	}
-	assert(destination_tree_id != -1);
-
-	DPRINT("REPLICA: Tiering compaction from level %d to level %d number of "
-	       "keys "
-	       "to compact = %" PRIu64 "\n",
-	       request->level_id, request->level_id + 1, total_keys_to_compact);
-	_calculate_btree_index_nodes(request->region, total_keys_to_compact);
-
-	while (empty_scanners_num > 0) {
-		node = pop_min(heap);
-		++actual_compacted_keys;
-		append_entry_to_leaf_node(request->region, node.keyValue + PREFIX_SIZE, node.keyValue,
-					  destination_tree_id);
-		scanner_id = node.tree_id - (request->level_id * TIERING_MAX_CAPACITY);
-		rc = _get_next_KV(scanners[scanner_id]);
-		if (rc == END_OF_DATABASE) {
-			scanners[scanner_id] = NULL;
-			++empty_scanners_num;
-		}
-	}
-	assert(actual_compacted_keys == total_keys_to_compact);
-	request->region->db->db_desc->replica_forest.tree_status[destination_tree_id] = READY_TO_PERSIST;
-	DPRINT("REPLICA: Tiering compaction from level to level maybe a snapshot "
-	       "now? XXX TODO XXX\n");
-	request->region->db->db_desc->db_mode = BACKUP_DB_NO_PENDING_SPILL;
-
-	tiering_compaction_check(request->region, request->level_id + 1);
-	free(_tiering_request);
-}
-#endif
 
 extern void on_completion_client(struct rdma_message_context *);
 
@@ -1606,7 +1165,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 					pthread_mutex_lock(&task->r_desc->region_lock);
 					if (task->r_desc->region_halted) {
 						/*suspend and return*/
-						log_info("Suspending task %p key %s", task, task->key->key);
+						// log_info("Suspending task %p key %s", task, task->key->key);
 						task->suspended = 1;
 						utils_queue_push(&task->r_desc->halted_tasks, task);
 						pthread_mutex_unlock(&task->r_desc->region_lock);
@@ -1816,8 +1375,8 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 				struct krm_work_task *halted_task = utils_queue_pop(&r_desc->halted_tasks);
 				while (halted_task != NULL) {
 					halted_task->suspended = 0;
-					log_info("Resuming task pool %d key is %s", halted_task->pool_id,
-						 halted_task->key->key);
+					// log_info("Resuming task pool %d key is %s", halted_task->pool_id,
+					//        halted_task->key->key);
 					ds_put_resume_task(&root_server->numa_servers[task->server_id]->spinner,
 							   halted_task);
 					halted_task = utils_queue_pop(&r_desc->halted_tasks);
@@ -1849,6 +1408,27 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 			task->ins_req.metadata.recovery_request = 0;
 			task->ins_req.metadata.segment_full_event = 0;
 			task->ins_req.metadata.special_split = 0;
+
+			/*now Level-0 check (if it needs compaction)*/
+			struct db_descriptor *db_desc = task->r_desc->db->db_desc;
+			int active_tree = db_desc->levels[0].active_tree;
+			if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+				pthread_mutex_lock(&db_desc->client_barrier_lock);
+				active_tree = db_desc->levels[0].active_tree;
+
+				if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+					sem_post(&db_desc->compaction_daemon_interrupts);
+					pthread_mutex_unlock(&db_desc->client_barrier_lock);
+					return;
+					// if (pthread_cond_wait(&db_desc->client_barrier,
+					//		      &db_desc->client_barrier_lock) != 0) {
+					//	log_fatal("failed to throttle");
+					//	exit(EXIT_FAILURE);
+					//}
+				}
+				pthread_mutex_unlock(&db_desc->client_barrier_lock);
+			}
+			/********************************************/
 			_insert_key_value(&task->ins_req);
 			if (task->r_desc->region->num_of_backup > 0) {
 				if (task->ins_req.metadata.segment_full_event)
@@ -1858,12 +1438,13 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 				break;
 			} else {
 				task->kreon_operation_status = TASK_COMPLETE;
-				return;
+				break;
 			}
 		}
 
 		case FLUSH_REPLICA_BUFFERS: {
 			struct krm_region_desc *r_desc = task->r_desc;
+
 			uint64_t next_segment_to_flush = r_desc->next_segment_to_flush;
 			// pthread_mutex_lock(&task->r_desc->region_lock);
 			/*Is it my turn to flush or can I resume?*/
@@ -1962,8 +1543,10 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 									     sizeof(struct msg_header));
 
 					/*where primary has stored its segment*/
+					f_req->is_partial = 0;
 					f_req->log_buffer_id = task->seg_id_to_flush;
 					f_req->master_segment = task->ins_req.metadata.log_segment_addr;
+					//log_info("Sending flush command for segment %llu", f_req->master_segment);
 					f_req->segment_id = task->ins_req.metadata.segment_id;
 					f_req->end_of_log = task->ins_req.metadata.end_of_log;
 					f_req->log_padding = task->ins_req.metadata.log_padding;
@@ -2139,6 +1722,7 @@ r_desc->m_state->r_buf[i].segment[j].end);
 			break;
 		}
 		case TASK_COMPLETE:
+			bt_decrease_level0_writers(task->r_desc->db);
 			return;
 
 		default:
@@ -2150,17 +1734,17 @@ r_desc->m_state->r_buf[i].segment[j].end);
 }
 
 /*
- * KreonR main processing function of networkrequests.
- * Each network processing request must be resumable. For each message type
- * KreonR process it via
- * a specific data path. We treat all taks related to network  as paths that
- * may
- * fail, that we can resume later. The idea
- * behind this
- * */
+   * KreonR main processing function of networkrequests.
+   * Each network processing request must be resumable. For each message type
+   * KreonR process it via
+   * a specific data path. We treat all taks related to network  as paths that
+   * may
+   * fail, that we can resume later. The idea
+   * behind this
+   * */
 static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
-	struct connection_rdma *rdma_conn = NULL;
+	// struct connection_rdma *rdma_conn = NULL;
 	struct krm_region_desc *r_desc;
 	void *value;
 	scannerHandle *sc;
@@ -2175,179 +1759,260 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	/*unboxing the arguments*/
 	r_desc = NULL;
 	task->reply_msg = NULL;
-	rdma_conn = task->conn;
+	// rdma_conn = task->conn;
 	stats_update(task->thread_id);
 
 	switch (task->msg->type) {
-// gesalous leave it for later
-#if 0
-	case SPILL_INIT:
+	case REPLICA_INDEX_GET_BUFFER_REQ: {
+		struct msg_replica_index_get_buffer_req *g_req =
+			(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		task->reply_msg = __allocate_rdma_message(task->conn, 0, SPILL_INIT_ACK, ASYNCHRONOUS, 0, task);
-		if (task->allocation_status != ALLOCATION_SUCCESS) {
-			return;
-		}
-		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-
-		region_key = task->msg->data;
-		S_tu_region = find_region(region_key + sizeof(uint32_t), *(uint32_t *)region_key);
-
-		assert(S_tu_region->db->db_desc->db_mode != PRIMARY_DB &&
-		       S_tu_region->db->db_desc->db_mode == BACKUP_DB_NO_PENDING_SPILL);
-		assert(task->conn->pending_received_messages == 1 && rdma_conn->pending_sent_messages == 1);
-
-		DPRINT("REPLICA: Master requests a remote spill  for region %s\n", region_key + sizeof(uint32_t));
-		S_tu_region->db->db_desc->db_mode = BACKUP_DB_PENDING_SPILL;
-		S_tu_region->db->db_desc->spill_segment_table = S_tu_region->db->db_desc->backup_segment_table;
-		S_tu_region->db->db_desc->backup_segment_table = NULL;
-		map_entry *s = (map_entry *)malloc(sizeof(map_entry));
-		s->key = (uint64_t)S_tu_region->db->db_desc->last_master_segment;
-		s->value = (uint64_t)S_tu_region->db->db_desc->last_local_mapping;
-		HASH_ADD_PTR(S_tu_region->db->db_desc->backup_segment_table, key, s);
-
-		/*finally find an empty tree in the forest to insert the new spill*/
-		S_tu_region->current_active_tree_in_the_forest = -1;
-		int i;
-		for (i = 0; i < MAX_FOREST_SIZE; i++) {
-			if (S_tu_region->db->db_desc->replica_forest.tree_status[i] == NOT_USED) {
-				DPRINT("REPLICA: Initiating remote spill for tree_id %d in the forest\n", i);
-				S_tu_region->db->db_desc->replica_forest.tree_status[i] = IN_TRANSIT_DIRTY;
-				S_tu_region->current_active_tree_in_the_forest = i;
-				break;
-			}
-		}
-		_calculate_btree_index_nodes(S_tu_region,
-					     *(uint64_t *)(task->msg->data + (task->msg->pay_len - sizeof(uint64_t))));
-		if (S_tu_region->current_active_tree_in_the_forest == -1) {
-			DPRINT("REPLICA: Time for compaction forest is full XXX TODO XXX\n");
+		struct krm_region_desc *r_desc = krm_get_region(mydesc, g_req->region_key, g_req->region_key_size);
+		if (r_desc == NULL) {
+			log_fatal("no hosted region found for min key %s", g_req->region_key);
 			exit(EXIT_FAILURE);
 		}
-		task->kreon_operation_status = SPILL_INIT_END;
-		task->overall_status = TASK_COMPLETED;
-		task->reply_msg->error_code = KREON_OK;
-		free_rdma_received_message(task->conn, task->msg);
-		break;
+		log_info("REPLICA: Master wants %d rdma buffers to start index tranfer of "
+			 "level %d of region %s",
+			 g_req->num_buffers, g_req->level_id, r_desc->region->id);
 
-	case SPILL_COMPLETE:
-
-		task->reply_msg = __allocate_rdma_message(task->conn, 0, SPILL_COMPLETE_ACK, ASYNCHRONOUS, 0, task);
-		if (task->allocation_status != ALLOCATION_SUCCESS) {
-			return;
+		pthread_mutex_lock(&r_desc->region_lock);
+		if (r_desc->r_state == NULL) {
+			log_fatal("replica state should not be NULL at this point");
+			exit(EXIT_FAILURE);
 		}
-		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-
-		region_key = task->msg->data;
-		S_tu_region = find_region(region_key + sizeof(uint32_t), *(uint32_t *)region_key);
-		assert(S_tu_region->db->db_desc->db_mode != PRIMARY_DB);
-		/*clear all mappings*/
-		map_entry *current, *tmp;
-		HASH_ITER(hh, S_tu_region->db->db_desc->spill_segment_table, current, tmp)
-		{
-			HASH_DEL(S_tu_region->db->db_desc->spill_segment_table,
-				 current); /* delete it (users advances to next) */
-			free(current); /* free it */
-		}
-
-		task->reply_msg->error_code = KREON_OK;
-		DPRINT("REPLICA: completed remote spill snapshotting volume, ommiting CAUTION\n");
-		//snapshot(S_tu_region->db->volume_desc);
-		S_tu_region->db->db_desc->L0_end_log_offset = *(uint64_t *)task->msg->data;
-		S_tu_region->db->db_desc->L0_start_log_offset = *(uint64_t *)task->msg->data;
-		int j;
-		for (j = MAX_TREE_HEIGHT - 1; j >= 0; j--) {
-			if (S_tu_region->last_node_per_level[j] != NULL) {
-				S_tu_region->last_node_per_level[j]->type = rootNode;
-				S_tu_region->db->db_desc->replica_forest
-					.tree_roots[S_tu_region->current_active_tree_in_the_forest] =
-					S_tu_region->last_node_per_level[j];
-				break;
-			}
-		} /*snapshot maybe?, snapshot is for replica thus does not include network communication*/
-		S_tu_region->db->db_desc->replica_forest.tree_status[S_tu_region->current_active_tree_in_the_forest] =
-			READY_TO_PERSIST;
-		DPRINT("REPLICA: Spill complete maybe a snapshot now? XXX TODO XXX\n");
-		S_tu_region->db->db_desc->db_mode = BACKUP_DB_NO_PENDING_SPILL;
-		task->kreon_operation_status = SPILL_COMPLETE_END;
-		task->overall_status = TASK_COMPLETED;
-		free_rdma_received_message(task->conn, task->msg);
-		break;
-
-	case SPILL_BUFFER_REQUEST:
-
-		/*Nothing to do here for suspend/resume because in this version
-				it does not send a reply to the client*/
-		region_key = task->msg->data + sizeof(uint32_t);
-		S_tu_region = find_region(region_key, PREFIX_SIZE);
-		assert(S_tu_region->db->db_desc->db_mode != PRIMARY_DB &&
-		       S_tu_region->db->db_desc->db_mode == BACKUP_DB_PENDING_SPILL);
-		/*iterate values*/
-		addr = task->msg->data;
-		num_entries = *(uint32_t *)(addr);
-		addr += sizeof(uint32_t);
-		//DPRINT("\tREPLICA: applying remote spill buffer at replica num entries %d\n",num_entries);
-		S_tu_region->db->db_desc->replica_forest.tree_status[S_tu_region->current_active_tree_in_the_forest] =
-			IN_TRANSIT_DIRTY;
-		for (i = 0; i < num_entries; i++) {
-			/*rewrite mapping, PREFIX stays the same*/
-			log_address = (*(uint64_t *)(addr + PREFIX_SIZE));
-			master_segment = (void *)log_address - ((uint64_t)log_address % BUFFER_SEGMENT_SIZE);
-			//local_log_addr = (void *) clht_get(handle->db_desc->backup_segment_table->ht, (clht_addr_t) master_segment);
-			map_entry *s;
-			SPIN_LOCK(&S_tu_region->db->db_desc->back_up_segment_table_lock);
-			HASH_FIND_PTR(S_tu_region->db->db_desc->spill_segment_table, &master_segment, s);
-			if (s == NULL) {
-				DPRINT("REPLICA: FATAL mapping is missing for master segment %llu\n",
-				       (LLU)master_segment);
-				raise(SIGINT);
+		pthread_mutex_unlock(&r_desc->region_lock);
+		r_desc->level_cursor[g_req->level_id].state = DI_INIT;
+		r_desc->level_cursor[g_req->level_id].max_offset = g_req->index_offset;
+		log_info("Index offset set at %llu", r_desc->level_cursor[g_req->level_id].max_offset);
+		for (int i = 0; i < g_req->num_buffers; i++) {
+			void *addr = malloc(SEGMENT_SIZE);
+			if (r_desc->r_state->index_buffers[g_req->level_id][i] == NULL) {
+				r_desc->r_state->index_buffers[g_req->level_id][i] =
+					rdma_reg_write(task->conn->rdma_cm_id, addr, SEGMENT_SIZE);
+			} else {
+				log_fatal("Remote compaction for level %d still pending", g_req->level_id);
 				exit(EXIT_FAILURE);
 			}
-			SPIN_UNLOCK(&S_tu_region->db->db_desc->back_up_segment_table_lock);
-			/*add the offset*/
-			local_log_addr = (void *)MAPPED + s->value + (log_address % BUFFER_SEGMENT_SIZE);
-			*(uint64_t *)(addr + PREFIX_SIZE) = (uint64_t)local_log_addr;
-
-			//DPRINT("mapping remote log segment: %llu local segment : %llu local full address in log %llu\n",
-			//	(LLU)master_segment,(LLU)s->value, (LLU)local_log_addr);
-			//if( *(uint32_t *)local_log_addr > 30 || *(uint32_t *)local_log_addr == 0){
-			//	DPRINT("mapping remote log segment: %llu local segment : %llu local full address in log %llu\n",
-			//			(LLU)master_segment,(LLU)s->value, (LLU)local_log_addr);
-			//	DPRINT("Faulty pointer size %"PRIu32" i is %d\n",*(uint32_t *)local_log_addr,i);
-			//	raise(SIGINT);
-			//	exit(EXIT_FAILURE);
-			//}
-
-#if LEVELING
-			location.kv_addr = addr;
-			/*insert to local L1*/
-			//DEBUGGING
-			//if(memcmp(addr, local_log_addr+4,PREFIX_SIZE) != 0){
-			//  DPRINT("boom corrupted log remote key %s, local key %s\n",(char *)addr, (char *)local_log_addr+4);
-			//  raise(SIGINT);
-			//}
-			_insert_index_entry(s_tu_region->db, &location,
-					    INSERT_TO_L1_INDEX | DO_NOT_APPEND_TO_LOG | (4 << 8) | BACKUP_OPERATION);
-#else
-			/*tiering*/
-			append_entry_to_leaf_node(S_tu_region, (void *)(*(uint64_t *)(addr + PREFIX_SIZE)), addr,
-						  S_tu_region->current_active_tree_in_the_forest);
-#endif
-			addr += (PREFIX_SIZE + sizeof(uint64_t));
 		}
-		free_rdma_received_message(task->conn, task->msg);
-		task->overall_status = TASK_COMPLETED;
+
+		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+					   (uint64_t)task->msg->reply);
+		/*initialize message*/
+		task->reply_msg->pay_len = sizeof(struct msg_replica_index_get_buffer_rep);
+
+		actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+		padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
+		/*set tail to the proper value*/
+		// log_info("Setting tail to offset %d", actual_reply_size + (padding -
+		// TU_TAIL_SIZE));
+		*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) =
+			TU_RDMA_REGULAR_MSG;
+		task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
+		task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
+		task->reply_msg->next = task->reply_msg->data;
+
+		task->reply_msg->type = REPLICA_INDEX_GET_BUFFER_REP;
+
+		task->reply_msg->ack_arrived = KR_REP_PENDING;
+		task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
+		task->reply_msg->local_offset = (uint64_t)task->msg->reply;
+		task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
+
+		struct msg_replica_index_get_buffer_rep *g_rep =
+			(struct msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+		g_rep->status = KREON_SUCCESS;
+		g_rep->num_buffers = g_req->num_buffers;
+		for (int i = 0; i < g_rep->num_buffers; i++)
+			g_rep->mr[i] = *r_desc->r_state->index_buffers[g_req->level_id][i];
+
+		/*piggyback info for use with the client*/
+		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+		assert(task->reply_msg->request_message_local_addr != NULL);
+		log_info("REPLICA: DONE registering %d buffer for index transfer for region %s", g_rep->num_buffers,
+			 r_desc->region->id);
+		task->kreon_operation_status = TASK_COMPLETE;
 		break;
+	}
 
+	case REPLICA_INDEX_FLUSH_REQ: {
+		struct msg_replica_index_flush_req *f_req =
+			(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		case SCAN_REQUEST:
-			task->reply_msg = Server_Scan_MulipleRegions_RDMA(task->msg, rdma_conn);
-			task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-			break;
+		struct krm_region_desc *r_desc = krm_get_region(mydesc, f_req->region_key, f_req->region_key_size);
+		if (r_desc == NULL) {
+			log_fatal("no hosted region found for min key %s", f_req->region_key);
+			exit(EXIT_FAILURE);
+		}
+		if (f_req->seg_id > 0)
+			assert(f_req->seg_id ==
+			       r_desc->db->db_desc->levels[f_req->level_id].last_segment[f_req->tree_id]->segment_id +
+				       1);
+		struct segment_header *seg = seg_get_raw_index_segment(
+			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
+		seg->next_segment = NULL;
+		//uint64_t s =
+		//	djb2_hash((unsigned char *)r_desc->r_state
+		//			  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
+		//			  ->addr,
+		//		  SEGMENT_SIZE);
+		//assert(s == f_req->seg_hash);
+		//log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
+		memcpy(seg,
+		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr,
+		       SEGMENT_SIZE);
+		// add mapping to level's hash table
+		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+		e->master_seg = f_req->primary_segment_offt;
+		e->my_seg = (uint64_t)seg - MAPPED;
+		HASH_ADD_PTR(r_desc->replica_index_map[f_req->level_id], master_seg, e);
 
-			/*
-			 * Kind reminder, SPILL_INIT, SPILL_BUFFER_REQUEST, and SPILL_COMPLETE are handled by the server
-			 * which has backup role for the given region
-			 */
-#endif
+		di_rewrite_index(r_desc, f_req->level_id, f_req->tree_id);
+		if (f_req->is_last) {
+			if (r_desc->level_cursor[f_req->level_id].state != DI_COMPLETE) {
+				log_fatal("Failed to rewrite index");
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+			/*translate root*/
+			if (!f_req->root_w && !f_req->root_r) {
+				log_fatal("Both roots can't be NULL");
+				exit(EXIT_FAILURE);
+			}
+			struct krm_segment_entry *index_entry;
+			uint64_t primary_segment_offt;
+			uint64_t primary_segment;
+			if (f_req->root_w) {
+				primary_segment_offt = f_req->root_w % SEGMENT_SIZE;
+				primary_segment = f_req->root_w - primary_segment_offt;
+				HASH_FIND_PTR(r_desc->replica_index_map[f_req->level_id], &primary_segment,
+					      index_entry);
+				if (index_entry == NULL) {
+					log_fatal("Cannot translate root_w for primary's segment %llu of db %s",
+						  primary_segment_offt, r_desc->db->db_desc->db_name);
+					exit(EXIT_FAILURE);
+				}
+				r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] =
+					(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
+				assert(r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id]->type ==
+					       leafRootNode ||
+				       r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id]->type ==
+					       rootNode);
+				//log_info("Ok translated root_w[%u][%u]", f_req->level_id, f_req->tree_id);
+			} else {
+				r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] = NULL;
+				//log_info("Ok primary says root_w[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+			}
+			if (f_req->root_r) {
+				primary_segment_offt = f_req->root_r % SEGMENT_SIZE;
+				primary_segment = f_req->root_r - primary_segment_offt;
+				HASH_FIND_PTR(r_desc->replica_index_map[f_req->level_id], &primary_segment,
+					      index_entry);
+				if (index_entry == NULL) {
+					log_fatal("Cannot translate root_r for primary's segment %llu of db %s",
+						  primary_segment_offt, r_desc->db->db_desc->db_name);
+					raise(SIGINT);
+					exit(EXIT_FAILURE);
+				}
+				r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] =
+					(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
+				assert(r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id]->type ==
+					       leafRootNode ||
+				       r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id]->type ==
+					       rootNode);
+				//log_info("Ok translated root_r[%u][%u]", f_req->level_id, f_req->tree_id);
+			} else {
+				r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] = NULL;
+				//log_info("Ok primary says root_r[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+			}
+			//deregistering buffers
+			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
+				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
+				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
+					log_fatal("Failed to deregister rdma buffer");
+					exit(EXIT_FAILURE);
+				}
+				r_desc->r_state->index_buffers[f_req->level_id][i] = NULL;
+			}
+			if (f_req->level_id > 1) {
+				log_info("REPLICA: After index transfer freeing  level %d", f_req->level_id - 1);
+				seg_free_level(r_desc->db, f_req->level_id - 1, 0);
+			}
+			log_info("REPLICA: After index transfer freeing level %d", f_req->level_id);
+			seg_free_level(r_desc->db, f_req->level_id, 0);
+			log_info("REPLICA: Setting new level as new");
+			struct level_descriptor *l = &r_desc->db->db_desc->levels[f_req->level_id];
+			l->first_segment[0] = l->first_segment[1];
+			l->first_segment[1] = NULL;
+
+			l->last_segment[0] = l->last_segment[1];
+			l->last_segment[1] = NULL;
+
+			l->offset[0] = l->offset[1];
+			l->offset[1] = 0;
+
+			l->level_size[0] = l->level_size[1];
+			l->level_size[1] = 0;
+
+			while (!__sync_bool_compare_and_swap(&l->root_w[0], l->root_w[0], l->root_w[1])) {
+			}
+			// dst->root_w[dst_active_tree] = src->root_w[src_active_tree];
+			l->root_w[1] = NULL;
+
+			while (!__sync_bool_compare_and_swap(&l->root_r[0], l->root_r[0], l->root_r[1])) {
+			}
+			l->root_r[1] = NULL;
+			log_info("Destroying mappings for index level %d useless now", f_req->level_id);
+
+			/*iterate over regions*/
+			struct krm_segment_entry *current, *tmp;
+
+			HASH_ITER(hh, r_desc->replica_index_map[f_req->level_id], current, tmp)
+			{
+				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
+				free(current);
+			}
+			//log_info("Snapshotting");
+			//snapshot(r_desc->db->volume_desc);
+			//log_info("Snapshot done!");
+		}
+
+		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+					   (uint64_t)task->msg->reply);
+		/*initialize message*/
+		task->reply_msg->pay_len = sizeof(struct msg_replica_index_flush_rep);
+
+		actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+		padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
+		/*set tail to the proper value*/
+		// log_info("Setting tail to offset %d", actual_reply_size + (padding -
+		// TU_TAIL_SIZE));
+		*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) =
+			TU_RDMA_REGULAR_MSG;
+		task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
+		task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
+		task->reply_msg->next = task->reply_msg->data;
+
+		task->reply_msg->type = REPLICA_INDEX_FLUSH_REP;
+
+		task->reply_msg->ack_arrived = KR_REP_PENDING;
+		task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
+		task->reply_msg->local_offset = (uint64_t)task->msg->reply;
+		task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
+
+		struct msg_replica_index_flush_rep *rep =
+			(struct msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+		rep->status = KREON_SUCCESS;
+		rep->seg_id = f_req->seg_id;
+
+		/*piggyback info for use with the client*/
+		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+		assert(task->reply_msg->request_message_local_addr != NULL);
+		task->kreon_operation_status = TASK_COMPLETE;
+
+		//log_info("REPLICA: Successfully flushed index segment id %d", f_req->seg_id);
+		break;
+	}
 	case GET_LOG_BUFFER_REQ: {
 		void *addr;
 		struct msg_get_log_buffer_req *get_log =
@@ -2450,23 +2115,66 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		/*Now take a segment from the allocator and copy the buffer*/
 		volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
 
-		if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
+		uint64_t diff = flush_req->end_of_log - r_desc->db->db_desc->KV_log_size;
+		int exists = 0;
+		if (last_log_segment->segment_id == flush_req->segment_id) {
+			if (r_desc->r_state->next_segment_id_to_flush == 0)
+				++r_desc->r_state->next_segment_id_to_flush;
+
+			// This op should follow after a partial write
+			if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
+				log_fatal("Corruption");
+				exit(EXIT_FAILURE);
+			}
+			exists = 1;
+		} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
 			log_fatal("Corruption non-contiguous segment ids: expected %llu  got "
 				  "flush_req id is %llu",
 				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
+			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
 			exit(EXIT_FAILURE);
 		}
-		++r_desc->r_state->next_segment_id_to_flush;
-		segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
-		memcpy(disk_segment, seg, SEGMENT_SIZE);
-		disk_segment->next_segment = NULL;
-		disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
 
-		if (r_desc->db->db_desc->KV_log_first_segment == NULL)
-			r_desc->db->db_desc->KV_log_first_segment = disk_segment;
+		// log_info("Flushing segment %llu padding is %llu primary offset %llu local
+		// diff is %llu",
+		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log,
+		//diff);
+		if (!exists) {
+			++r_desc->r_state->next_segment_id_to_flush;
+			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
+			memcpy(disk_segment, seg, SEGMENT_SIZE);
+			disk_segment->next_segment = NULL;
+			disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
 
-		r_desc->db->db_desc->KV_log_last_segment = disk_segment;
-		r_desc->db->db_desc->KV_log_size += SEGMENT_SIZE;
+			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
+				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
+			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
+			// add mapping to level's hash table
+			struct krm_segment_entry *e =
+				(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+			assert(flush_req->master_segment % SEGMENT_SIZE == 0);
+			e->master_seg = flush_req->master_segment;
+			e->my_seg = (uint64_t)disk_segment - MAPPED;
+			HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+			//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+		} else {
+			// check if we have the mapping
+			struct krm_segment_entry *index_entry;
+			HASH_FIND_PTR(r_desc->replica_log_map, &flush_req->master_segment, index_entry);
+			if (index_entry == NULL) {
+				// add mapping to level's hash table
+				struct krm_segment_entry *e =
+					(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+				e->master_seg = flush_req->master_segment;
+				e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
+				HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+				//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+			}
+
+			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
+		}
+
+		r_desc->db->db_desc->KV_log_size += diff;
 
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
 		/*time for reply :-)*/
@@ -2500,7 +2208,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// log_info("Responded to server!");
 		break;
 	}
-
+#if 0
 	case PUT_OFFT_REQUEST: {
 		if (task->key == NULL) {
 			put_offt_req = (msg_put_offt_req *)task->msg->data;
@@ -2598,6 +2306,7 @@ when test passes*/
 		}
 		break;
 	}
+#endif
 	case PUT_REQUEST:
 
 		/* retrieve region handle for the corresponding key, find_region
@@ -2907,9 +2616,9 @@ when test passes*/
 		uint32_t *tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->pay_len +
 					      task->reply_msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
 		/*log_info("tail - reply = %"PRId64"\n", (uint64_t)tail -
-     * (uint64_t)task->reply_msg);*/
+* (uint64_t)task->reply_msg);*/
 		/*log_info("reply_msg = {.pay_len = %llu, padding_and_tail = %llu}",
-     * task->reply_msg->pay_len, task->reply_msg->padding_and_tail);*/
+* task->reply_msg->pay_len, task->reply_msg->padding_and_tail);*/
 		*tail = TU_RDMA_REGULAR_MSG;
 
 		/*piggyback info for use with the client*/
@@ -2919,11 +2628,6 @@ when test passes*/
 	case TEST_REQUEST_FETCH_PAYLOAD:
 		log_fatal("Message not supported yet");
 		exit(EXIT_FAILURE);
-#if 0
-		case TU_FLUSH_VOLUME_QUERY:
-			reply_data_message = Server_FlushVolume_RDMA( data_message, rdma_conn);
-			break;
-#endif
 	default:
 		log_fatal("unknown operation %d", task->msg->type);
 		exit(EXIT_FAILURE);
@@ -2996,6 +2700,7 @@ knows where the list of returned strings ends. */
 sem_t exit_main;
 static void sigint_handler(int signo)
 {
+	(void)signo;
 	/*pid_t tid = syscall(__NR_gettid);*/
 	log_warn("caught signal closing server, sorry gracefull shutdown not yet "
 		 "supported. Contace <gesalous,mvard>@ics.forth.gr");
@@ -3158,13 +2863,12 @@ int main(int argc, char *argv[])
 			  "id>,<worker id 1>,<worker id 2>,...,<worker id N>\"");
 		exit(EXIT_FAILURE);
 	}
-
-	/*
+	/**
 * list of chain reaction: main fires socket threads (one per server) and
 * then
 * spinners.
 * Spinners finally fire up their workers
-* */
+**/
 	for (int i = 0; i < root_server->num_of_numa_servers; i++) {
 		struct ds_numa_server *server = root_server->numa_servers[i];
 		pthread_mutex_init(&server->spinner.conn_list_lock, NULL);

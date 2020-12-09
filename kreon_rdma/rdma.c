@@ -512,9 +512,13 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case TEST_REQUEST:
 		case TEST_REQUEST_FETCH_PAYLOAD:
 		case GET_LOG_BUFFER_REQ:
+		case GET_LOG_BUFFER_REP:
 		case FLUSH_COMMAND_REQ:
 		case FLUSH_COMMAND_REP:
-		case GET_LOG_BUFFER_REP:
+		case REPLICA_INDEX_GET_BUFFER_REQ:
+		case REPLICA_INDEX_GET_BUFFER_REP:
+		case REPLICA_INDEX_FLUSH_REQ:
+		case REPLICA_INDEX_FLUSH_REP:
 		case PUT_REPLY:
 		case GET_REPLY:
 		case MULTI_GET_REPLY:
@@ -733,14 +737,6 @@ uint16_t ctx_get_local_lid(struct ibv_context *context, int port, struct ibv_por
 	if (ibv_query_port(context, port, attr))
 		return 0;
 	return attr->lid;
-}
-
-static inline int ipv6_addr_v4mapped(const struct in6_addr *a)
-{
-	return ((a->s6_addr32[0] | a->s6_addr32[1]) | (a->s6_addr32[2] ^ htonl(0x0000ffff))) == 0UL ||
-	       /* IPv4 encoded multicast addresses */
-	       (a->s6_addr32[0] == htonl(0xff0e0000) &&
-		((a->s6_addr32[1] | (a->s6_addr32[2] ^ htonl(0x0000ffff))) == 0UL));
 }
 
 void tu_rdma_init_connection(struct connection_rdma *conn)
@@ -1501,14 +1497,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				case GET_LOG_BUFFER_REP:
 				case FLUSH_COMMAND_REQ:
 				case FLUSH_COMMAND_REP:
-					break;
-				/*server to server old school*/
-				case SPILL_INIT_ACK:
-				case SPILL_COMPLETE_ACK:
-				case SPILL_INIT:
-				case SPILL_BUFFER_REQUEST:
-				case SPILL_COMPLETE:
-					free_rdma_local_message(conn);
 					break;
 				/*client to server RPCs*/
 				case DISCONNECT:

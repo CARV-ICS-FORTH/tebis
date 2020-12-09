@@ -18,6 +18,9 @@ set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
 # add_executable(streaming_btree_test test_streaming_btree.c)
 # target_link_libraries(streaming_btree_test runtime)
 
+add_executable(test_allocator test_allocator.c)
+target_link_libraries(test_allocator kreon)
+
 add_executable(test_scans test_scans.c)
 target_link_libraries(test_scans kreon)
 

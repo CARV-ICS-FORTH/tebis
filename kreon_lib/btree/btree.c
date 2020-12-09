@@ -106,8 +106,20 @@ static inline void update_leaf_index_stats(char key_format)
 #endif
 
 static bt_split_result split_index(node_header *node, bt_insert_req *ins_req);
-void _sent_flush_command_to_replica(db_descriptor *db_desc, int padded_space, int SYNC);
 
+void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+{
+	db_desc->t = t;
+	return;
+}
+
+void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl)
+{
+	db_desc->fl = fl;
+	return;
+}
+
+void bt_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf);
 bt_split_result split_leaf(bt_insert_req *req, leaf_node *node);
 
@@ -122,179 +134,24 @@ void assert_leaf_node(node_header *leaf);
 /*functions used for debugging*/
 // static void print_node(node_header *node);
 
-#if 0
-thread_dest *__attribute__((noinline)) __dequeue_for_tickets(db_descriptor *db_desc)
-{
-	thread_dest *prev;
-	thread_dest *empty = NULL;
-
-	prev = db_desc->ticket_array;
-	while (!__sync_bool_compare_and_swap(&db_desc->ticket_array, prev, empty)) {
-		_mm_pause();
-		prev = db_desc->ticket_array;
-	}
-
-	return prev;
-}
-
-void __attribute__((noinline)) __wait1(db_descriptor *db_desc)
-{
-	while (!db_desc->ticket_array)
-		_mm_pause();
-}
-
-void __attribute__((noinline)) __wait2(thread_dest *prev)
-{
-	while (prev->ready)
-		_mm_pause();
-}
-
-void __attribute__((noinline)) __wait_for_ticket(thread_dest *new_node)
-{
-	while (!new_node->ready)
-		_mm_pause();
-}
-
-void *dynamic_ticket_log(db_handle *handle)
-{
-	segment_header *d_header;
-	void *key_addr; /*address at the device*/
-	db_descriptor *db_desc = handle->db_desc;
-	uint32_t available_space_in_log;
-	uint32_t kv_size = 0;
-	uint32_t allocated_space;
-	thread_dest *prev;
-	thread_dest *next = NULL;
-	thread_dest *empty = NULL;
-/*append data part in the data log*/
-empty_list:
-	__wait1(db_desc);
-
-	prev = __dequeue_for_tickets(db_desc);
-
-	while (1) {
-		if (prev) {
-			__wait2(prev);
-			next = (void *)prev->next;
-			kv_size = prev->kv_size;
-		}
-
-		if (likely(handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE != 0))
-			available_space_in_log =
-				BUFFER_SEGMENT_SIZE - (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE);
-		else
-			available_space_in_log = 0;
-
-		if (unlikely(available_space_in_log < kv_size)) {
-			/*pad with zeroes remaining bytes in segment*/
-			key_addr = (void *)((uint64_t)handle->db_desc->KV_log_last_segment +
-					    (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
-			memset(key_addr, 0x00, available_space_in_log);
-
-			allocated_space = kv_size + sizeof(segment_header);
-			allocated_space += BUFFER_SEGMENT_SIZE - (allocated_space % BUFFER_SEGMENT_SIZE);
-			/** this allocate() is left intentionally. KV log allocates space
-       * only from allocator
-       * */
-			d_header = (segment_header *)allocate_segment(handle, allocated_space, KV_LOG_ID,
-								      KV_LOG_EXPANSION);
-			memset(d_header->garbage_bytes, 0x00, 2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
-			d_header->next_segment = NULL;
-			handle->db_desc->KV_log_last_segment->next_segment = (void *)((uint64_t)d_header - MAPPED);
-			handle->db_desc->KV_log_last_segment = d_header;
-			handle->db_desc->KV_log_size +=
-				(available_space_in_log +
-				 sizeof(segment_header)); /* position the log to the newly added block */
-		}
-
-		if (prev) {
-			key_addr = (void *)((uint64_t)db_desc->KV_log_last_segment +
-					    (db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
-			db_desc->KV_log_size += kv_size;
-			prev->kv_dest = key_addr;
-			prev->ready = 1;
-			kv_size = 0;
-			__sync_synchronize();
-		}
-
-		if (!next)
-			goto empty_list;
-		prev = next;
-	}
-}
-
-thread_dest *__attribute__((noinline)) __enqueue_for_ticket(insertKV_request *req, thread_dest *new_node)
-{
-	thread_dest *temp = req->handle->db_desc->ticket_array;
-	while (!__sync_bool_compare_and_swap(&req->handle->db_desc->ticket_array, temp, new_node)) {
-		_mm_pause();
-		temp = req->handle->db_desc->ticket_array;
-	}
-	return temp;
-}
-
-
-static inline uint32_t jenkins_one_at_a_time_hash(char *key, int32_t len){
-    uint32_t hash;
-    int32_t i;
-
-    for(hash = i = 0; i < len; ++i){
-        hash += key[i];
-        hash += (hash << 10);
-        hash ^= (hash >> 6);
-    }
-
-    hash += (hash << 3);
-    hash ^= (hash >> 11);
-    hash += (hash << 15);
-    return hash;
-}
-#endif
-
 int prefix_compare(char *l, char *r, size_t prefix_size)
 {
 	return memcmp(l, r, prefix_size);
 }
 
-/*XXX TODO XXX REMOVE HEIGHT UNUSED VARIABLE*/
-void free_buffered(void *_handle, void *address, uint32_t num_bytes, int height)
+void bt_set_db_in_replicated_mode(db_handle *handle)
 {
-	(void)_handle;
-	(void)address;
-	(void)num_bytes;
-	(void)height;
-	log_info("gesalous fix update free_buffered");
-#if 0
-	db_handle *handle = (db_handle *)_handle;
-	uint64_t segment_id = (uint64_t)address - (uint64_t)handle->volume_desc->bitmap_end;
-	segment_id = segment_id - (segment_id % BUFFER_SEGMENT_SIZE);
-	segment_id = segment_id / BUFFER_SEGMENT_SIZE;
-#ifdef AGGRESIVE_FREE_POLICY
-	__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size), (unsigned long long)num_bytes);
-
-	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
-	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD)
-		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
-#else
-	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
-	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD) {
-		__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size),
-				     (unsigned long long)BUFFER_SEGMENT_SIZE);
-		/*dimap hook, release dram frame*/
-		if (dmap_dontneed(FD, ((uint64_t)address - MAPPED) / PAGE_SIZE, BUFFER_SEGMENT_SIZE / PAGE_SIZE) != 0) {
-			log_fatal("fatal ioctl failed");
-			exit(EXIT_FAILURE);
-		}
-		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
-		if (handle->db_desc->throttle_clients == STOP_INSERTS_DUE_TO_MEMORY_PRESSURE &&
-		    handle->db_desc->zero_level_memory_size <= ZERO_LEVEL_MEMORY_UPPER_BOUND) {
-			handle->db_desc->throttle_clients = NORMAL_OPERATION;
-			log_info("releasing clients");
-		}
-	}
-#endif
-#endif
+	handle->db_desc->is_in_replicated_mode = 1;
 	return;
+}
+
+void bt_decrease_level0_writers(db_handle *handle)
+{
+	if (!handle->db_desc->is_in_replicated_mode) {
+		log_fatal("DB %s is not in replicated mode you are not allowed to do that!");
+		exit(EXIT_FAILURE);
+	}
+	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
 }
 
 /**
@@ -898,6 +755,7 @@ finish_init:
 		MUTEX_INIT(&db_desc->levels[level_id].level_allocation_lock, NULL);
 		init_level_locktable(db_desc, level_id);
 		db_desc->levels[level_id].active_writers = 0;
+		db_desc->pending_replica_operations = 0;
 		/*check again which tree should be active*/
 		db_desc->levels[level_id].active_tree = 0;
 
@@ -1257,6 +1115,7 @@ void *append_key_value_to_log(log_operation *req)
 	if (available_space_in_log < data_size.kv_size) {
 		/*fill info for kreon master here*/
 		req->metadata->log_segment_addr = (uint64_t)handle->db_desc->KV_log_last_segment - MAPPED;
+		assert(req->metadata->log_segment_addr % SEGMENT_SIZE == 0);
 		req->metadata->log_offset_full_event = handle->db_desc->KV_log_size;
 		req->metadata->segment_id = handle->db_desc->KV_log_last_segment->segment_id;
 		req->metadata->log_padding = available_space_in_log;
@@ -1272,6 +1131,7 @@ void *append_key_value_to_log(log_operation *req)
 		allocated_space += BUFFER_SEGMENT_SIZE - (allocated_space % BUFFER_SEGMENT_SIZE);
 
 		d_header = seg_get_raw_log_segment(handle->volume_desc);
+		assert(((uint64_t)d_header - MAPPED) % SEGMENT_SIZE == 0);
 		memset(d_header->garbage_bytes, 0x00, 2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
 		d_header->segment_id = handle->db_desc->KV_log_last_segment->segment_id + 1;
 		d_header->next_segment = NULL;
@@ -1660,6 +1520,7 @@ void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *
 					     ins_req->metadata.tree_id, allocation_code);
 
 		d_header->next = NULL;
+		d_header->type = keyBlockHeader;
 		last_d_header = (IN_log_header *)(MAPPED + (uint64_t)node->header.last_IN_log_header);
 		last_d_header->next = (void *)((uint64_t)d_header - MAPPED);
 		node->header.last_IN_log_header = last_d_header->next;
@@ -2316,6 +2177,9 @@ release_and_retry:
 		retry = 0;
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 	}
 
 	retry = 1;
@@ -2333,6 +2197,9 @@ release_and_retry:
 	upper_level_nodes[size++] = guard_of_level;
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
+	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	}
 
 	mem_catalogue = ins_req->metadata.handle->volume_desc->mem_catalogue;
 
@@ -2545,8 +2412,13 @@ release_and_retry:
 	son->v2++; /*lamport counter*/
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);
+	// if (ins_req->metadata.level_id == 0 &&
+	// ins_req->metadata.handle->db_desc->is_in_replicated_mode)
+	//	return SUCCESS;
+	// else {
 	__sync_fetch_and_sub(num_level_writers, 1);
 	return SUCCESS;
+	//}
 }
 
 static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
@@ -2599,12 +2471,18 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
+	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	}
 	upper_level_nodes[size++] = guard_of_level;
 
 	if (db_desc->levels[level_id].root_w[ins_req->metadata.tree_id] == NULL ||
 	    db_desc->levels[level_id].root_w[ins_req->metadata.tree_id]->type == leafRootNode) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 		return FAILURE;
 	}
 
@@ -2626,11 +2504,19 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 			/*failed needs split*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
+			if (ins_req->metadata.level_id == 0 &&
+			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			}
 			return FAILURE;
 		} else if (son->epoch <= volume_desc->dev_catalogue->epoch) {
 			/*failed needs COW*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
+			if (ins_req->metadata.level_id == 0 &&
+			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			}
 			return FAILURE;
 		}
 
@@ -2664,6 +2550,9 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	if (son->numberOfEntriesInNode >= (uint32_t)leaf_order || son->epoch <= volume_desc->dev_catalogue->epoch) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 		return FAILURE;
 	}
 	/*Succesfully reached a bin (bottom internal node)*/
@@ -2676,6 +2565,11 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	son->v2++; /*lamport counter*/
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);
+	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode)
+	//	return SUCCESS;
+	//else {
 	__sync_fetch_and_sub(num_level_writers, 1);
+	//	return SUCCESS;
+	//}
 	return SUCCESS;
 }

@@ -39,11 +39,7 @@
 
 #define MAX_COUNTER_VERSIONS 4
 
-#define FIXED_SIZE_KEYS_NO
 #define PREFIX_SIZE 12
-
-#define COUNTER_SIZE 2097152 // stats for leaf scanner accesses
-#define COUNTER_THREASHOLD 1
 
 #define SPILL_BUFFER_SIZE 32 * 1024
 #define SIZEOF_LOG_BUFFER 8
@@ -77,15 +73,6 @@ extern unsigned long long ins_prefix_miss_l1;
 extern int32_t leaf_order;
 extern int32_t index_order;
 
-/*gxanth staff structures*/
-typedef struct thread_dest {
-	volatile struct thread_dest *next;
-	volatile void *kv_dest;
-	volatile unsigned kv_size;
-	volatile short ready;
-	char pad[40];
-} thread_dest;
-
 struct lookup_reply {
 	void *addr;
 	uint8_t lc_failed;
@@ -95,19 +82,14 @@ typedef enum {
 	leafNode = 590675399,
 	internalNode = 790393380,
 	rootNode = 742729384,
-	leafRootNode = 748939994, /*special case for a newly created tree*/
-	invalid
+	/*special case for a newly created tree*/
+	leafRootNode = 748939994,
+	keyBlockHeader = 99998888,
+	paddedSpace = 2222222
 } nodeType_t;
 
-typedef enum {
-	NOT_USED = 0,
-	IN_TRANSIT,
-	IN_TRANSIT_DIRTY,
-	READY_TO_PERSIST,
-	PERSISTED,
-} replica_tree_status;
-
 /*descriptor describing a spill operation and its current status*/
+
 typedef enum {
 	NO_SPILLING = 0,
 	SPILLING_IN_PROGRESS = 1,
@@ -131,14 +113,17 @@ typedef struct segment_header {
 
 /*Note IN stands for Internal Node*/
 typedef struct IN_log_header {
+	nodeType_t type;
 	void *next;
 	/*XXX TODO XXX, add garbage info in the future?*/
 } IN_log_header;
 
 /*leaf or internal node metadata, place always in the first 4KB data block*/
 typedef struct node_header {
+	nodeType_t type; /*internal or leaf node*/
+	int32_t height;
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
-                     perform copy on write*/
+               perform copy on write*/
 	uint64_t fragmentation;
 	volatile uint64_t v1;
 	volatile uint64_t v2;
@@ -146,9 +131,7 @@ typedef struct node_header {
 	IN_log_header *first_IN_log_header;
 	IN_log_header *last_IN_log_header;
 	uint64_t key_log_size;
-	int32_t height; /*0 are leaves, 1 are Bottom Internal nodes, and then we have
-                     INs and root*/
-	nodeType_t type; /*internal or leaf node*/
+
 	uint64_t numberOfEntriesInNode;
 	char pad[8];
 
@@ -214,19 +197,6 @@ typedef struct commit_log_info {
 	char pad[4072];
 } commit_log_info;
 
-#if 0
-/*used for tiering compactions at replicas*/
-#define MAX_FOREST_SIZE 124
-typedef struct forest {
-	node_header *tree_roots[MAX_FOREST_SIZE];
-	segment_header *tree_segment_list[MAX_FOREST_SIZE];
-	uint64_t total_keys_per_tree[MAX_FOREST_SIZE];
-	uint64_t end_of_log[MAX_FOREST_SIZE];
-	char tree_status[MAX_FOREST_SIZE];
-	char pad[4];
-} forest;
-#endif
-
 /**
  * db_descriptor is a soft state descriptor per open database. superindex
 *structure
@@ -270,8 +240,8 @@ typedef struct level_descriptor {
 	segment_header *first_segment[NUM_TREES_PER_LEVEL];
 	segment_header *last_segment[NUM_TREES_PER_LEVEL];
 	uint64_t offset[NUM_TREES_PER_LEVEL];
-	//Since we perform always KV separation we express it
-	//in number of keys
+	// Since we perform always KV separation we express it
+	// in number of keys
 	uint64_t level_size[NUM_TREES_PER_LEVEL];
 	uint64_t max_level_size;
 	int64_t active_writers;
@@ -281,6 +251,19 @@ typedef struct level_descriptor {
 	char in_recovery_mode;
 } level_descriptor;
 
+struct bt_compaction_callback_args {
+	sem_t sem;
+	struct db_descriptor *db_desc;
+	int src_level;
+	int src_tree;
+	int dst_level;
+	int dst_local_tree;
+	int dst_remote_tree;
+};
+
+typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
+typedef int (*bt_flush_replicated_logs)(void *);
+
 typedef struct db_descriptor {
 	char db_name[MAX_DB_NAME_SIZE];
 	level_descriptor levels[MAX_LEVELS];
@@ -289,11 +272,13 @@ typedef struct db_descriptor {
 #else
 	pthread_spinlock_t lock_log;
 #endif
-	//compaction daemon staff
+	// compaction daemon staff
 	pthread_t compaction_daemon;
 	sem_t compaction_daemon_interrupts;
 	pthread_cond_t client_barrier;
 	pthread_mutex_t client_barrier_lock;
+	bt_compaction_callback t;
+	bt_flush_replicated_logs fl;
 
 	pthread_spinlock_t back_up_segment_table_lock;
 	volatile segment_header *KV_log_first_segment;
@@ -303,24 +288,33 @@ typedef struct db_descriptor {
 	/*coordinates of the latest persistent L0*/
 	uint64_t L0_start_log_offset;
 	uint64_t L0_end_log_offset;
+	/*for kreonR sorry*/
+	int64_t pending_replica_operations;
 
 	commit_log_info *commit_log;
-	// uint64_t spilled_keys;
 	int32_t reference_count;
 	int32_t group_id;
 	int32_t group_index;
-	/*gxanth new staff*/
 	volatile char dirty;
+	/*this flag is set to 1 to let the storage engine know that its insert
+	 * path is a subset of a more complex path replicated path in kreonR.
+	 * if set decreasing the number of active writers for a db after
+	 * SUCCESSFULL insert operation takes place outside the library. This
+	 * operation takes place at the replication path after all replicas
+	 * acknowledge that they have received the mutation
+	 */
+	char is_in_replicated_mode;
 	enum db_status stat;
-	// void *(*createEmptyNode)(allocator_descriptor *allocator_desc, db_handle
-	// *handle, nodeType_t type,
-	//			 char allocation_code);
 } __attribute__((packed)) __attribute__((aligned)) db_descriptor;
 
 typedef struct db_handle {
 	volume_descriptor *volume_desc;
 	db_descriptor *db_desc;
 } db_handle;
+
+void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t);
+void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
+void bt_set_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 
 typedef struct recovery_request {
 	volume_descriptor *volume_desc;
@@ -362,7 +356,7 @@ typedef struct bt_mutate_req {
 	uint32_t log_padding;
 	uint32_t kv_size;
 	uint8_t level_id;
-	//uint32_t active_tree;
+	// uint32_t active_tree;
 	/*only for inserts >= level_1*/
 	uint8_t tree_id;
 	char key_format;
@@ -395,10 +389,14 @@ typedef struct delete_request {
 	void *key_buf;
 } delete_request;
 
-/* In case more operations are tracked in the log in the future such as transactions
-  you will need to change the request_type enumerator and the log_operation struct.
-  In the request_type you will add the name of the operation i.e. transactionOp and
-  in the log_operation you will add a pointer in the union with the new operation i.e. transaction_request.
+/* In case more operations are tracked in the log in the future such as
+  transactions
+  you will need to change the request_type enumerator and the log_operation
+  struct.
+  In the request_type you will add the name of the operation i.e. transactionOp
+  and
+  in the log_operation you will add a pointer in the union with the new
+  operation i.e. transaction_request.
 */
 typedef enum { insertOp, deleteOp, unknownOp } request_type;
 
@@ -448,6 +446,9 @@ typedef struct spill_data_totrigger {
 	int tree_to_spill;
 } spill_data_totrigger;
 
+void bt_set_db_in_replicated_mode(db_handle *handle);
+void bt_decrease_level0_writers(db_handle *handle);
+
 uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size);
 uint8_t _insert_key_value(bt_insert_req *ins_req);
 void *append_key_value_to_log(log_operation *req);
@@ -460,8 +461,6 @@ int8_t delete_key(db_handle *handle, void *key, uint32_t size);
 
 int64_t _tucana_key_cmp(void *index_key_buf, void *query_key_buf, char index_key_format, char query_key_format);
 int prefix_compare(char *l, char *r, size_t unused);
-
-void free_buffered(void *_handle, void *address, uint32_t num_bytes, int height);
 
 /*functions used from other parts except btree/btree.c*/
 
@@ -477,6 +476,7 @@ void print_node(node_header *node);
 void print_key(void *);
 
 lock_table *_find_position(lock_table **table, node_header *node);
+
 #define MIN(x, y) ((x > y) ? (y) : (x))
 #define KEY_SIZE(x) (*(uint32_t *)x)
 #define KV_MAX_SIZE (4096 + 8)

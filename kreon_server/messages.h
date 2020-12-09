@@ -9,7 +9,8 @@
 #include <semaphore.h>
 #include <time.h>
 #include "conf.h"
-
+#define MSG_MAX_REGION_KEY_SIZE 256
+#define MAX_REPLICA_INDEX_BUFFERS 8
 enum message_type {
 
 	PUT_REQUEST = 1,
@@ -22,16 +23,16 @@ enum message_type {
 	MULTI_GET_REPLY,
 	DELETE_REQUEST,
 	DELETE_REPLY,
-	/*server2server*/
+	/*server2server data replication*/
 	FLUSH_COMMAND_REP,
 	FLUSH_COMMAND_REQ,
 	GET_LOG_BUFFER_REQ,
 	GET_LOG_BUFFER_REP,
-	SPILL_INIT,
-	SPILL_INIT_ACK,
-	SPILL_BUFFER_REQUEST,
-	SPILL_COMPLETE,
-	SPILL_COMPLETE_ACK,
+	/*server2server index transfer*/
+	REPLICA_INDEX_GET_BUFFER_REQ,
+	REPLICA_INDEX_GET_BUFFER_REP,
+	REPLICA_INDEX_FLUSH_REQ,
+	REPLICA_INDEX_FLUSH_REP,
 	/*control stuff*/
 	RESET_BUFFER,
 	RESET_BUFFER_ACK,
@@ -53,6 +54,7 @@ enum message_type {
 };
 
 typedef enum receive_options { SYNC_REQUEST = 2, ASYNC_REQUEST, BUSY_WAIT } receive_options;
+
 typedef struct msg_key {
 	uint32_t size;
 	char key[];
@@ -73,29 +75,15 @@ typedef struct msg_header {
 	uint16_t type; // Type of the message: PUT_REQUEST, PUT_REPLY, GET_QUERY, GET_REPLY, etc.
 	uint8_t error_code;
 
-	//uint32_t value; //Number of operations included in the payload
 	volatile uint64_t local_offset; //Offset regarding the local Memory region
 	volatile uint64_t remote_offset; //Offset regarding the remote Memory region
-	//From Client to head, local_offset == remote_offset
-	//From head to replica1, it could be that local_offset != remote_offset
-	//(real CHAIN implementation should be equal, since head only puts and tail only gets)
-	//From replica-i to replica-i+1, local_offset == remote_offset
-	/*<gesalous>*/
-	/*for asynchronous requests*/
-	//void *callback_function_args;
-	//void (*callback_function)(void *args);
-	/*</gesalous>*/
 
-	void *reply_message; /* Filled by the receiving side on arrival of a message. If request_message_local_addr of
-													 a received message is not NULL the receiving side uses the request_message_local_addr to
-													 find the initial message and fill its reply_message field with the address of the new message*/
-
-	volatile void *request_message_local_addr; /* This field contains the local memory address of this message.
-																			 * It is piggybacked by the remote side to its
-																			 *  corresponding reply message. In this way
-																			 *  incoming messages can be associated with
+	/* This field contains the local memory address of this message.
+	  It is piggybacked by the remote side to its
+	  corresponding reply message. In this way
+	incoming messages can be associated with
 																			 *  the initial request messages*/
-
+	volatile void *request_message_local_addr;
 	/*gesalous staff also*/
 	volatile int32_t ack_arrived;
 	/*from most significant byte to less: <FUTURE_EXTENSION>, <FUTURE_EXTENSION>,
@@ -105,8 +93,12 @@ typedef struct msg_header {
 #ifdef CHECKSUM_DATA_MESSAGES
 	unsigned long hash; // [mvard] hash of data buffer
 #endif
-	void *data; /*Pointer to the first element of the Payload*/
-	void *next; /*Pointer to the "current" element of the payload. Initially equal to data*/
+	/*Pointer to the first element of the Payload*/
+	void *data;
+	/*Pointer to the "current" element of the payload. Initially equal to data*/
+	void *next;
+	/*groups related messages. 0 for independent*/
+	uint64_t session_id;
 	uint32_t receive;
 } msg_header;
 
@@ -213,8 +205,8 @@ struct msg_flush_cmd_req {
 	uint64_t segment_id;
 	uint64_t end_of_log;
 	uint64_t log_padding;
-
 	uint64_t tail;
+	uint32_t is_partial;
 	uint32_t log_buffer_id;
 	uint32_t region_key_size;
 	char region_key[];
@@ -222,6 +214,41 @@ struct msg_flush_cmd_req {
 
 struct msg_flush_cmd_rep {
 	uint32_t status;
+};
+
+/*server2server index transfers*/
+struct msg_replica_index_get_buffer_req {
+	uint64_t index_offset;
+	int level_id;
+	int buffer_size;
+	int num_buffers;
+	uint32_t region_key_size;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+};
+
+struct msg_replica_index_get_buffer_rep {
+	uint32_t status;
+	int num_buffers;
+	struct ibv_mr mr[MAX_REPLICA_INDEX_BUFFERS];
+};
+
+struct msg_replica_index_flush_req {
+	uint64_t primary_segment_offt;
+	uint64_t seg_hash;
+	uint64_t root_w;
+	uint64_t root_r;
+	int level_id;
+	int tree_id;
+	int seg_id;
+	int is_last;
+
+	uint32_t region_key_size;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+};
+
+struct msg_replica_index_flush_rep {
+	int seg_id;
+	int status;
 };
 
 int push_buffer_in_msg_header(struct msg_header *data_message, char *buffer, uint32_t buffer_length);

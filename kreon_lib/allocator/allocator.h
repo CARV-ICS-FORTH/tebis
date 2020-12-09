@@ -165,7 +165,7 @@ typedef struct volume_descriptor {
 	/*</log_size for free ops start and end>*/
 	void *latest_addr; /* location, where the last allocation took place */
 	uint32_t full; /* value is set to 2 after a non-successfull allocation operation for a given size.*/
-	int64_t max_suffix; /*After a non successfull allocation op, this value is set to max_suffix found.
+	uint64_t max_suffix; /*After a non successfull allocation op, this value is set to max_suffix found.
 			      This is used for indicating to future allocation operations if they should search
 			      a given bitmap-zone or not.*/
 	uint16_t *segment_utilization_vector;

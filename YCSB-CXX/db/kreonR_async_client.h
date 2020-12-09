@@ -55,7 +55,7 @@ void get_callback(void *cnxt)
 static uint64_t reply_counter;
 }
 
-#define ZK_HOST "192.168.1.124"
+#define ZK_HOST "192.168.1.122"
 #define ZK_PORT 2181
 #define FIELD_COUNT 10
 #define MAX_THREADS 128

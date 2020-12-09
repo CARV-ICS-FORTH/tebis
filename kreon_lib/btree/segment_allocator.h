@@ -26,6 +26,7 @@ leaf_node *seg_get_leaf_node_header(volume_descriptor *volume_desc, level_descri
 
 void seg_free_leaf_node(volume_descriptor *volume_desc, level_descriptor *level_desc, uint8_t tree_id, leaf_node *leaf);
 
+segment_header *seg_get_raw_index_segment(volume_descriptor *volume_desc, level_descriptor *level_desc, int tree_id);
 /*log related*/
 segment_header *seg_get_raw_log_segment(volume_descriptor *volume_desc);
 void free_raw_segment(volume_descriptor *volume_desc, segment_header *segment);
