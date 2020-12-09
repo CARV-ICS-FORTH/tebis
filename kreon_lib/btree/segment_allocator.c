@@ -33,23 +33,26 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 		MUTEX_LOCK(&volume_desc->allocator_lock);
 		new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, reason);
 		MUTEX_UNLOCK(&volume_desc->allocator_lock);
-		if (segment_id) {
+		if (level_desc->offset[tree_id]) {
+			//log_info("Adding another index segmet for [%u] available_space = %d", tree_id, available_space);
 			/*chain segments*/
 			new_segment->next_segment = NULL;
 			new_segment->prev_segment =
 				(segment_header *)((uint64_t)level_desc->last_segment[tree_id] - MAPPED);
+
 			level_desc->last_segment[tree_id]->next_segment =
 				(segment_header *)((uint64_t)new_segment - MAPPED);
 			level_desc->last_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id]->segment_id = segment_id + 1;
 			level_desc->offset[tree_id] += (available_space + sizeof(segment_header));
 		} else {
+			//log_info("Adding first index segmet for [%u]",tree_id);
 			/*special case for the first segment for this level*/
 			new_segment->next_segment = NULL;
 			new_segment->prev_segment = NULL;
 			level_desc->first_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id] = new_segment;
-			level_desc->last_segment[tree_id]->segment_id = 1;
+			level_desc->last_segment[tree_id]->segment_id = 0;
 			level_desc->offset[tree_id] = sizeof(segment_header);
 		}
 		offset_in_segment = level_desc->offset[tree_id] % SEGMENT_SIZE;
@@ -177,6 +180,29 @@ void seg_free_leaf_node(volume_descriptor *volume_desc, level_descriptor *level_
 	free_block(volume_desc, leaf, LEAF_NODE_SIZE, -1);
 }
 
+segment_header *seg_get_raw_index_segment(volume_descriptor *volume_desc, level_descriptor *level_desc, int tree_id)
+{
+	segment_header *sg;
+	MUTEX_LOCK(&volume_desc->allocator_lock);
+	sg = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, KV_LOG_EXPANSION);
+	if (level_desc->first_segment[tree_id] == NULL) {
+		level_desc->first_segment[tree_id] = sg;
+		level_desc->first_segment[tree_id]->segment_id = 0;
+		level_desc->last_segment[tree_id] = sg;
+		level_desc->last_segment[tree_id]->next_segment = NULL;
+		level_desc->offset[tree_id] = SEGMENT_SIZE;
+	} else {
+		uint64_t id = level_desc->last_segment[tree_id]->segment_id + 1;
+		level_desc->last_segment[tree_id]->next_segment = (void *)(uint64_t)sg - MAPPED;
+		level_desc->last_segment[tree_id] = sg;
+		level_desc->last_segment[tree_id]->next_segment = NULL;
+		level_desc->offset[tree_id] += SEGMENT_SIZE;
+		level_desc->last_segment[tree_id]->segment_id = id;
+	}
+	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	return sg;
+}
+
 segment_header *seg_get_raw_log_segment(volume_descriptor *volume_desc)
 {
 	segment_header *sg;
@@ -270,7 +296,10 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);
 
 	curr_segment = handle->db_desc->levels[level_id].first_segment[tree_id];
-	assert(curr_segment != NULL);
+	if (curr_segment == NULL) {
+		log_warn("trying to free an empty level valid in case of replicas");
+		return;
+	}
 	while (1) {
 #if 0
 		if (spill_task_desc->region->db->volume_desc->segment_utilization_vector[s_id] != 0 &&
