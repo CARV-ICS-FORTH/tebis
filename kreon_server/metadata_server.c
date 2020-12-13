@@ -772,6 +772,10 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_mutex_init(&r_desc->region_lock, NULL);
 			utils_queue_init(&r_desc->halted_tasks);
 			r_desc->status = KRM_OPEN;
+			r_desc->replica_log_map = NULL;
+			for (int i = 0; i < MAX_LEVELS; i++)
+				r_desc->replica_index_map[i] = NULL;
+
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
 			/*find system ref*/
@@ -1180,8 +1184,10 @@ void *krm_metadata_server(void *args)
 
 				assert(r_desc->status = KRM_OPENING);
 				r_desc->status = KRM_OPEN;
-
 				/*this copies r_desc struct to the regions array!*/
+				r_desc->replica_log_map = NULL;
+				for (int i = 0; i < MAX_LEVELS; i++)
+					r_desc->replica_index_map[i] = NULL;
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
 				/*find system ref*/
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,

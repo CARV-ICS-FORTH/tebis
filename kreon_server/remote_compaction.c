@@ -82,6 +82,10 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 
 int rco_flush_last_log_segment(void *handle)
 {
+#ifdef RCO_DISABLE_REMOTE_COMPACTIONS
+	log_info("Ommiting flush last log segment");
+	return 1;
+#endif
 	struct db_handle *hd = (struct db_handle *)handle;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
@@ -122,7 +126,7 @@ int rco_flush_last_log_segment(void *handle)
 	spin_loop(&(hd->db_desc->pending_replica_operations), 0);
 	log_info("pending replica operations DONE");
 	/*Now check what is the rdma's buffer id which corresponds to the last
-   * segment*/
+* segment*/
 	uint64_t lc1 = 0;
 	uint64_t lc2 = 0;
 	int seg_id_to_flush = -1;
@@ -143,6 +147,7 @@ int rco_flush_last_log_segment(void *handle)
 	}
 	if (seg_id_to_flush == -1) {
 		log_fatal("Can't find segment id of the last segment");
+		assert(0);
 		exit(EXIT_FAILURE);
 	}
 
@@ -228,6 +233,10 @@ retry_allocate:
 
 int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
+#ifdef RCO_DISABLE_REMOTE_COMPACTIONS
+	log_info("ommiting");
+	return 1;
+#endif
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
 
@@ -248,9 +257,9 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	t->curr_index_segment = t->r_desc->db->db_desc->levels[c->dst_level].first_segment[c->dst_local_tree];
 	t->index_offset = t->r_desc->db->db_desc->levels[c->dst_level].offset[c->dst_local_tree];
 	log_info("Segments of index[%d][%d]", c->dst_level, c->dst_local_tree);
-	//struct segment_header *S = t->curr_index_segment;
-	//int id = 0;
-	//while(1){
+	// struct segment_header *S = t->curr_index_segment;
+	// int id = 0;
+	// while(1){
 	//	log_info("Seg no %d",id);
 	//	id++;
 	//	if(S->next_segment == NULL)
@@ -372,11 +381,11 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 		case RIS_CHECK_BUFFER_DIRTY: {
 			int seg_id = task->seg_id_to_send % MAX_REPLICA_INDEX_BUFFERS;
 			if (task->local_mem_buf_dirty[seg_id]) {
-				//log_info("Buffer dirty wait for flush acks");
+				// log_info("Buffer dirty wait for flush acks");
 				task->state = RIS_WAIT_FOR_FLUSH_REP;
 				break;
 			}
-			//log_info("buffer ok send rdma write with the segment");
+			// log_info("buffer ok send rdma write with the segment");
 			for (int i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				task->rpc[i][seg_id].valid = 0;
 				task->rpc[i][seg_id].reply_pending = 1;
@@ -399,7 +408,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 					if (*tail != TU_RDMA_REGULAR_MSG)
 						return;
 					/*unroll the reply*/
-					//log_info("Got flush rep from replica id %u  for seg_id: %d from my group "
+					// log_info("Got flush rep from replica id %u  for seg_id: %d from my
+					// group "
 					//	 "for db: %s of tree[%d][%d]",
 					//	 i, task->seg_id_to_send, task->r_desc->db->db_desc->db_name,
 					//	 task->level_id, task->tree_id);
@@ -428,9 +438,11 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			int seg_id = task->seg_id_to_send % MAX_REPLICA_INDEX_BUFFERS;
 			/*copy index segment to the local rdma buffer*/
 			memcpy(task->local_mem_buf[seg_id]->addr, task->curr_index_segment, SEGMENT_SIZE);
-			//task->seg_hash[seg_id] =
-			//	djb2_hash((unsigned char *)task->local_mem_buf[seg_id]->addr, SEGMENT_SIZE);
-			//log_info("Hash for seg[%u] = %llu seg id (to send) %lu", seg_id, task->seg_hash[seg_id],
+			// task->seg_hash[seg_id] =
+			//	djb2_hash((unsigned char *)task->local_mem_buf[seg_id]->addr,
+			//SEGMENT_SIZE);
+			// log_info("Hash for seg[%u] = %llu seg id (to send) %lu", seg_id,
+			// task->seg_hash[seg_id],
 			//	 task->seg_id_to_send);
 			task->local_mem_buf_dirty[seg_id] = 1;
 			/*send it to the group via rdma writes*/
@@ -466,7 +478,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			} else {
 				task->curr_index_segment =
 					(struct segment_header *)(MAPPED + task->curr_index_segment->next_segment);
-				//log_info("Done sending seg %lu more to come with rdma write "
+				// log_info("Done sending seg %lu more to come with rdma write "
 				//	 "now send a flush command",
 				//		 task->seg_id_to_send);
 				task->is_seg_last = 0;
@@ -512,7 +524,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 						memset(&task->rpc[i][j].rdma_buf, 0x00, sizeof(struct sc_msg_pair));
 						task->rpc[i][j].reply_pending = 0;
 
-						//log_info("SUCCESS! for Flush index failed for seg_id %d stat is %d",
+						// log_info("SUCCESS! for Flush index failed for seg_id %d stat is
+						// %d",
 						//	 f_rep->seg_id, f_rep->status);
 					}
 				}
@@ -559,8 +572,9 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				f_req->level_id = task->level_id;
 				f_req->tree_id = task->tree_id;
 				f_req->seg_id = task->seg_id_to_flush;
-				//f_req->seg_hash = task->seg_hash[f_req->seg_id];
-				//log_info("Attached hash seg[%u] = %llu", f_req->seg_id, f_req->seg_hash);
+				// f_req->seg_hash = task->seg_hash[f_req->seg_id];
+				// log_info("Attached hash seg[%u] = %llu", f_req->seg_id,
+				// f_req->seg_hash);
 				f_req->is_last = task->is_seg_last;
 				if (task->is_seg_last) {
 					if (task->r_desc->db->db_desc->levels[task->level_id]
@@ -590,6 +604,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 
 				task->rpc[i][seg_id].rdma_buf.request->request_message_local_addr =
 					task->rpc[i][seg_id].rdma_buf.request;
+				task->rpc[i][seg_id].rdma_buf.request->session_id = (uint64_t)task;
 				__send_rdma_message(task->rpc[i][seg_id].rdma_buf.conn,
 						    task->rpc[i][seg_id].rdma_buf.request, NULL);
 				task->rpc[i][seg_id].valid = 1;
