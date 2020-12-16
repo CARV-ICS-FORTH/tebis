@@ -623,7 +623,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 			if (job == NULL)
 				assert(0);
 			break;
-			/*remote compaction related*/
+		/*remote compaction related*/
 		case REPLICA_INDEX_GET_BUFFER_REQ:
 		case REPLICA_INDEX_GET_BUFFER_REP:
 		case REPLICA_INDEX_FLUSH_REQ:
@@ -776,6 +776,40 @@ void _update_connection_score(int spinning_list_type, connection_rdma *conn)
 		++conn->idle_iterations;
 }
 
+static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
+{
+	/*check for resumed tasks to be rescheduled*/
+	for (int i = 0; i < DS_POOL_NUM; i++) {
+		struct krm_work_task *task;
+		task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		if (task != NULL) {
+			assert(task->r_desc != NULL);
+			// log_info("Rescheduling task");
+			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
+			if (rc == KREON_FAILURE) {
+				log_fatal("Failed to reschedule task");
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+}
+
+static void ds_check_idle_workers(struct ds_spinning_thread *spinner)
+{
+	int max_idle_time_usec = globals_get_worker_spin_time_usec();
+	for (int i = 0; i < spinner->num_workers; ++i) {
+		uint32_t queue_size = utils_queue_used_slots(&spinner->worker[i].work_queue);
+		if (spinner->worker[i].idle_time > max_idle_time_usec && queue_size == 0 &&
+		    spinner->worker[i].status == BUSY)
+			spinner->worker[i].status = IDLE_SLEEPING;
+		else if (queue_size > 0 && spinner->worker[i].status == IDLE_SLEEPING) {
+			spinner->worker[i].status = BUSY;
+			sem_post(&spinner->worker[i].sem);
+		}
+	}
+}
+
 static void *server_spinning_thread_kernel(void *args)
 {
 	struct msg_header *hdr;
@@ -863,15 +897,11 @@ static void *server_spinning_thread_kernel(void *args)
 	}
 
 	int count = 0;
-	int max_idle_time_usec = globals_get_worker_spin_time_usec();
+
+	// int max_idle_time_usec = globals_get_worker_spin_time_usec();
 
 	while (1) {
-		/*in cases where there are no connections stop spinning (optimization)*/
-		// if (!channel->spin_num[spinning_thread_id])
-		//	sem_wait(&channel->sem_spinning[spinning_thread_id]);
-
-		/*gesalous, iterate the connection list of this channel for new
-* messages*/
+		// gesalous, iterate the connection list of this channel for new messages
 		if (count < 10) {
 			node = spinner->conn_list->first;
 			spinning_list_type = HIGH_PRIORITY;
@@ -882,29 +912,34 @@ static void *server_spinning_thread_kernel(void *args)
 		}
 
 		prev_node = NULL;
+		ds_resume_halted_tasks(spinner);
+		ds_check_idle_workers(spinner);
 
 		while (node != NULL) {
 			/*check for resumed tasks to be rescheduled*/
-			for (int i = 0; i < DS_POOL_NUM; i++) {
-				struct krm_work_task *task;
-				task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-				if (task != NULL) {
-					assert(task->r_desc != NULL);
-					// log_info("Rescheduling task");
-					rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
-					if (rc == KREON_FAILURE) {
-						log_fatal("Failed to reschedule task");
-						assert(0);
-						exit(EXIT_FAILURE);
-					}
-				}
-			}
-			for (int i = 0; i < spinner->num_workers; ++i) {
-				if (spinner->worker[i].idle_time > max_idle_time_usec &&
-				    utils_queue_used_slots(&spinner->worker[i].work_queue) == 0 &&
-				    spinner->worker[i].status == BUSY)
-					spinner->worker[i].status = IDLE_SLEEPING;
-			}
+			// for (int i = 0; i < DS_POOL_NUM; i++) {
+			//	struct krm_work_task *task;
+			//	task =
+			//utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+			//	if (task != NULL) {
+			//		assert(task->r_desc != NULL);
+			// log_info("Rescheduling task");
+			//		rc = assign_job_to_worker(spinner, task->conn,
+			//task->msg, task);
+			//		if (rc == KREON_FAILURE) {
+			//			log_fatal("Failed to reschedule task");
+			//			assert(0);
+			//			exit(EXIT_FAILURE);
+			//		}
+			//	}
+			//}
+			// for (int i = 0; i < spinner->num_workers; ++i) {
+			//	if (spinner->worker[i].idle_time > max_idle_time_usec &&
+			//	    utils_queue_used_slots(&spinner->worker[i].work_queue) == 0
+			//&&
+			//	    spinner->worker[i].status == BUSY)
+			//		spinner->worker[i].status = IDLE_SLEEPING;
+			//}
 
 			conn = (connection_rdma *)node->data;
 
@@ -926,11 +961,9 @@ static void *server_spinning_thread_kernel(void *args)
 				hdr->receive = 0;
 				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
 				if (rc == KREON_FAILURE) {
-					/*all workers are busy let's see messages from other
-* connections*/
+					// all workers are busy let's see messages from other connections
 					//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
-					/*Caution! message not consumed leave the rendezvous points as
-* is*/
+					// Caution! message not consumed leave the rendezvous points as is
 					hdr->receive = recv;
 					goto iterate_next_element;
 				}
@@ -1856,17 +1889,17 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		struct segment_header *seg = seg_get_raw_index_segment(
 			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
 		seg->next_segment = NULL;
-		// uint64_t s =
-		//	djb2_hash((unsigned char *)r_desc->r_state
-		//			  ->index_buffers[f_req->level_id][f_req->seg_id %
-		//MAX_REPLICA_INDEX_BUFFERS]
-		//			  ->addr,
-		//		  SEGMENT_SIZE);
-		// assert(s == f_req->seg_hash);
-		// log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
-		memcpy(seg,
-		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr,
-		       SEGMENT_SIZE);
+		uint64_t s =
+			djb2_hash((unsigned char *)r_desc->r_state
+					  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
+					  ->addr,
+				  SEGMENT_SIZE);
+		assert(s == f_req->seg_hash);
+		log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
+		memcpy((char *)((uint64_t)seg + sizeof(segment_header)),
+		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr +
+			       sizeof(struct segment_header),
+		       SEGMENT_SIZE - sizeof(segment_header));
 		// add mapping to level's hash table
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = f_req->primary_segment_offt;
@@ -2864,6 +2897,9 @@ int main(int argc, char *argv[])
 			server->spinner.root_server_id = server_idx;
 			server->meta_server.root_server_id = server_idx;
 			server->rdma_port = rdma_port;
+			server->meta_server.ld_regions = NULL;
+			server->meta_server.dataservers_map = NULL;
+
 			server->meta_server.RDMA_port = rdma_port;
 			for (int j = 0; j < num_workers; j++)
 				server->spinner.worker[j].worker_id = workers_id[j];

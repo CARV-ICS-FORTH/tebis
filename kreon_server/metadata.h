@@ -281,7 +281,7 @@ struct krm_region_desc {
 };
 
 struct krm_ds_regions {
-	struct krm_region_desc r_desc[KRM_MAX_DS_REGIONS];
+	struct krm_region_desc *r_desc[KRM_MAX_DS_REGIONS];
 	uint64_t lamport_counter_1;
 	uint64_t lamport_counter_2;
 	uint32_t num_ds_regions;

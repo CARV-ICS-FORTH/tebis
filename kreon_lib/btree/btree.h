@@ -284,6 +284,8 @@ typedef int (*bt_flush_replicated_logs)(void *);
 typedef struct db_descriptor {
 	char db_name[MAX_DB_NAME_SIZE];
 	level_descriptor levels[MAX_LEVELS];
+	/*for kreonR sorry*/
+	int64_t pending_replica_operations;
 #if LOG_WITH_MUTEX
 	pthread_mutex_t lock_log;
 #else
@@ -305,9 +307,6 @@ typedef struct db_descriptor {
 	/*coordinates of the latest persistent L0*/
 	uint64_t L0_start_log_offset;
 	uint64_t L0_end_log_offset;
-	/*for kreonR sorry*/
-	int64_t pending_replica_operations;
-
 	commit_log_info *commit_log;
 	int32_t reference_count;
 	int32_t group_id;

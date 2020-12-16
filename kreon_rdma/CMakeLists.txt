@@ -2,6 +2,20 @@
 
 # add_library(turdma STATIC memory_regions.c tu_rdma.c
 # ../kreon/allocator/list.c)
+
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+  set(CMAKE_C_FLAGS
+      "-Wstrict-prototypes -Wall -Wextra -std=gnu11 -fPIC ${CMAKE_C_FLAGS}"
+  )# -Werror
+  set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -Og ${CMAKE_C_FLAGS_DEBUG}")
+endif()
+
+if(CMAKE_BUILD_TYPE EQUAL "Release")
+  set(CMAKE_C_FLAGS_RELEASE
+      "-flto -fwhopr -funit-at-a-time -fprefetch-loop-arrays -fpeel-loops -O2 -finline-functions -DNDEBUG ${CMAKE_C_FLAGS_RELEASE}"
+  ) # -Werror
+endif()
+
 set(CMAKE_SHARED_LINKER_FLAGS
     "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lzookeeper_mt")
 
