@@ -665,9 +665,11 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 * become a round robin policy since the worker_id will be incremented
 * at for every task.
 */
-	if (fifo_ordering)
-		worker_id = msg->session_id % spinner->num_workers;
-	else {
+	if (fifo_ordering) {
+		uint64_t hash = djb2_hash((unsigned char *)&msg->session_id, sizeof(uint64_t));
+		worker_id = hash % spinner->num_workers;
+		//log_warn("fifo worker id %d chosen for session id %llu", worker_id, msg->session_id);
+	} else {
 		// 1. Round robin with threshold
 		if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
 			/* Find an active worker with used_slots < max_queued_jobs
