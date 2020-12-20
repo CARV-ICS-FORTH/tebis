@@ -5,6 +5,7 @@
  */
 #pragma once
 #include <semaphore.h>
+#include "conf.h"
 #include "../../build/config.h"
 #include "../allocator/allocator.h"
 #include "uthash.h"
@@ -35,7 +36,6 @@
 
 /*hierarchy of trees parameters*/
 #define MAX_LEVELS 8
-#define NUM_TREES_PER_LEVEL 2
 
 #define MAX_COUNTER_VERSIONS 4
 

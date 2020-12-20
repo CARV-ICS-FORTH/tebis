@@ -75,35 +75,34 @@ void *compaction_daemon(void *args)
 		/*can I set a different active tree for L0*/
 		int active_tree = db_desc->levels[0].active_tree;
 		if (db_desc->levels[0].tree_status[active_tree] == SPILLING_IN_PROGRESS) {
-			for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
-				if (db_desc->levels[0].tree_status[i] == NO_SPILLING) {
-					/*Acquire guard lock and wait writers to finish*/
-					if (RWLOCK_WRLOCK(&(handle->db_desc->levels[0].guard_of_level.rx_lock))) {
-						log_fatal("Failed to acquire guard lock");
-						exit(EXIT_FAILURE);
-					}
-					spin_loop(&(comp_req->db_desc->levels[0].active_writers), 0);
-
-					/*done now atomically change active tree*/
-
-					while (!__sync_bool_compare_and_swap(&db_desc->levels[0].active_tree,
-									     db_desc->levels[0].active_tree, i)) {
-					}
-
-					/*Release guard lock*/
-					if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
-						log_fatal("Failed to acquire guard lock");
-						exit(EXIT_FAILURE);
-					}
-
-					pthread_mutex_lock(&db_desc->client_barrier_lock);
-					if (pthread_cond_broadcast(&db_desc->client_barrier) != 0) {
-						log_fatal("Failed to wake up stopped clients");
-						exit(EXIT_FAILURE);
-					}
-					pthread_mutex_unlock(&db_desc->client_barrier_lock);
+			int next_active_tree = active_tree + 1;
+			if (next_active_tree >= NUM_TREES_PER_LEVEL)
+				next_active_tree = 0;
+			//for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
+			if (db_desc->levels[0].tree_status[next_active_tree] == NO_SPILLING) {
+				/*Acquire guard lock and wait writers to finish*/
+				if (RWLOCK_WRLOCK(&(handle->db_desc->levels[0].guard_of_level.rx_lock))) {
+					log_fatal("Failed to acquire guard lock");
+					exit(EXIT_FAILURE);
 				}
+				spin_loop(&(comp_req->db_desc->levels[0].active_writers), 0);
+
+				db_desc->levels[0].active_tree = next_active_tree; //i
+
+				/*Release guard lock*/
+				if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
+					log_fatal("Failed to acquire guard lock");
+					exit(EXIT_FAILURE);
+				}
+
+				pthread_mutex_lock(&db_desc->client_barrier_lock);
+				if (pthread_cond_broadcast(&db_desc->client_barrier) != 0) {
+					log_fatal("Failed to wake up stopped clients");
+					exit(EXIT_FAILURE);
+				}
+				pthread_mutex_unlock(&db_desc->client_barrier_lock);
 			}
+			//}
 		}
 
 		/*Now fire up (if needed) the spill/compaction from L0 to L1*/
@@ -491,7 +490,8 @@ void *compaction(void *_comp_req)
 	// log_info("DONE Cleaning src level tree [%u][%u] snapshotting...",
 	// comp_req->src_level, comp_req->src_tree);
 	/*interrupt compaction daemon*/
-	snapshot(comp_req->volume_desc);
+	log_info("Caution ommiting snapshot XXX");
+	//snapshot(comp_req->volume_desc);
 
 	/*wake up clients*/
 	if (comp_req->src_level == 0) {
