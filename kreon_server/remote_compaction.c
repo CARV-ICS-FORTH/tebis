@@ -13,12 +13,13 @@
 extern void on_completion_client(struct rdma_message_context *);
 
 struct rco_db_map_entry {
-	uint64_t kreon_db_desc;
+	struct db_descriptor *db_desc;
 	struct krm_region_desc *r_desc;
 	struct rco_pool *pool;
 	UT_hash_handle hh;
 };
 static struct rco_db_map_entry *db_map = NULL;
+static pthread_mutex_t db_map_lock = PTHREAD_MUTEX_INITIALIZER;
 
 enum rco_task_status {
 	RIS_INIT_ENV = 0,
@@ -61,7 +62,7 @@ struct rco_task {
 	uint32_t seg_id_to_send;
 	uint32_t seg_id_to_flush;
 	uint32_t msg_id_to_send;
-	int replica_id_cnt;
+	uint32_t replica_id_cnt;
 	int is_seg_last;
 	int level_id;
 	int tree_id;
@@ -82,20 +83,27 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 
 int rco_flush_last_log_segment(void *handle)
 {
-#ifdef RCO_DISABLE_REMOTE_COMPACTIONS
+#if RCO_DISABLE_REMOTE_COMPACTIONS
 	log_info("Ommiting flush last log segment");
 	return 1;
 #endif
 	struct db_handle *hd = (struct db_handle *)handle;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
-
+	pthread_mutex_lock(&db_map_lock);
 	HASH_FIND_PTR(db_map, &hd->db_desc, db_entry);
 	if (db_entry == NULL) {
 		log_fatal("Cannot find pool for db %s", hd->db_desc->db_name);
 		exit(EXIT_FAILURE);
 	}
+	pthread_mutex_unlock(&db_map_lock);
+
 	struct krm_region_desc *r_desc = db_entry->r_desc;
+	assert(strcmp(r_desc->region->id, hd->db_desc->db_name) == 0);
+	if (r_desc->region->num_of_backup == 0) {
+		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		return 1;
+	}
 	/*Acquire guard lock and wait writers to finish*/
 	int ret = RWLOCK_WRLOCK(&(hd->db_desc->levels[0].guard_of_level.rx_lock));
 	if (ret) {
@@ -212,9 +220,7 @@ retry_allocate:
 		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->pay_len +
 					       reply->padding_and_tail) -
 					      TU_TAIL_SIZE);
-		dummy = 0;
-		while (*tail != TU_RDMA_REGULAR_MSG)
-			++dummy;
+		wait_for_value(tail, TU_RDMA_REGULAR_MSG);
 	}
 	log_info("Compaction daemon Sent flush command -- DONE motherfuckers!");
 	/*##############################################################*/
@@ -240,11 +246,13 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
 
+	pthread_mutex_lock(&db_map_lock);
 	HASH_FIND_PTR(db_map, &c->db_desc, db_entry);
 	if (db_entry == NULL) {
 		log_fatal("Cannot find pool for db %s", c->db_desc->db_name);
 		exit(EXIT_FAILURE);
 	}
+	pthread_mutex_unlock(&db_map_lock);
 
 	if (db_entry->r_desc->region->num_of_backup == 0) {
 		log_warn("Nothing to do for non replicated region %s", db_entry->r_desc->region->id);
@@ -386,7 +394,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				break;
 			}
 			// log_info("buffer ok send rdma write with the segment");
-			for (int i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				task->rpc[i][seg_id].valid = 0;
 				task->rpc[i][seg_id].reply_pending = 1;
 			}
@@ -396,7 +404,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 
 		case RIS_WAIT_FOR_FLUSH_REP: {
 			int seg_id = task->seg_id_to_send % MAX_REPLICA_INDEX_BUFFERS;
-			for (int i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				if (task->rpc[i][seg_id].valid && task->rpc[i][seg_id].reply_pending) {
 					if (task->rpc[i][seg_id].rdma_buf.request->receive != TU_RDMA_REGULAR_MSG)
 						return;
@@ -438,13 +446,25 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			int seg_id = task->seg_id_to_send % MAX_REPLICA_INDEX_BUFFERS;
 			/*copy index segment to the local rdma buffer*/
 			memcpy(task->local_mem_buf[seg_id]->addr, task->curr_index_segment, SEGMENT_SIZE);
-			// task->seg_hash[seg_id] =
-			//	djb2_hash((unsigned char *)task->local_mem_buf[seg_id]->addr,
-			//SEGMENT_SIZE);
-			// log_info("Hash for seg[%u] = %llu seg id (to send) %lu", seg_id,
-			// task->seg_hash[seg_id],
-			//	 task->seg_id_to_send);
+			task->seg_hash[seg_id] =
+				djb2_hash((unsigned char *)task->local_mem_buf[seg_id]->addr, SEGMENT_SIZE);
+			log_info("Hash for seg[%u] = %llu seg id (to send) %lu", seg_id, task->seg_hash[seg_id],
+				 task->seg_id_to_send);
 			task->local_mem_buf_dirty[seg_id] = 1;
+			// custom dbg to be removed
+			uint32_t *type = (uint32_t *)((char *)task->curr_index_segment + sizeof(segment_header));
+			switch (*type) {
+			case leafNode:
+			case internalNode:
+			case rootNode:
+			case leafRootNode:
+			case keyBlockHeader:
+			case paddedSpace:
+				break;
+			default:
+				log_fatal("Corrupted index segment");
+				assert(0);
+			}
 			/*send it to the group via rdma writes*/
 			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				while (1) {
@@ -489,7 +509,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 		}
 		case RIS_WAIT_FOR_ALL_PENDING_FLUSHES: {
 			for (int j = task->barrier_j; j < MAX_REPLICA_INDEX_BUFFERS; j++) {
-				for (int i = task->barrier_i; i < task->r_desc->region->num_of_backup; i++) {
+				for (uint32_t i = task->barrier_i; i < task->r_desc->region->num_of_backup; i++) {
 					if (task->rpc[i][j].valid && task->rpc[i][j].reply_pending) {
 						assert(task->local_mem_buf_dirty[j] == 1);
 						/*check if reply has arrived*/
@@ -551,7 +571,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			uint32_t request_size = sizeof(struct msg_replica_index_flush_req);
 			uint32_t reply_size = sizeof(struct msg_replica_index_flush_rep);
 			int seg_id = task->seg_id_to_flush % MAX_REPLICA_INDEX_BUFFERS;
-			for (int i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				if (task->rpc[i][seg_id].valid)
 					continue;
 
@@ -572,9 +592,9 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				f_req->level_id = task->level_id;
 				f_req->tree_id = task->tree_id;
 				f_req->seg_id = task->seg_id_to_flush;
-				// f_req->seg_hash = task->seg_hash[f_req->seg_id];
-				// log_info("Attached hash seg[%u] = %llu", f_req->seg_id,
-				// f_req->seg_hash);
+				f_req->seg_hash = task->seg_hash[f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS];
+				log_info("Attached hash seg[%u] = %llu", f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS,
+					 f_req->seg_hash);
 				f_req->is_last = task->is_seg_last;
 				if (task->is_seg_last) {
 					if (task->r_desc->db->db_desc->levels[task->level_id]
@@ -631,11 +651,13 @@ static void rco_destroy_node(NODE *node)
 }
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
 {
+	pthread_mutex_lock(&db_map_lock);
 	struct rco_db_map_entry *e = (struct rco_db_map_entry *)malloc(sizeof(struct rco_db_map_entry));
-	e->kreon_db_desc = (uint64_t)r_desc->db->db_desc;
+	e->db_desc = r_desc->db->db_desc;
 	e->r_desc = r_desc;
 	e->pool = pool;
-	HASH_ADD_PTR(db_map, kreon_db_desc, e);
+	HASH_ADD_PTR(db_map, db_desc, e);
+	pthread_mutex_unlock(&db_map_lock);
 }
 
 struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
@@ -656,7 +678,7 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 			exit(EXIT_FAILURE);
 		}
 		if (pthread_cond_init(&pool->worker_queue[i].queue_monitor, NULL)) {
-			log_fatal("Failed to initialize queueu monitor");
+			log_fatal("Failed to initialize queue monitor");
 			exit(EXIT_FAILURE);
 		}
 		pool->worker_queue[i].task_queue = init_list(rco_destroy_node);
@@ -714,6 +736,89 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 	pthread_mutex_unlock(&pool->worker_queue[chosen_id].queue_lock);
 	return 1;
 }
+
+#if RCO_BUILD_INDEX_AT_REPLICA
+void rco_build_index(struct rco_build_index_task *task)
+{
+	struct rco_key {
+		uint32_t size;
+		char key[];
+	};
+	struct rco_value {
+		uint32_t size;
+		char value[];
+	};
+
+	// parse log entries
+	char *kv = malloc(PREFIX_SIZE + sizeof(char *));
+	struct rco_key *key = NULL;
+	struct rco_value *value = NULL;
+	struct segment_header *curr_segment = task->segment;
+	struct db_descriptor *db_desc = task->r_desc->db->db_desc;
+	uint64_t log_offt = task->log_start;
+	while (1) {
+		key = (struct rco_key *)((uint64_t)curr_segment + (log_offt % SEGMENT_SIZE));
+		assert((uint64_t)key > MAPPED && (uint64_t)key <= MAPPED + task->r_desc->db->volume_desc->size);
+		db_desc->dirty = 0x01;
+		struct bt_insert_req ins_req;
+		ins_req.metadata.handle = task->r_desc->db;
+		ins_req.metadata.level_id = 0;
+		ins_req.metadata.tree_id = 0; // will be filled properly by the engine
+		ins_req.metadata.key_format = KV_PREFIX;
+		ins_req.metadata.append_to_log = 0;
+		ins_req.metadata.special_split = 0;
+		ins_req.metadata.gc_request = 0;
+		ins_req.metadata.recovery_request = 0;
+		int bytes_to_copy = PREFIX_SIZE;
+		if (key->size < PREFIX_SIZE) {
+			memset(kv, 0x00, PREFIX_SIZE);
+			bytes_to_copy = key->size;
+		}
+
+		memcpy(kv, key->key, bytes_to_copy);
+
+		*(uint64_t *)(kv + PREFIX_SIZE) = (uint64_t)key;
+		ins_req.key_value_buf = kv;
+		int active_tree = task->r_desc->db->db_desc->levels[0].active_tree;
+		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+			pthread_mutex_lock(&db_desc->client_barrier_lock);
+			active_tree = db_desc->levels[0].active_tree;
+
+			if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+				sem_post(&db_desc->compaction_daemon_interrupts);
+				if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
+					log_fatal("failed to throttle");
+					exit(EXIT_FAILURE);
+				}
+			}
+			pthread_mutex_unlock(&db_desc->client_barrier_lock);
+		}
+		//log_info("Adding index entry for key %u:%s offset %llu log end %llu", key->size, *(uint64_t*)(kv+PREFIX_SIZE) + 4, log_offt,
+		//	 task->log_end);
+		_insert_key_value(&ins_req);
+		value = (struct rco_value *)((uint64_t)key + sizeof(struct rco_key) + key->size);
+		assert(value->size < 1200);
+		log_offt += (sizeof(struct rco_key) + key->size + sizeof(struct rco_value) + value->size);
+		key = (struct rco_key *)((uint64_t)key + sizeof(struct rco_key) + key->size + sizeof(struct rco_value) +
+					 value->size);
+		if (log_offt >= task->log_end) {
+			log_info("log_offt exceeded ok!");
+			break;
+		}
+		if (key->size == 0) {
+			if (curr_segment->next_segment == 0) {
+				//log_info("Done that was the last segment!");
+				break;
+			}
+			//log_info("Proceeding to next");
+			curr_segment = (struct segment_header *)(MAPPED + curr_segment->next_segment);
+		}
+	}
+	//log_info("Done parsing segment");
+	free(kv);
+	return;
+}
+#endif
 
 static void *rco_compaction_worker(void *args)
 {

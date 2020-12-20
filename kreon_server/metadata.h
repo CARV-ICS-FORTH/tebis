@@ -32,6 +32,9 @@
 #define RU_MAX_NUM_REPLICAS 2
 //#define RU_MAX_INDEX_SEGMENTS 4
 
+#define RCO_DISABLE_REMOTE_COMPACTIONS 1
+#define RCO_BUILD_INDEX_AT_REPLICA 1
+
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
 
 enum krm_server_state {
@@ -347,6 +350,8 @@ struct krm_msg {
 
 void *krm_metadata_server(void *args);
 struct krm_region_desc *krm_get_region(struct krm_server_desc *server_desc, char *key, uint32_t key_size);
+struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
+						   uint32_t region_id_size);
 int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
 struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc);
@@ -374,6 +379,16 @@ void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
 int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
 void di_rewrite_index(struct krm_region_desc *r_desc, uint8_t level_id, uint8_t tree_id);
+
+#if RCO_BUILD_INDEX_AT_REPLICA
+struct rco_build_index_task {
+	struct krm_region_desc *r_desc;
+	struct segment_header *segment;
+	uint64_t log_start;
+	uint64_t log_end;
+};
+void rco_build_index(struct rco_build_index_task *task);
+#endif
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,

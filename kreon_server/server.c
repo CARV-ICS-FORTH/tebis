@@ -1288,7 +1288,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 						req_header->reply_length = sizeof(msg_header) + rep_header->pay_len +
 									   rep_header->padding_and_tail;
 						/*time to send the message*/
-						req_header->session_id = (uint64_t)r_desc;
+						req_header->session_id = (uint64_t)task->r_desc->region;
 						struct msg_get_log_buffer_req *g_req =
 							(struct msg_get_log_buffer_req *)((uint64_t)req_header +
 											  sizeof(struct msg_header));
@@ -1574,7 +1574,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 					req_header->reply_length =
 						sizeof(msg_header) + rep_header->pay_len + rep_header->padding_and_tail;
 					/*time to send the message*/
-					req_header->session_id = (uint64_t)r_desc;
+					req_header->session_id = (uint64_t)task->r_desc->region;
 					struct msg_flush_cmd_req *f_req =
 						(struct msg_flush_cmd_req *)((uint64_t)req_header +
 									     sizeof(struct msg_header));
@@ -1786,8 +1786,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	struct krm_region_desc *r_desc;
 	void *value;
 	scannerHandle *sc;
-	msg_put_offt_req *put_offt_req;
-	msg_put_offt_rep *put_offt_rep;
 	msg_multi_get_req *multi_get;
 	msg_get_req *get_req;
 	msg_get_rep *get_rep;
@@ -1805,7 +1803,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		struct msg_replica_index_get_buffer_req *g_req =
 			(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, g_req->region_key, g_req->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, g_req->region_key, g_req->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", g_req->region_key);
 			exit(EXIT_FAILURE);
@@ -1877,7 +1876,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		struct msg_replica_index_flush_req *f_req =
 			(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, f_req->region_key, f_req->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, f_req->region_key, f_req->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", f_req->region_key);
 			exit(EXIT_FAILURE);
@@ -2063,7 +2063,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			(struct msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 		log_info("Region master wants a log buffer for region %s key size %d", get_log->region_key,
 			 get_log->region_key_size);
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, get_log->region_key, get_log->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, get_log->region_key, get_log->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", get_log->region_key);
 			exit(EXIT_FAILURE);
@@ -2142,7 +2143,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 		struct krm_region_desc *r_desc =
-			krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
+			krm_get_region_based_on_id(mydesc, flush_req->region_key, flush_req->region_key_size);
 		if (r_desc->r_state == NULL) {
 			log_fatal("No state for backup region %s", r_desc->region->id);
 			exit(EXIT_FAILURE);
@@ -2223,8 +2224,16 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		r_desc->db->db_desc->KV_log_size += diff;
 
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
-		/*time for reply :-)*/
+#if RCO_BUILD_INDEX_AT_REPLICA
+		struct rco_build_index_task t;
+		t.r_desc = r_desc;
+		t.segment = (struct segment_header *)r_desc->db->db_desc->KV_log_last_segment;
+		t.log_start = r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE - sizeof(struct segment_header));
+		t.log_end = r_desc->db->db_desc->KV_log_size;
+		rco_build_index(&t);
+#endif
 
+		/*time for reply :-)*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   (uint64_t)task->msg->reply);
 

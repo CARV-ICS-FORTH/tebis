@@ -1312,17 +1312,87 @@ void *krm_metadata_server(void *args)
 	return NULL;
 }
 
-struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
+struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
+						   uint32_t region_id_size)
 {
 	struct krm_region_desc *r_desc = NULL;
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
 
 	uint64_t lc2, lc1;
 retry:
 	lc2 = desc->ds_regions->lamport_counter_2;
+	int start_idx;
+	int end_idx;
+	int middle;
+	int ret;
+	start_idx = 0;
+	end_idx = desc->ds_regions->num_ds_regions - 1;
+	r_desc = NULL;
+	/*log_info("start %d end %d", start_idx, end_idx);*/
+	while (start_idx <= end_idx) {
+		middle = (start_idx + end_idx) / 2;
+		ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
+				  desc->ds_regions->r_desc[middle]->region->min_key, region_id_size, region_id);
+
+		if (ret < 0 || ret == 0) {
+			/*log_info("got 0 checking with max key %s",
+* desc->ds_regions->r_desc[middle].region->max_key);*/
+			start_idx = middle + 1;
+			if (zku_key_cmp(desc->ds_regions->r_desc[middle]->region->max_key_size,
+					desc->ds_regions->r_desc[middle]->region->max_key, region_id_size,
+					region_id) > 0) {
+				r_desc = desc->ds_regions->r_desc[middle];
+				break;
+			}
+		} else
+			end_idx = middle - 1;
+	}
+	/*cornercase*/
+	if (r_desc == NULL) {
+		int ret1;
+		int ret2;
+		end_idx = desc->ds_regions->num_ds_regions - 1;
+		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id);
+		ret2 = zku_key_cmp(region_id_size, region_id, desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->max_key);
+		log_info("region_min_key %d:%s   key %d:%s  end idx %d",
+			 desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id, end_idx);
+
+		log_info("region_max_key %d:%s   key %d:%s  end idx %d",
+			 desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->max_key, region_id_size, region_id, end_idx);
+		if (ret1 >= 0 && ret2 < 0)
+			r_desc = desc->ds_regions->r_desc[end_idx];
+	}
+
+	lc1 = desc->ds_regions->lamport_counter_2;
+
+	if (lc1 != lc2)
+		goto retry;
+
+	if (r_desc == NULL) {
+		log_fatal("NULL region for region_id %s", region_id);
+		raise(SIGINT);
+		exit(EXIT_FAILURE);
+	}
+	return r_desc;
+}
+struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
+{
+	struct krm_region_desc *r_desc = NULL;
+
+	uint64_t lc2, lc1;
+retry:
+	lc2 = desc->ds_regions->lamport_counter_2;
+#ifdef REGIONS_HASH_BASED
+	uint64_t s = djb2_hash((unsigned char *)key, key_size);
+	r_desc = desc->ds_regions->r_desc[s % desc->ds_regions->num_ds_regions];
+#else
+	int start_idx;
+	int end_idx;
+	int middle;
+	int ret;
 	start_idx = 0;
 	end_idx = desc->ds_regions->num_ds_regions - 1;
 	r_desc = NULL;
@@ -1363,6 +1433,7 @@ retry:
 		if (ret1 >= 0 && ret2 < 0)
 			r_desc = desc->ds_regions->r_desc[end_idx];
 	}
+#endif
 
 	lc1 = desc->ds_regions->lamport_counter_2;
 
