@@ -1885,9 +1885,15 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			exit(EXIT_FAILURE);
 		}
 		if (f_req->seg_id > 0)
-			assert(f_req->seg_id ==
-			       r_desc->db->db_desc->levels[f_req->level_id].last_segment[f_req->tree_id]->segment_id +
-				       1);
+			if (f_req->seg_id !=
+			    r_desc->db->db_desc->levels[f_req->level_id].last_segment[f_req->tree_id]->segment_id + 1) {
+				log_fatal("freq segid = %d should have been %u", f_req->seg_id,
+					  r_desc->db->db_desc->levels[f_req->level_id]
+							  .last_segment[f_req->tree_id]
+							  ->segment_id +
+						  1);
+				assert(0);
+			}
 		struct segment_header *seg = seg_get_raw_index_segment(
 			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
 		seg->next_segment = NULL;

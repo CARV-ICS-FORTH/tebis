@@ -239,7 +239,7 @@ retry_allocate:
 
 int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
-#ifdef RCO_DISABLE_REMOTE_COMPACTIONS
+#if RCO_DISABLE_REMOTE_COMPACTIONS
 	log_info("ommiting");
 	return 1;
 #endif
@@ -348,7 +348,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				exit(EXIT_FAILURE);
 			}
 			memcpy(g_req->region_key, task->r_desc->region->min_key, g_req->region_key_size);
-			task->rpc[task->replica_id_cnt][0].rdma_buf.request->session_id = (uint64_t)task;
+			task->rpc[task->replica_id_cnt][0].rdma_buf.request->session_id =
+				(uint64_t)task->r_desc->region + task->level_id;
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->request_message_local_addr =
 				task->rpc[task->replica_id_cnt][0].rdma_buf.request;
 			__send_rdma_message(task->rpc[task->replica_id_cnt][0].rdma_buf.conn,
@@ -624,7 +625,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 
 				task->rpc[i][seg_id].rdma_buf.request->request_message_local_addr =
 					task->rpc[i][seg_id].rdma_buf.request;
-				task->rpc[i][seg_id].rdma_buf.request->session_id = (uint64_t)task;
+				task->rpc[i][seg_id].rdma_buf.request->session_id =
+					(uint64_t)task->r_desc->region + task->level_id;
 				__send_rdma_message(task->rpc[i][seg_id].rdma_buf.conn,
 						    task->rpc[i][seg_id].rdma_buf.request, NULL);
 				task->rpc[i][seg_id].valid = 1;
@@ -696,6 +698,7 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 {
 	int chosen_id;
 	pthread_mutex_lock(&pool->pool_lock);
+#if 0
 	if (pool->worker_queue[pool->curr_worker_id].task_queue->size <= RCO_TASK_QUEUE_SIZE_THREASHOLD)
 		chosen_id = pool->curr_worker_id;
 	else {
@@ -719,6 +722,10 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 		else
 			chosen_id = min_id;
 	}
+#endif
+	uint64_t session_id = (uint64_t)compaction_task->r_desc->region + compaction_task->level_id;
+	uint64_t hash = djb2_hash((unsigned char *)&session_id, sizeof(uint64_t));
+	chosen_id = hash % pool->num_workers;
 
 	pool->curr_worker_id = chosen_id;
 	// log_info("Assigning to worker %d", pool->curr_worker_id);
