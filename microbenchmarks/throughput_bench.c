@@ -308,17 +308,18 @@ int main(int argc, char **argv)
 	struct timespec rem;
 	size_t seconds_passed = 0;
 
-	int i, outstanding;
-	FILE *out_file = fopen("outstanding.txt", "w");
+	int i, received_total, last_received = 0;
+	FILE *out_file = fopen("throughput.txt", "w");
 	while (seconds_passed < Time) {
 		nanosleep(&SLEEP_DURATION_TIMESPEC, &rem);
 		seconds_passed += SLEEP_DURATION_TIMESPEC.tv_sec;
 
-		for (i = 0, outstanding = 0; i < Threads; ++i) {
-			outstanding += (Sent_messages[i] - Received_messages[i]);
+		for (i = 0, received_total = 0; i < Threads; ++i) {
+			received_total += Received_messages[i];
 		}
-
-		fprintf(out_file, "%lu Sec %d Outstanding_Requests\n", seconds_passed, outstanding);
+		fprintf(out_file, "%lu Sec %d Ops/sec\n", seconds_passed, received_total - last_received);
+		printf("%lu Sec %d Ops/sec\n", seconds_passed, received_total - last_received);
+		last_received = received_total;
 	}
 	// sleep(Time);
 	printf("Wake up!\n");
