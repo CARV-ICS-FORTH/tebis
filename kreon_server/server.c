@@ -736,6 +736,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		job->msg = msg;
 		job->kreon_operation_status = TASK_START;
 		/*initialization of various fsm*/
+		job->server_id = spinner->root_server_id;
 		job->thread_id = worker_id;
 		job->notification_addr = (void *)job->msg->request_message_local_addr;
 	}
@@ -1760,7 +1761,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	r_desc = NULL;
 	task->reply_msg = NULL;
 	// rdma_conn = task->conn;
-	stats_update(task->thread_id);
+	stats_update(task->server_id, task->thread_id);
 
 	switch (task->msg->type) {
 	case REPLICA_INDEX_GET_BUFFER_REQ: {
@@ -2933,7 +2934,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	stats_init(num_of_worker_threads);
+	stats_init(root_server->num_of_numa_servers, root_server->numa_servers[0]->spinner.num_workers);
 	// A long long
 	sem_init(&exit_main, 0, 0);
 
