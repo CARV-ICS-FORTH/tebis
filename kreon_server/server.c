@@ -617,18 +617,20 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	if (task == NULL) {
 		is_task_resumed = 0;
 		switch (msg->type) {
-		case FLUSH_COMMAND_REQ:
 		case FLUSH_COMMAND_REP:
-		case GET_LOG_BUFFER_REQ:
 		case GET_LOG_BUFFER_REP:
 			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
 			if (job == NULL)
 				assert(0);
 			break;
+		/*remote compaction related*/
 		case REPLICA_INDEX_GET_BUFFER_REQ:
 		case REPLICA_INDEX_GET_BUFFER_REP:
 		case REPLICA_INDEX_FLUSH_REQ:
 		case REPLICA_INDEX_FLUSH_REP:
+		case FLUSH_COMMAND_REQ:
+		case GET_LOG_BUFFER_REQ:
+			/*log replication related*/
 			fifo_ordering = 1;
 			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
 			if (job == NULL)
@@ -663,9 +665,11 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 * become a round robin policy since the worker_id will be incremented
 * at for every task.
 */
-	if (fifo_ordering)
-		worker_id = msg->session_id % spinner->num_workers;
-	else {
+	if (fifo_ordering) {
+		uint64_t hash = djb2_hash((unsigned char *)&msg->session_id, sizeof(uint64_t));
+		worker_id = hash % spinner->num_workers;
+		//log_warn("fifo worker id %d chosen for session id %llu", worker_id, msg->session_id);
+	} else {
 		// 1. Round robin with threshold
 		if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
 			/* Find an active worker with used_slots < max_queued_jobs
@@ -774,6 +778,40 @@ void _update_connection_score(int spinning_list_type, connection_rdma *conn)
 		++conn->idle_iterations;
 }
 
+static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
+{
+	/*check for resumed tasks to be rescheduled*/
+	for (int i = 0; i < DS_POOL_NUM; i++) {
+		struct krm_work_task *task;
+		task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		if (task != NULL) {
+			assert(task->r_desc != NULL);
+			// log_info("Rescheduling task");
+			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
+			if (rc == KREON_FAILURE) {
+				log_fatal("Failed to reschedule task");
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+}
+
+static void ds_check_idle_workers(struct ds_spinning_thread *spinner)
+{
+	int max_idle_time_usec = globals_get_worker_spin_time_usec();
+	for (int i = 0; i < spinner->num_workers; ++i) {
+		uint32_t queue_size = utils_queue_used_slots(&spinner->worker[i].work_queue);
+		if (spinner->worker[i].idle_time > max_idle_time_usec && queue_size == 0 &&
+		    spinner->worker[i].status == BUSY)
+			spinner->worker[i].status = IDLE_SLEEPING;
+		else if (queue_size > 0 && spinner->worker[i].status == IDLE_SLEEPING) {
+			spinner->worker[i].status = BUSY;
+			sem_post(&spinner->worker[i].sem);
+		}
+	}
+}
+
 static void *server_spinning_thread_kernel(void *args)
 {
 	struct msg_header *hdr;
@@ -861,15 +899,11 @@ static void *server_spinning_thread_kernel(void *args)
 	}
 
 	int count = 0;
-	int max_idle_time_usec = globals_get_worker_spin_time_usec();
+
+	// int max_idle_time_usec = globals_get_worker_spin_time_usec();
 
 	while (1) {
-		/*in cases where there are no connections stop spinning (optimization)*/
-		// if (!channel->spin_num[spinning_thread_id])
-		//	sem_wait(&channel->sem_spinning[spinning_thread_id]);
-
-		/*gesalous, iterate the connection list of this channel for new
-* messages*/
+		// gesalous, iterate the connection list of this channel for new messages
 		if (count < 10) {
 			node = spinner->conn_list->first;
 			spinning_list_type = HIGH_PRIORITY;
@@ -880,28 +914,34 @@ static void *server_spinning_thread_kernel(void *args)
 		}
 
 		prev_node = NULL;
+		ds_resume_halted_tasks(spinner);
+		ds_check_idle_workers(spinner);
 
 		while (node != NULL) {
 			/*check for resumed tasks to be rescheduled*/
-			for (int i = 0; i < DS_POOL_NUM; i++) {
-				struct krm_work_task *task;
-				task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-				if (task != NULL) {
-					assert(task->r_desc != NULL);
-					// log_info("Rescheduling task");
-					rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
-					if (rc == KREON_FAILURE) {
-						log_fatal("Failed to reschedule task");
-						assert(0);
-						exit(EXIT_FAILURE);
-					}
-				}
-			}
-			for (int i = 0; i < spinner->num_workers; ++i) {
-				if (spinner->worker[i].idle_time > max_idle_time_usec &&
-				    spinner->worker[i].status == BUSY)
-					spinner->worker[i].status = IDLE_SLEEPING;
-			}
+			// for (int i = 0; i < DS_POOL_NUM; i++) {
+			//	struct krm_work_task *task;
+			//	task =
+			//utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+			//	if (task != NULL) {
+			//		assert(task->r_desc != NULL);
+			// log_info("Rescheduling task");
+			//		rc = assign_job_to_worker(spinner, task->conn,
+			//task->msg, task);
+			//		if (rc == KREON_FAILURE) {
+			//			log_fatal("Failed to reschedule task");
+			//			assert(0);
+			//			exit(EXIT_FAILURE);
+			//		}
+			//	}
+			//}
+			// for (int i = 0; i < spinner->num_workers; ++i) {
+			//	if (spinner->worker[i].idle_time > max_idle_time_usec &&
+			//	    utils_queue_used_slots(&spinner->worker[i].work_queue) == 0
+			//&&
+			//	    spinner->worker[i].status == BUSY)
+			//		spinner->worker[i].status = IDLE_SLEEPING;
+			//}
 
 			conn = (connection_rdma *)node->data;
 
@@ -923,11 +963,9 @@ static void *server_spinning_thread_kernel(void *args)
 				hdr->receive = 0;
 				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
 				if (rc == KREON_FAILURE) {
-					/*all workers are busy let's see messages from other
-* connections*/
+					// all workers are busy let's see messages from other connections
 					//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
-					/*Caution! message not consumed leave the rendezvous points as
-* is*/
+					// Caution! message not consumed leave the rendezvous points as is
 					hdr->receive = recv;
 					goto iterate_next_element;
 				}
@@ -1252,6 +1290,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 						req_header->reply_length = sizeof(msg_header) + rep_header->pay_len +
 									   rep_header->padding_and_tail;
 						/*time to send the message*/
+						req_header->session_id = (uint64_t)task->r_desc->region;
 						struct msg_get_log_buffer_req *g_req =
 							(struct msg_get_log_buffer_req *)((uint64_t)req_header +
 											  sizeof(struct msg_header));
@@ -1260,7 +1299,6 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 						g_req->region_key_size = r_desc->region->min_key_size;
 						strcpy(g_req->region_key, r_desc->region->min_key);
 						__send_rdma_message(conn, req_header, NULL);
-						// send_rdma_message_busy_wait(conn, req_header);
 
 						log_info("DONE Sending get_log_buffer req to %s",
 							 r_desc->region->backups[i].kreon_ds_hostname);
@@ -1538,6 +1576,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 					req_header->reply_length =
 						sizeof(msg_header) + rep_header->pay_len + rep_header->padding_and_tail;
 					/*time to send the message*/
+					req_header->session_id = (uint64_t)task->r_desc->region;
 					struct msg_flush_cmd_req *f_req =
 						(struct msg_flush_cmd_req *)((uint64_t)req_header +
 									     sizeof(struct msg_header));
@@ -1546,7 +1585,8 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 					f_req->is_partial = 0;
 					f_req->log_buffer_id = task->seg_id_to_flush;
 					f_req->master_segment = task->ins_req.metadata.log_segment_addr;
-					//log_info("Sending flush command for segment %llu", f_req->master_segment);
+					// log_info("Sending flush command for segment %llu",
+					// f_req->master_segment);
 					f_req->segment_id = task->ins_req.metadata.segment_id;
 					f_req->end_of_log = task->ins_req.metadata.end_of_log;
 					f_req->log_padding = task->ins_req.metadata.log_padding;
@@ -1748,8 +1788,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	struct krm_region_desc *r_desc;
 	void *value;
 	scannerHandle *sc;
-	msg_put_offt_req *put_offt_req;
-	msg_put_offt_rep *put_offt_rep;
 	msg_multi_get_req *multi_get;
 	msg_get_req *get_req;
 	msg_get_rep *get_rep;
@@ -1767,7 +1805,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		struct msg_replica_index_get_buffer_req *g_req =
 			(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, g_req->region_key, g_req->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, g_req->region_key, g_req->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", g_req->region_key);
 			exit(EXIT_FAILURE);
@@ -1839,28 +1878,36 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		struct msg_replica_index_flush_req *f_req =
 			(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, f_req->region_key, f_req->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, f_req->region_key, f_req->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", f_req->region_key);
 			exit(EXIT_FAILURE);
 		}
 		if (f_req->seg_id > 0)
-			assert(f_req->seg_id ==
-			       r_desc->db->db_desc->levels[f_req->level_id].last_segment[f_req->tree_id]->segment_id +
-				       1);
+			if (f_req->seg_id !=
+			    r_desc->db->db_desc->levels[f_req->level_id].last_segment[f_req->tree_id]->segment_id + 1) {
+				log_fatal("freq segid = %d should have been %u", f_req->seg_id,
+					  r_desc->db->db_desc->levels[f_req->level_id]
+							  .last_segment[f_req->tree_id]
+							  ->segment_id +
+						  1);
+				assert(0);
+			}
 		struct segment_header *seg = seg_get_raw_index_segment(
 			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
 		seg->next_segment = NULL;
-		//uint64_t s =
-		//	djb2_hash((unsigned char *)r_desc->r_state
-		//			  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
-		//			  ->addr,
-		//		  SEGMENT_SIZE);
-		//assert(s == f_req->seg_hash);
-		//log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
-		memcpy(seg,
-		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr,
-		       SEGMENT_SIZE);
+		uint64_t s =
+			djb2_hash((unsigned char *)r_desc->r_state
+					  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
+					  ->addr,
+				  SEGMENT_SIZE);
+		assert(s == f_req->seg_hash);
+		log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
+		memcpy((char *)((uint64_t)seg + sizeof(segment_header)),
+		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr +
+			       sizeof(struct segment_header),
+		       SEGMENT_SIZE - sizeof(segment_header));
 		// add mapping to level's hash table
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = f_req->primary_segment_offt;
@@ -1898,10 +1945,12 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 					       leafRootNode ||
 				       r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id]->type ==
 					       rootNode);
-				//log_info("Ok translated root_w[%u][%u]", f_req->level_id, f_req->tree_id);
+				// log_info("Ok translated root_w[%u][%u]", f_req->level_id,
+				// f_req->tree_id);
 			} else {
 				r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] = NULL;
-				//log_info("Ok primary says root_w[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+				// log_info("Ok primary says root_w[%u][%u] is NULL, ok",
+				// f_req->level_id, f_req->tree_id);
 			}
 			if (f_req->root_r) {
 				primary_segment_offt = f_req->root_r % SEGMENT_SIZE;
@@ -1920,12 +1969,14 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 					       leafRootNode ||
 				       r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id]->type ==
 					       rootNode);
-				//log_info("Ok translated root_r[%u][%u]", f_req->level_id, f_req->tree_id);
+				// log_info("Ok translated root_r[%u][%u]", f_req->level_id,
+				// f_req->tree_id);
 			} else {
 				r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] = NULL;
-				//log_info("Ok primary says root_r[%u][%u] is NULL, ok", f_req->level_id, f_req->tree_id);
+				// log_info("Ok primary says root_r[%u][%u] is NULL, ok",
+				// f_req->level_id, f_req->tree_id);
 			}
-			//deregistering buffers
+			// deregistering buffers
 			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
 				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
 				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
@@ -1972,9 +2023,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 				free(current);
 			}
-			//log_info("Snapshotting");
-			//snapshot(r_desc->db->volume_desc);
-			//log_info("Snapshot done!");
+			// log_info("Snapshotting");
+			// snapshot(r_desc->db->volume_desc);
+			// log_info("Snapshot done!");
 		}
 
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -2010,7 +2061,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		assert(task->reply_msg->request_message_local_addr != NULL);
 		task->kreon_operation_status = TASK_COMPLETE;
 
-		//log_info("REPLICA: Successfully flushed index segment id %d", f_req->seg_id);
+		// log_info("REPLICA: Successfully flushed index segment id %d",
+		// f_req->seg_id);
 		break;
 	}
 	case GET_LOG_BUFFER_REQ: {
@@ -2019,7 +2071,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			(struct msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 		log_info("Region master wants a log buffer for region %s key size %d", get_log->region_key,
 			 get_log->region_key_size);
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, get_log->region_key, get_log->region_key_size);
+		struct krm_region_desc *r_desc =
+			krm_get_region_based_on_id(mydesc, get_log->region_key, get_log->region_key_size);
 		if (r_desc == NULL) {
 			log_fatal("no hosted region found for min key %s", get_log->region_key);
 			exit(EXIT_FAILURE);
@@ -2098,7 +2151,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 		struct krm_region_desc *r_desc =
-			krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
+			krm_get_region_based_on_id(mydesc, flush_req->region_key, flush_req->region_key_size);
 		if (r_desc->r_state == NULL) {
 			log_fatal("No state for backup region %s", r_desc->region->id);
 			exit(EXIT_FAILURE);
@@ -2138,7 +2191,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// log_info("Flushing segment %llu padding is %llu primary offset %llu local
 		// diff is %llu",
 		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log,
-		//diff);
+		// diff);
 		if (!exists) {
 			++r_desc->r_state->next_segment_id_to_flush;
 			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
@@ -2156,7 +2209,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			e->master_seg = flush_req->master_segment;
 			e->my_seg = (uint64_t)disk_segment - MAPPED;
 			HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
-			//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+			// log_info("Added mapping for index for log %llu replica %llu",
+			// e->master_seg, e->my_seg);
 		} else {
 			// check if we have the mapping
 			struct krm_segment_entry *index_entry;
@@ -2168,7 +2222,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				e->master_seg = flush_req->master_segment;
 				e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
 				HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
-				//log_info("Added mapping for index for log %llu replica %llu", e->master_seg, e->my_seg);
+				// log_info("Added mapping for index for log %llu replica %llu",
+				// e->master_seg, e->my_seg);
 			}
 
 			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
@@ -2177,8 +2232,16 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		r_desc->db->db_desc->KV_log_size += diff;
 
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
-		/*time for reply :-)*/
+#if RCO_BUILD_INDEX_AT_REPLICA
+		struct rco_build_index_task t;
+		t.r_desc = r_desc;
+		t.segment = (struct segment_header *)r_desc->db->db_desc->KV_log_last_segment;
+		t.log_start = r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE - sizeof(struct segment_header));
+		t.log_end = r_desc->db->db_desc->KV_log_size;
+		rco_build_index(&t);
+#endif
 
+		/*time for reply :-)*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   (uint64_t)task->msg->reply);
 
@@ -2851,6 +2914,9 @@ int main(int argc, char *argv[])
 			server->spinner.root_server_id = server_idx;
 			server->meta_server.root_server_id = server_idx;
 			server->rdma_port = rdma_port;
+			server->meta_server.ld_regions = NULL;
+			server->meta_server.dataservers_map = NULL;
+
 			server->meta_server.RDMA_port = rdma_port;
 			for (int j = 0; j < num_workers; j++)
 				server->spinner.worker[j].worker_id = workers_id[j];

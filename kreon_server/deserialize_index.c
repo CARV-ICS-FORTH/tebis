@@ -4,45 +4,6 @@
 #include "metadata.h"
 #include "../kreon_lib/btree/btree.h"
 #include <log.h>
-#if 0
-
-typedef struct node_header {
-	nodeType_t type; /*internal or leaf node
-	int32_t height;
-	uint64_t epoch;
-	uint64_t fragmentation;
-	volatile uint64_t v1;
-	volatile uint64_t v2;
-	IN_log_header *first_IN_log_header;
-	IN_log_header *last_IN_log_header;
-	uint64_t key_log_size;
-
-	uint64_t numberOfEntriesInNode;
-	char pad[8];
-
-} __attribute__((packed)) node_header;
-
-typedef struct index_entry {
-	uint64_t left[1];
-	uint64_t pivot;
-	uint64_t right[0];
-} __attribute__((packed)) index_entry;
-
-typedef struct leaf_node {
-	struct node_header header;
-	uint64_t pointer[LN_LENGTH];
-	char prefix[LN_LENGTH][PREFIX_SIZE];
-	char __pad[LEAF_NODE_SIZE - sizeof(struct node_header) - (LN_LENGTH * LN_ITEM_SIZE)];
-} __attribute__((packed)) leaf_node;
-
-typedef struct index_node {
-	node_header header;
-	index_entry p[IN_LENGTH];
-	uint64_t __last_pointer; /* XXX do not use it directly! */
-	char __pad[INDEX_NODE_SIZE - sizeof(struct node_header) - sizeof(uint64_t) -
-		   (IN_LENGTH * sizeof(struct index_entry))];
-} __attribute__((packed)) index_node;
-#endif
 
 static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_node *leaf)
 {
@@ -162,6 +123,7 @@ void di_rewrite_index(struct krm_region_desc *r_desc, uint8_t level_id, uint8_t 
 			}
 			default:
 				log_fatal("Corruption, unknown entry %u", type);
+				assert(0);
 				exit(EXIT_FAILURE);
 			}
 		}

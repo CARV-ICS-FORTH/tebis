@@ -1,3 +1,16 @@
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+  set(CMAKE_C_FLAGS
+      "-Wstrict-prototypes -Wall -Wextra -std=gnu11 -fPIC ${CMAKE_C_FLAGS}"
+  )# -Werror
+  set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -Og ${CMAKE_C_FLAGS_DEBUG}")
+endif()
+
+if(CMAKE_BUILD_TYPE EQUAL "Release")
+  set(CMAKE_C_FLAGS_RELEASE
+      "-flto -fwhopr -funit-at-a-time -fprefetch-loop-arrays -fpeel-loops -O2 -finline-functions -DNDEBUG ${CMAKE_C_FLAGS_RELEASE}"
+  ) # -Werror
+endif()
+
 set_source_files_properties(../utilities/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                                 "-O0")
 

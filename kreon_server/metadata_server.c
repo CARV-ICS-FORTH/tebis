@@ -258,8 +258,8 @@ uint8_t krm_insert_ds_region(struct krm_server_desc *desc, struct krm_region_des
 	if (reg_table->num_ds_regions > 0) {
 		while (start_idx <= end_idx) {
 			middle = (start_idx + end_idx) / 2;
-			ret = zku_key_cmp(desc->ds_regions->r_desc[middle].region->min_key_size,
-					  desc->ds_regions->r_desc[middle].region->min_key,
+			ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
+					  desc->ds_regions->r_desc[middle]->region->min_key,
 					  r_desc->region->min_key_size, r_desc->region->min_key);
 
 			if (ret == 0) {
@@ -271,8 +271,9 @@ uint8_t krm_insert_ds_region(struct krm_server_desc *desc, struct krm_region_des
 				if (start_idx > end_idx) {
 					memmove(&desc->ds_regions->r_desc[middle + 1],
 						&desc->ds_regions->r_desc[middle],
-						(reg_table->num_ds_regions - middle) * sizeof(struct krm_region_desc));
-					desc->ds_regions->r_desc[middle] = *r_desc;
+						(reg_table->num_ds_regions - middle) *
+							sizeof(struct krm_region_desc *));
+					desc->ds_regions->r_desc[middle] = r_desc;
 					++reg_table->num_ds_regions;
 					rc = KRM_SUCCESS;
 					break;
@@ -283,8 +284,9 @@ uint8_t krm_insert_ds_region(struct krm_server_desc *desc, struct krm_region_des
 					middle++;
 					memmove(&desc->ds_regions->r_desc[middle + 1],
 						&desc->ds_regions->r_desc[middle],
-						(reg_table->num_ds_regions - middle) * sizeof(struct krm_region_desc));
-					desc->ds_regions->r_desc[middle] = *r_desc;
+						(reg_table->num_ds_regions - middle) *
+							sizeof(struct krm_region_desc *));
+					desc->ds_regions->r_desc[middle] = r_desc;
 					++reg_table->num_ds_regions;
 					rc = KRM_SUCCESS;
 					goto exit;
@@ -293,7 +295,7 @@ uint8_t krm_insert_ds_region(struct krm_server_desc *desc, struct krm_region_des
 			}
 		}
 	} else {
-		desc->ds_regions->r_desc[0] = *r_desc;
+		desc->ds_regions->r_desc[0] = r_desc;
 		++reg_table->num_ds_regions;
 		rc = KRM_SUCCESS;
 	}
@@ -477,8 +479,10 @@ void zk_main_watcher(zhandle_t *zkh, int type, int state, const char *path, void
 
 		} else if (state == ZOO_CONNECTING_STATE) {
 			if (my_desc->zconn_state == KRM_CONNECTED) {
-				log_fatal("Disconnected from zookeeper %s", globals_get_zk_host());
-				exit(EXIT_FAILURE);
+				log_warn("Disconnected from zookeeper %s trying to reconnect", globals_get_zk_host());
+				my_desc->zh =
+					zookeeper_init(globals_get_zk_host(), zk_main_watcher, 15000, 0, my_desc, 0);
+				log_warn("Connected! TODO re register watchers");
 			}
 		}
 	} else {
@@ -548,7 +552,10 @@ void dataserver_health_watcher(zhandle_t *zh, int type, int state, const char *p
 	int rc;
 	char *dataserver_name = basename((char *)path);
 	static char *const krm_region_role_tostring[KRM_BACKUP + 1] = { "Primary", "Backup" };
-	if (type == ZOO_DELETED_EVENT) {
+	if (type == ZOO_SESSION_EVENT) {
+		log_warn("Lost connection with zookeeper, someone else will handle it I suppose");
+		return;
+	} else if (type == ZOO_DELETED_EVENT) {
 		log_warn("Leader: dataserver %s died! [TODO] Unhandled error, exiting...", dataserver_name);
 		struct krm_leader_ds_map *dataserver = NULL;
 		// Find dataserver's region map
@@ -662,6 +669,22 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 	char *mail;
 	int rc;
 	int i;
+	if (type == ZOO_CREATED_EVENT) {
+		log_info("ZOO_CREATE_EVENT");
+	} else if (type == ZOO_DELETED_EVENT) {
+		log_info("ZOO_DELETED_EVENT");
+	} else if (type == ZOO_CHANGED_EVENT) {
+		log_info("ZOO_CHANGED_EVENT");
+	} else if (type == ZOO_CHILD_EVENT) {
+		log_info("ZOO_CHILD_EVENT");
+	} else if (type == ZOO_SESSION_EVENT) {
+		log_warn("Lost connection with zookeeper, someone else will handle it I suppose");
+		return;
+	} else if (type == ZOO_NOTWATCHING_EVENT) {
+		log_info("ZOO_NOTWATCHING_EVENT");
+	} else {
+		log_info("what?");
+	}
 
 	/*get children with watcher*/
 	if (type == ZOO_CHILD_EVENT) {
@@ -772,6 +795,10 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_mutex_init(&r_desc->region_lock, NULL);
 			utils_queue_init(&r_desc->halted_tasks);
 			r_desc->status = KRM_OPEN;
+			r_desc->replica_log_map = NULL;
+			for (int i = 0; i < MAX_LEVELS; i++)
+				r_desc->replica_index_map[i] = NULL;
+
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
 			/*find system ref*/
@@ -781,7 +808,6 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
 			bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 			rco_add_db_to_pool(server->compaction_pool, t);
-			free(r_desc);
 
 			reply.type =
 				(msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_ACK_OPEN_PRIMARY : KRM_ACK_OPEN_BACKUP;
@@ -1180,8 +1206,10 @@ void *krm_metadata_server(void *args)
 
 				assert(r_desc->status = KRM_OPENING);
 				r_desc->status = KRM_OPEN;
-
 				/*this copies r_desc struct to the regions array!*/
+				r_desc->replica_log_map = NULL;
+				for (int i = 0; i < MAX_LEVELS; i++)
+					r_desc->replica_index_map[i] = NULL;
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
 				/*find system ref*/
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,
@@ -1191,7 +1219,6 @@ void *krm_metadata_server(void *args)
 				bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
 				bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 				rco_add_db_to_pool(my_desc->compaction_pool, t);
-				free(r_desc);
 			}
 			my_desc->state = KRM_WAITING_FOR_MSG;
 			break;
@@ -1285,33 +1312,35 @@ void *krm_metadata_server(void *args)
 	return NULL;
 }
 
-struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
+struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
+						   uint32_t region_id_size)
 {
 	struct krm_region_desc *r_desc = NULL;
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
 
 	uint64_t lc2, lc1;
 retry:
 	lc2 = desc->ds_regions->lamport_counter_2;
+	int start_idx;
+	int end_idx;
+	int middle;
+	int ret;
 	start_idx = 0;
 	end_idx = desc->ds_regions->num_ds_regions - 1;
 	r_desc = NULL;
 	/*log_info("start %d end %d", start_idx, end_idx);*/
 	while (start_idx <= end_idx) {
 		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(desc->ds_regions->r_desc[middle].region->min_key_size,
-				  desc->ds_regions->r_desc[middle].region->min_key, key_size, key);
+		ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
+				  desc->ds_regions->r_desc[middle]->region->min_key, region_id_size, region_id);
 
 		if (ret < 0 || ret == 0) {
 			/*log_info("got 0 checking with max key %s",
 * desc->ds_regions->r_desc[middle].region->max_key);*/
 			start_idx = middle + 1;
-			if (zku_key_cmp(desc->ds_regions->r_desc[middle].region->max_key_size,
-					desc->ds_regions->r_desc[middle].region->max_key, key_size, key) > 0) {
-				r_desc = &desc->ds_regions->r_desc[middle];
+			if (zku_key_cmp(desc->ds_regions->r_desc[middle]->region->max_key_size,
+					desc->ds_regions->r_desc[middle]->region->max_key, region_id_size,
+					region_id) > 0) {
+				r_desc = desc->ds_regions->r_desc[middle];
 				break;
 			}
 		} else
@@ -1322,20 +1351,89 @@ retry:
 		int ret1;
 		int ret2;
 		end_idx = desc->ds_regions->num_ds_regions - 1;
-		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx].region->min_key_size,
-				   desc->ds_regions->r_desc[end_idx].region->min_key, key_size, key);
-		ret2 = zku_key_cmp(key_size, key, desc->ds_regions->r_desc[end_idx].region->max_key_size,
-				   desc->ds_regions->r_desc[end_idx].region->max_key);
+		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id);
+		ret2 = zku_key_cmp(region_id_size, region_id, desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->max_key);
 		log_info("region_min_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx].region->min_key_size,
-			 desc->ds_regions->r_desc[end_idx].region->min_key, key_size, key, end_idx);
+			 desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id, end_idx);
 
 		log_info("region_max_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx].region->max_key_size,
-			 desc->ds_regions->r_desc[end_idx].region->max_key, key_size, key, end_idx);
+			 desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->max_key, region_id_size, region_id, end_idx);
 		if (ret1 >= 0 && ret2 < 0)
-			r_desc = &desc->ds_regions->r_desc[end_idx];
+			r_desc = desc->ds_regions->r_desc[end_idx];
 	}
+
+	lc1 = desc->ds_regions->lamport_counter_2;
+
+	if (lc1 != lc2)
+		goto retry;
+
+	if (r_desc == NULL) {
+		log_fatal("NULL region for region_id %s", region_id);
+		raise(SIGINT);
+		exit(EXIT_FAILURE);
+	}
+	return r_desc;
+}
+struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
+{
+	struct krm_region_desc *r_desc = NULL;
+
+	uint64_t lc2, lc1;
+retry:
+	lc2 = desc->ds_regions->lamport_counter_2;
+#ifdef REGIONS_HASH_BASED
+	uint64_t s = djb2_hash((unsigned char *)key, key_size);
+	r_desc = desc->ds_regions->r_desc[s % desc->ds_regions->num_ds_regions];
+#else
+	int start_idx;
+	int end_idx;
+	int middle;
+	int ret;
+	start_idx = 0;
+	end_idx = desc->ds_regions->num_ds_regions - 1;
+	r_desc = NULL;
+	/*log_info("start %d end %d", start_idx, end_idx);*/
+	while (start_idx <= end_idx) {
+		middle = (start_idx + end_idx) / 2;
+		ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
+				  desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
+
+		if (ret < 0 || ret == 0) {
+			/*log_info("got 0 checking with max key %s",
+* desc->ds_regions->r_desc[middle].region->max_key);*/
+			start_idx = middle + 1;
+			if (zku_key_cmp(desc->ds_regions->r_desc[middle]->region->max_key_size,
+					desc->ds_regions->r_desc[middle]->region->max_key, key_size, key) > 0) {
+				r_desc = desc->ds_regions->r_desc[middle];
+				break;
+			}
+		} else
+			end_idx = middle - 1;
+	}
+	/*cornercase*/
+	if (r_desc == NULL) {
+		int ret1;
+		int ret2;
+		end_idx = desc->ds_regions->num_ds_regions - 1;
+		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key);
+		ret2 = zku_key_cmp(key_size, key, desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+				   desc->ds_regions->r_desc[end_idx]->region->max_key);
+		log_info("region_min_key %d:%s   key %d:%s  end idx %d",
+			 desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key, end_idx);
+
+		log_info("region_max_key %d:%s   key %d:%s  end idx %d",
+			 desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+			 desc->ds_regions->r_desc[end_idx]->region->max_key, key_size, key, end_idx);
+		if (ret1 >= 0 && ret2 < 0)
+			r_desc = desc->ds_regions->r_desc[end_idx];
+	}
+#endif
 
 	lc1 = desc->ds_regions->lamport_counter_2;
 
