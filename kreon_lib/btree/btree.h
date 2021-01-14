@@ -75,6 +75,7 @@ extern int32_t index_order;
 
 struct lookup_reply {
 	void *addr;
+	uint8_t tombstone;
 	uint8_t lc_failed;
 };
 
@@ -121,6 +122,8 @@ typedef struct IN_log_header {
 /*leaf or internal node metadata, place always in the first 4KB data block*/
 typedef struct node_header {
 	nodeType_t type; /*internal or leaf node*/
+	/*0 are leaves, 1 are Bottom Internal nodes, and then we have
+  INs and root*/
 	int32_t height;
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
                perform copy on write*/
@@ -131,7 +134,6 @@ typedef struct node_header {
 	IN_log_header *first_IN_log_header;
 	IN_log_header *last_IN_log_header;
 	uint64_t key_log_size;
-
 	uint64_t numberOfEntriesInNode;
 	char pad[8];
 
@@ -160,19 +162,34 @@ typedef struct index_node {
 		   (IN_LENGTH * sizeof(struct index_entry))];
 } __attribute__((packed)) index_node;
 
+struct kv_format {
+	uint32_t key_size;
+	char key_buf[];
+};
+
+struct value_format {
+	uint32_t value_size;
+	char value[];
+};
+
+struct kv_prefix {
+	char prefix[PREFIX_SIZE];
+	uint64_t device_offt : 63;
+	uint64_t tombstone : 1;
+};
+
+struct leaf_kv_pointer {
+	uint64_t device_offt : 63;
+	uint64_t tombstone : 1;
+};
+
 /* this is the same as leaf_root_node */
 typedef struct leaf_node {
 	struct node_header header;
-	uint64_t pointer[LN_LENGTH];
+	struct leaf_kv_pointer kv_entry[LN_LENGTH];
 	char prefix[LN_LENGTH][PREFIX_SIZE];
 	char __pad[LEAF_NODE_SIZE - sizeof(struct node_header) - (LN_LENGTH * LN_ITEM_SIZE)];
 } __attribute__((packed)) leaf_node;
-
-/* this is KV_FORMAT */
-struct splice {
-	int32_t size;
-	char data[0];
-};
 
 /** contains info about the part of the log which has been commited but has not
  *  been applied in the index. In particular, recovery process now will be
@@ -366,6 +383,7 @@ typedef struct bt_mutate_req {
 	/*needed for distributed version of Kreon*/
 	uint8_t segment_full_event : 1;
 	uint8_t special_split : 1;
+	uint8_t is_tombstone : 1;
 } bt_mutate_req;
 
 typedef struct bt_insert_req {
@@ -459,7 +477,7 @@ void *find_key(db_handle *handle, void *key, uint32_t key_size);
 void *__find_key(db_handle *handle, void *key, char SEARCH_MODE);
 int8_t delete_key(db_handle *handle, void *key, uint32_t size);
 
-int64_t _tucana_key_cmp(void *index_key_buf, void *query_key_buf, char index_key_format, char query_key_format);
+int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format);
 int prefix_compare(char *l, char *r, size_t unused);
 
 /*functions used from other parts except btree/btree.c*/
@@ -484,4 +502,4 @@ lock_table *_find_position(lock_table **table, node_header *node);
 #define REAL_ADDRESS(X) (MAPPED + X)
 #define VALUE_SIZE_OFFSET(K) (sizeof(uint32_t) + K)
 #define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0)
+#define unlikely(x) __builtin_expect((x), 0) YAML : 47 : 29 : error : invalid boolean

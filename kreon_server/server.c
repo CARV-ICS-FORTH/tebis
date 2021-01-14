@@ -6,7 +6,6 @@
  * Copyright (c) 2016 Pilar Gonzalez-Ferez <pilar@ics.forth.gr>.
 *
  **/
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -2523,6 +2522,7 @@ when test passes*/
 		if (isValid(sc)) {
 			msg_key *key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
 			struct msg_value *value = NULL;
+
 			if (multi_get->fetch_keys_only)
 				value = (msg_value *)&zero_value;
 			else

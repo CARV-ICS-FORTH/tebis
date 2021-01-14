@@ -86,8 +86,8 @@ static inline void move_leaf_data(leaf_node *leaf, int32_t middle)
 	if (nitems == 0)
 		return;
 
-	src_addr = (char *)(&(leaf->pointer[middle]));
-	dst_addr = src_addr + sizeof(uint64_t);
+	src_addr = (char *)(&(leaf->kv_entry[middle]));
+	dst_addr = src_addr + sizeof(struct leaf_kv_pointer);
 	memmove(dst_addr, src_addr, nitems * sizeof(uint64_t));
 
 	src_addr = (char *)(&(leaf->prefix[middle]));
@@ -107,6 +107,8 @@ static inline void update_leaf_index_stats(char key_format)
 
 static bt_split_result split_index(node_header *node, bt_insert_req *ins_req);
 
+static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node);
+
 void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
 {
 	db_desc->t = t;
@@ -123,12 +125,8 @@ void bt_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_
 int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf);
 bt_split_result split_leaf(bt_insert_req *req, leaf_node *node);
 
-/*Buffering aware functions*/
 void *__find_key(db_handle *handle, void *key, char SEARCH_MODE);
-void *__find_key_addr_in_leaf(leaf_node *leaf, struct splice *key);
-void spill_buffer(void *_spill_req);
-
-void destroy_spill_request(NODE *node);
+static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key);
 
 void assert_leaf_node(node_header *leaf);
 /*functions used for debugging*/
@@ -154,6 +152,47 @@ void bt_decrease_level0_writers(db_handle *handle)
 	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
 }
 
+/*XXX TODO XXX REMOVE HEIGHT UNUSED VARIABLE*/
+void free_buffered(void *_handle, void *address, uint32_t num_bytes, int height)
+{
+	(void)_handle;
+	(void)address;
+	(void)num_bytes;
+	(void)height;
+	log_info("gesalous fix update free_buffered");
+#if 0
+	db_handle *handle = (db_handle *)_handle;
+	uint64_t segment_id = (uint64_t)address - (uint64_t)handle->volume_desc->bitmap_end;
+	segment_id = segment_id - (segment_id % BUFFER_SEGMENT_SIZE);
+	segment_id = segment_id / BUFFER_SEGMENT_SIZE;
+#ifdef AGGRESIVE_FREE_POLICY
+	__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size), (unsigned long long)num_bytes);
+
+	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
+	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD)
+		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
+#else
+	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
+	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD) {
+		__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size),
+				     (unsigned long long)BUFFER_SEGMENT_SIZE);
+		/*dimap hook, release dram frame*/
+		if (dmap_dontneed(FD, ((uint64_t)address - MAPPED) / PAGE_SIZE, BUFFER_SEGMENT_SIZE / PAGE_SIZE) != 0) {
+			log_fatal("fatal ioctl failed");
+			exit(EXIT_FAILURE);
+		}
+		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
+		if (handle->db_desc->throttle_clients == STOP_INSERTS_DUE_TO_MEMORY_PRESSURE &&
+		    handle->db_desc->zero_level_memory_size <= ZERO_LEVEL_MEMORY_UPPER_BOUND) {
+			handle->db_desc->throttle_clients = NORMAL_OPERATION;
+			log_info("releasing clients");
+		}
+	}
+#endif
+#endif
+	return;
+}
+
 /**
  * @param   index_key: address of the index_key
  * @param   index_key_len: length of the index_key in encoded form first 2
@@ -162,116 +201,143 @@ void bt_decrease_level0_writers(db_handle *handle)
  * @param   query_key_len: query_key length again in encoded form
  */
 
-int64_t _tucana_key_cmp(void *index_key_buf, void *query_key_buf, char index_key_format, char query_key_format)
+int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 {
 	int64_t ret;
 	uint32_t size;
 	/*we need the left most entry*/
-	if (query_key_buf == NULL)
+	if (key2 == NULL)
 		return 1;
 
-	if (index_key_format == KV_FORMAT && query_key_format == KV_FORMAT) {
-		size = *(uint32_t *)index_key_buf;
-		if (size > *(uint32_t *)query_key_buf)
-			size = *(uint32_t *)query_key_buf;
+	struct kv_format *key1f = NULL;
+	struct kv_format *key2f = NULL;
+	struct kv_prefix *key1p = NULL;
+	struct kv_prefix *key2p = NULL;
 
-		ret = memcmp((void *)index_key_buf + sizeof(uint32_t), (void *)query_key_buf + sizeof(uint32_t), size);
+	if (key1_format == KV_FORMAT && key2_format == KV_FORMAT) {
+		key1f = (struct kv_format *)key1;
+		key1p = NULL;
+		key2f = (struct kv_format *)key2;
+		key2p = NULL;
+
+		size = key1f->key_size;
+		if (size > key2f->key_size)
+			size = key2f->key_size;
+
+		ret = memcmp(key1f->key_buf, key2f->key_buf, size);
 		if (ret != 0)
 			return ret;
-		else if (ret == 0 && *(uint32_t *)index_key_buf == *(uint32_t *)query_key_buf)
-			return 0;
-
-		else { /*larger key wins*/
-
-			if (*(uint32_t *)index_key_buf > *(uint32_t *)query_key_buf)
+		else {
+			/*finally larger key wins*/
+			if (key1f->key_size < key2f->key_size)
+				return -1;
+			else if (key2f->key_size > key1f->key_size)
 				return 1;
 			else
-				return -1;
+				/*equal*/
+				return 0;
 		}
-	} else if (index_key_format == KV_FORMAT && query_key_format == KV_PREFIX) {
-		if (*(uint32_t *)index_key_buf >= PREFIX_SIZE)
-			ret = prefix_compare(index_key_buf + sizeof(uint32_t), query_key_buf, PREFIX_SIZE);
-		else // check here TODO
-			ret = prefix_compare(index_key_buf + sizeof(uint32_t), query_key_buf,
-					     *(int32_t *)index_key_buf);
-		if (ret == 0) { /* we have a tie, prefix didn't help, fetch query_key form KV log*/
+	} else if (key1_format == KV_FORMAT && key2_format == KV_PREFIX) {
+		key1f = (struct kv_format *)key1;
+		key1p = NULL;
+		key2f = NULL;
+		key2p = (struct kv_prefix *)key2;
 
-			query_key_buf = (void *)(*(uint64_t *)(query_key_buf + PREFIX_SIZE));
+		if (key1f->key_size >= PREFIX_SIZE)
+			ret = prefix_compare(key1f->key_buf, key2p->prefix, PREFIX_SIZE);
+		else
+			ret = prefix_compare(key1f->key_buf, key2p->prefix, key1f->key_size);
+		if (ret == 0) {
+			/*we have a tie, prefix didn't help, fetch query_key form KV log*/
+			key2f = (struct kv_format *)(MAPPED + key2p->device_offt);
+			key2p = NULL;
 
-			size = *(uint32_t *)index_key_buf;
-			if (size > *(uint32_t *)query_key_buf)
-				size = *(uint32_t *)query_key_buf;
+			size = key1f->key_size;
+			if (size > key2f->key_size)
+				size = key2f->key_size;
 
-			ret = memcmp((void *)index_key_buf + sizeof(uint32_t), (void *)query_key_buf + sizeof(uint32_t),
-				     size);
+			ret = memcmp(key1f->key_buf, key2f->key_buf, size);
 
 			if (ret != 0)
 				return ret;
-			else if (ret == 0 && *(uint32_t *)index_key_buf == *(uint32_t *)query_key_buf)
-				return 0;
-
-			else { /*larger key wins*/
-				if (*(uint32_t *)index_key_buf > *(uint32_t *)query_key_buf)
+			else {
+				/*finally larger key wins*/
+				if (key1f->key_size < key2f->key_size)
+					return -1;
+				else if (key2f->key_size > key1f->key_size)
 					return 1;
 				else
-					return -1;
+					/*equal*/
+					return 0;
 			}
 		} else
 			return ret;
-	} else if (index_key_format == KV_PREFIX && query_key_format == KV_FORMAT) {
-		if (*(uint32_t *)query_key_buf >= PREFIX_SIZE)
-			ret = prefix_compare(index_key_buf, query_key_buf + sizeof(uint32_t), PREFIX_SIZE);
+	} else if (key1_format == KV_PREFIX && key2_format == KV_FORMAT) {
+		key1f = NULL;
+		key1p = (struct kv_prefix *)key1;
+		key2f = (struct kv_format *)key2;
+		key2p = NULL;
+
+		if (key2f->key_size >= PREFIX_SIZE)
+			ret = prefix_compare(key1p->prefix, key2f->key_buf, PREFIX_SIZE);
 		else // check here TODO
-			ret = prefix_compare(index_key_buf, query_key_buf + sizeof(uint32_t),
-					     *(int32_t *)query_key_buf);
-		if (ret == 0) { /* we have a tie, prefix didn't help, fetch query_key form KV log*/
-			index_key_buf = (void *)(*(uint64_t *)(index_key_buf + PREFIX_SIZE));
+			ret = prefix_compare(key1p->prefix, key2f->key_buf, key2f->key_size);
 
-			size = *(uint32_t *)query_key_buf;
-			if (size > *(uint32_t *)index_key_buf)
-				size = *(uint32_t *)index_key_buf;
+		if (ret == 0) {
+			/* we have a tie, prefix didn't help, fetch query_key form KV log*/
+			key1f = (struct kv_format *)(MAPPED + key1p->device_offt);
+			key1p = NULL;
 
-			ret = memcmp((void *)index_key_buf + sizeof(uint32_t), (void *)query_key_buf + sizeof(uint32_t),
-				     size);
+			size = key2f->key_size;
+			if (size > key1f->key_size)
+				size = key1f->key_size;
+
+			ret = memcmp(key1f->key_buf, key2f->key_buf, size);
 			if (ret != 0)
 				return ret;
-			else if (ret == 0 && *(uint32_t *)index_key_buf == *(uint32_t *)query_key_buf)
-				return 0;
-			else { /*larger key wins*/
-
-				if (*(uint32_t *)index_key_buf > *(uint32_t *)query_key_buf)
+			else {
+				/*finally larger key wins*/
+				if (key1f->key_size < key2f->key_size)
+					return -1;
+				else if (key2f->key_size > key1f->key_size)
 					return 1;
 				else
-					return -1;
+					/*equal*/
+					return 0;
 			}
 		} else
 			return ret;
 	} else {
 		/*KV_PREFIX and KV_PREFIX*/
-		ret = prefix_compare(index_key_buf, query_key_buf, PREFIX_SIZE);
+		key1f = NULL;
+		key1p = (struct kv_prefix *)key1;
+		key2f = NULL;
+		key2p = (struct kv_prefix *)key2;
+		ret = prefix_compare(key1p->prefix, key2p->prefix, PREFIX_SIZE);
 		if (ret != 0)
 			return ret;
 		/*full comparison*/
-		void *index_full_key = (void *)*(uint64_t *)(index_key_buf + PREFIX_SIZE);
-		void *query_full_key = (void *)*(uint64_t *)(query_key_buf + PREFIX_SIZE);
-		uint32_t size = *(uint32_t *)index_full_key;
-		size = *(uint32_t *)query_full_key;
-		if (size > *(uint32_t *)index_full_key) {
-			size = *(uint32_t *)index_full_key;
-		}
-		ret = memcmp(index_full_key, query_full_key, size);
+		key1f = (struct kv_format *)(MAPPED + key1p->device_offt);
+		key1p = NULL;
+		key2f = (struct kv_format *)(MAPPED + key2p->device_offt);
+		key2p = NULL;
 
+		size = key2f->key_size;
+		if (size > key1f->key_size) {
+			size = key1f->key_size;
+		}
+
+		ret = memcmp(key1f->key_buf, key2f->key_buf, size);
 		if (ret != 0)
 			return ret;
-		else if (ret == 0 && *(uint32_t *)index_key_buf == *(uint32_t *)query_key_buf)
+		/*finally larger key wins*/
+		if (key1f->key_size < key2f->key_size)
+			return -1;
+		else if (key2f->key_size > key1f->key_size)
+			return 1;
+		else
+			/*equal*/
 			return 0;
-		else {
-			/*larger key wins*/
-			if (*(uint32_t *)index_key_buf > *(uint32_t *)query_key_buf)
-				return 1;
-			else
-				return -1;
-		}
 	}
 	return 0;
 }
@@ -875,12 +941,6 @@ char db_close(db_handle *handle)
 	return KREON_OK;
 }
 
-void destroy_spill_request(NODE *node)
-{
-	free(node->data); /*the actual spill_request*/
-	free(node);
-}
-
 void spill_database(db_handle *handle)
 {
 	if (handle)
@@ -998,7 +1058,9 @@ void flush_volume(volume_descriptor *volume_desc, char force_spill)
 #endif
 }
 
-uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size)
+enum optype { insert_op, delete_op };
+
+uint8_t bt_insert(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size, enum optype type)
 {
 	bt_insert_req ins_req;
 	char __tmp[KV_MAX_SIZE];
@@ -1048,8 +1110,30 @@ uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key
 	ins_req.metadata.append_to_log = 1;
 	ins_req.metadata.gc_request = 0;
 	ins_req.metadata.special_split = 0;
+	switch (type) {
+	case insert_op:
+		ins_req.metadata.is_tombstone = 0;
+		break;
+	case delete_op:
+		ins_req.metadata.is_tombstone = 1;
+		break;
+	}
 
 	return _insert_key_value(&ins_req);
+}
+
+uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size)
+{
+	return bt_insert(handle, key, value, key_size, value_size, insert_op);
+}
+
+int8_t delete_key(db_handle *handle, void *key, uint32_t size)
+{
+	if (!find_key(handle, key, size))
+		return FAILED;
+	else {
+		return bt_insert(handle, key, NULL, size, 0, delete_op);
+	}
 }
 
 void extract_keyvalue_size(log_operation *req, metadata_tologop *data_size)
@@ -1185,26 +1269,25 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 
 static inline struct lookup_reply lookup_in_tree(void *key, node_header *root)
 {
-	struct lookup_reply rep = { .addr = NULL, .lc_failed = 0 };
+	struct lookup_reply rep = { .addr = NULL, .lc_failed = 0, .tombstone = 0 };
 	node_header *curr_node, *son_node = NULL;
-	void *key_addr_in_leaf;
+	struct leaf_kv_pointer *leaf_entry = NULL;
 	void *next_addr;
 	uint64_t curr_v1 = 0, curr_v2 = 0;
 	uint64_t son_v2 = 0;
 
-	uint32_t index_key_len;
+	// uint32_t index_key_len;
 
 	curr_v2 = root->v2;
 	curr_node = root;
 	if (curr_node->type == leafRootNode) {
-		key_addr_in_leaf = __find_key_addr_in_leaf((leaf_node *)curr_node, (struct splice *)key);
+		leaf_entry = bt_find_key_addr_in_leaf((leaf_node *)curr_node, (struct kv_format *)key);
 
-		if (key_addr_in_leaf == NULL)
+		if (leaf_entry == NULL)
 			rep.addr = NULL;
 		else {
-			key_addr_in_leaf = (void *)MAPPED + *(uint64_t *)key_addr_in_leaf;
-			index_key_len = *(uint32_t *)key_addr_in_leaf;
-			rep.addr = (void *)(uint64_t)key_addr_in_leaf + 4 + index_key_len;
+			rep.addr = (void *)MAPPED + leaf_entry->device_offt;
+			rep.tombstone = leaf_entry->tombstone;
 		}
 		curr_v1 = curr_node->v1;
 
@@ -1216,7 +1299,6 @@ static inline struct lookup_reply lookup_in_tree(void *key, node_header *root)
 			rep.lc_failed = 1;
 			return rep;
 		}
-
 	} else {
 		while (curr_node->type != leafNode) {
 			next_addr = _index_node_binary_search((index_node *)curr_node, key, KV_FORMAT);
@@ -1235,16 +1317,15 @@ static inline struct lookup_reply lookup_in_tree(void *key, node_header *root)
 		}
 
 		/* log_debug("curr node - MAPPEd %p",MAPPED-(uint64_t)curr_node); */
-		key_addr_in_leaf = __find_key_addr_in_leaf((leaf_node *)curr_node, (struct splice *)key);
+		leaf_entry = bt_find_key_addr_in_leaf((leaf_node *)curr_node, (struct kv_format *)key);
 
-		if (key_addr_in_leaf == NULL) {
+		if (leaf_entry == NULL) {
 			// log_info("key not found %s v1 %llu v2 %llu",((struct splice
 			// *)key)->data,curr_v2, curr_node->v1);
 			rep.addr = NULL;
 		} else {
-			key_addr_in_leaf = (void *)MAPPED + *(uint64_t *)key_addr_in_leaf;
-			index_key_len = *(uint32_t *)key_addr_in_leaf;
-			rep.addr = (void *)(uint64_t)key_addr_in_leaf + 4 + index_key_len;
+			rep.addr = (void *)MAPPED + leaf_entry->device_offt;
+			rep.tombstone = leaf_entry->tombstone;
 		}
 		curr_v1 = curr_node->v1;
 
@@ -1263,9 +1344,9 @@ static inline struct lookup_reply lookup_in_tree(void *key, node_header *root)
 /*this function will be reused in various places such as deletes*/
 void *__find_key(db_handle *handle, void *key, char SEARCH_MODE)
 {
-	struct lookup_reply rep = { .addr = NULL, .lc_failed = 0 };
-	node_header *root_w;
-	node_header *root_r;
+	struct lookup_reply rep = { .addr = NULL, .lc_failed = 0, .tombstone = 0 };
+	node_header *root_w = NULL;
+	node_header *root_r = NULL;
 	uint32_t tries;
 	(void)SEARCH_MODE;
 
@@ -1299,8 +1380,9 @@ void *__find_key(db_handle *handle, void *key, char SEARCH_MODE)
 			}
 		}
 
-		if (rep.addr != NULL)
+		if (rep.addr != NULL) {
 			goto finish;
+		}
 		++tree_id;
 		if (tree_id >= NUM_TREES_PER_LEVEL)
 			tree_id = 0;
@@ -1330,23 +1412,29 @@ void *__find_key(db_handle *handle, void *key, char SEARCH_MODE)
 				goto retry_2;
 			}
 		}
-		if (rep.addr != NULL)
+		if (rep.addr != NULL) {
 			goto finish;
+		}
 	}
 
 finish:
-	return rep.addr;
+	if (rep.addr != NULL && !rep.tombstone)
+		return rep.addr;
+	else {
+		return NULL;
+	}
 }
 
 /* returns the addr where the value of the KV pair resides */
 /* TODO: make this return the offset from MAPPED, not a pointer
  * to the offset */
-void *__find_key_addr_in_leaf(leaf_node *leaf, struct splice *key)
+static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key)
 {
-	int32_t start_idx = 0, end_idx = leaf->header.numberOfEntriesInNode - 1;
+	int32_t start_idx = 0;
+	int32_t end_idx = leaf->header.numberOfEntriesInNode - 1;
 	char key_buf_prefix[PREFIX_SIZE] = { '\0' };
 
-	memcpy(key_buf_prefix, key->data, MIN(key->size, PREFIX_SIZE));
+	memcpy(key_buf_prefix, key->key_buf, MIN(key->key_size, PREFIX_SIZE));
 
 	while (start_idx <= end_idx) {
 		int32_t middle = (start_idx + end_idx) / 2;
@@ -1357,10 +1445,10 @@ void *__find_key_addr_in_leaf(leaf_node *leaf, struct splice *key)
 		else if (ret > 0)
 			end_idx = middle - 1;
 		else {
-			void *index_key = (void *)(MAPPED + leaf->pointer[middle]);
-			ret = _tucana_key_cmp(index_key, key, KV_FORMAT, KV_FORMAT);
+			void *index_key = (void *)(MAPPED + leaf->kv_entry[middle].device_offt);
+			ret = bt_key_cmp(index_key, key, KV_FORMAT, KV_FORMAT);
 			if (ret == 0)
-				return &(leaf->pointer[middle]);
+				return &(leaf->kv_entry[middle]);
 			else if (ret < 0)
 				start_idx = middle + 1;
 			else
@@ -1422,7 +1510,7 @@ int8_t update_index(index_node *node, node_header *left_child, node_header *righ
 			addr = (void *)(uint64_t)node + (uint64_t)sizeof(node_header) + sizeof(uint64_t) +
 			       (uint64_t)(middle * 2 * sizeof(uint64_t));
 			index_key_buf = (void *)(MAPPED + *(uint64_t *)addr);
-			ret = _tucana_key_cmp(index_key_buf, key_buf, KV_FORMAT, KV_FORMAT);
+			ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, KV_FORMAT);
 			if (ret > 0) {
 				end_idx = middle - 1;
 				if (start_idx > end_idx)
@@ -1544,32 +1632,37 @@ void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *
  * corresponding index will be updated
  * for later use in efficient searching.
  */
-int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf)
+static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf)
 {
-	void *index_key_buf, *addr;
+	struct kv_format *k_format = NULL;
+	struct kv_prefix *k_prefix = NULL;
+	struct kv_prefix k_prefix2 = { .prefix = { '\0' }, .device_offt = 0, .tombstone = 0 };
+
+	if (req->metadata.key_format == KV_FORMAT) {
+		k_format = (struct kv_format *)key_buf;
+		memcpy(k_prefix2.prefix, k_format->key_buf, MIN(k_format->key_size, PREFIX_SIZE));
+		k_prefix = &k_prefix2;
+	} else {
+		/* operation coming from spill request (i.e. KV_PREFIX) */
+		k_prefix = (struct kv_prefix *)key_buf;
+	}
+
 	int64_t ret = 1;
-	int32_t start_idx, end_idx, middle = 0;
 	char *index_key_prefix = NULL;
-	char key_buf_prefix[PREFIX_SIZE] = { '\0' };
-	uint64_t pointer = 0;
+	int32_t start_idx, end_idx, middle = 0;
 
 	start_idx = 0;
 	end_idx = leaf->header.numberOfEntriesInNode - 1;
-	addr = &(leaf->pointer[0]);
 
-	if (req->metadata.key_format == KV_FORMAT) {
-		int32_t row_len = *(int32_t *)key_buf;
-		memcpy(key_buf_prefix, (void *)((uint64_t)key_buf + sizeof(int32_t)), MIN(row_len, PREFIX_SIZE));
-	} else { /* operation coming from spill request (i.e. KV_PREFIX) */
-		memcpy(key_buf_prefix, key_buf, PREFIX_SIZE);
-	}
+	struct leaf_kv_pointer *leaf_entry = NULL;
+	leaf_entry = &leaf->kv_entry[0];
 
 	while (leaf->header.numberOfEntriesInNode > 0) {
 		middle = (start_idx + end_idx) / 2;
-		addr = &(leaf->pointer[middle]);
+		leaf_entry = &leaf->kv_entry[middle];
 		index_key_prefix = leaf->prefix[middle];
 
-		ret = prefix_compare(index_key_prefix, key_buf_prefix, PREFIX_SIZE);
+		ret = prefix_compare(index_key_prefix, k_prefix->prefix, PREFIX_SIZE);
 		if (ret < 0) {
 			// update_leaf_index_stats(req->key_format);
 			goto up_leaf_1;
@@ -1584,8 +1677,9 @@ int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf)
 #endif
 		// update_leaf_index_stats(req->key_format);
 
-		index_key_buf = (void *)(MAPPED + *(uint64_t *)addr);
-		ret = _tucana_key_cmp(index_key_buf, key_buf, KV_FORMAT, req->metadata.key_format);
+		void *index_key_buf;
+		index_key_buf = (void *)MAPPED + leaf_entry->device_offt; //*(uint64_t *)addr);
+		ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, req->metadata.key_format);
 		if (ret == 0) {
 			if (req->metadata.gc_request && pointer_to_kv_in_log != index_key_buf)
 				return ret;
@@ -1608,14 +1702,18 @@ int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf)
 		}
 	}
 
-	/*setup the pointer*/
+	/*setup offset in the device*/
+	uint64_t device_offt = 0;
 	if (req->metadata.key_format == KV_FORMAT)
-		pointer = (uint64_t)key_buf - MAPPED;
+		device_offt = (uint64_t)key_buf - MAPPED;
 	else /* KV_PREFIX */
-		pointer = (*(uint64_t *)(key_buf + PREFIX_SIZE)) - MAPPED;
+		device_offt = k_prefix->device_offt;
+
+	leaf->kv_entry[middle].device_offt = device_offt;
+	leaf->kv_entry[middle].tombstone = req->metadata.is_tombstone;
+
 	/*setup the prefix*/
-	leaf->pointer[middle] = pointer;
-	memcpy(&leaf->prefix[middle], key_buf_prefix, PREFIX_SIZE);
+	memcpy(&leaf->prefix[middle], k_prefix->prefix, PREFIX_SIZE);
 
 	return ret;
 }
@@ -1636,27 +1734,24 @@ char *node_type(nodeType_t type)
 	}
 }
 
-void assert_leaf_node(node_header *leaf)
+void assert_leaf_node(node_header *leaf1)
 {
-	void *prev;
-	void *curr;
-	void *addr;
+	struct leaf_kv_pointer *prev, *curr = NULL;
+	struct leaf_node *leaf = (struct leaf_node *)leaf1;
 	int64_t ret;
-	uint64_t i;
-	if (leaf->numberOfEntriesInNode == 1) {
+	if (leaf1->numberOfEntriesInNode == 1) {
 		return;
 	}
-	addr = (void *)(uint64_t)leaf + sizeof(node_header);
-	curr = (void *)*(uint64_t *)addr + MAPPED;
+	prev = &leaf->kv_entry[0];
 
-	for (i = 1; i < leaf->numberOfEntriesInNode; i++) {
-		addr += 8;
-		prev = curr;
-		curr = (void *)*(uint64_t *)addr + MAPPED;
-		ret = _tucana_key_cmp(prev, curr, KV_FORMAT, KV_FORMAT);
+	for (uint64_t i = 1; i < leaf->header.numberOfEntriesInNode; i++) {
+		curr = &leaf->kv_entry[i];
+		void *prev_full = (void *)MAPPED + prev->device_offt;
+		void *curr_full = (void *)MAPPED + curr->device_offt;
+		ret = bt_key_cmp(prev_full, curr_full, KV_FORMAT, KV_FORMAT);
 		if (ret > 0) {
 			log_fatal("corrupted leaf index at index %llu total entries %llu", (LLU)i,
-				  (LLU)leaf->numberOfEntriesInNode);
+				  (LLU)leaf->header.numberOfEntriesInNode);
 			printf("previous key is: %s\n", (char *)prev + sizeof(int32_t));
 			printf("curr key is: %s\n", (char *)curr + sizeof(int32_t));
 			raise(SIGINT);
@@ -1742,8 +1837,7 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req)
  *  gesalous 26/05/2014 added method. Appends a key-value pair in a leaf node.
  *  returns 0 on success 1 on failure. Changed the default layout of leafs
  **/
-/*Unused allocation_code XXX TODO XXX REMOVE */
-int insert_KV_at_leaf(bt_insert_req *ins_req, node_header *leaf)
+static int bt_insert_kv_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 {
 	void *key_addr = NULL;
 	int ret;
@@ -1764,7 +1858,7 @@ int insert_KV_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 		exit(EXIT_FAILURE);
 	}
 
-	if (__update_leaf_index(ins_req, (leaf_node *)leaf, key_addr) != 0) {
+	if (bt_update_leaf_index(ins_req, (leaf_node *)leaf, key_addr) != 0) {
 		++leaf->numberOfEntriesInNode;
 		__sync_fetch_and_add(
 			&(ins_req->metadata.handle->db_desc->levels[level_id].level_size[ins_req->metadata.tree_id]),
@@ -1779,7 +1873,7 @@ int insert_KV_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 	return ret;
 }
 
-bt_split_result split_leaf(bt_insert_req *req, leaf_node *node)
+bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
 {
 	leaf_node *node_copy;
 	bt_split_result rep;
@@ -1818,9 +1912,10 @@ bt_split_result split_leaf(bt_insert_req *req, leaf_node *node)
 		right_entries = node->header.numberOfEntriesInNode - (node->header.numberOfEntriesInNode / 2);
 	}
 
-	rep.middle_key_buf = (void *)(MAPPED + node->pointer[split_point]);
+	rep.middle_key_buf = (void *)(MAPPED + node->kv_entry[split_point].device_offt);
 	/* pointers */
-	memcpy(&(rep.right_lchild->pointer[0]), &(node->pointer[split_point]), right_entries * sizeof(uint64_t));
+	memcpy(&(rep.right_lchild->kv_entry[0]), &node->kv_entry[split_point],
+	       right_entries * sizeof(struct leaf_kv_pointer));
 
 	/* prefixes */
 	memcpy(&(rep.right_lchild->prefix[0]), &(node->prefix[split_point]), right_entries * PREFIX_SIZE);
@@ -1871,7 +1966,7 @@ void *_index_node_binary_search(index_node *node, void *key_buf, char query_key_
 
 		addr = &(node->p[middle].pivot);
 		index_key_buf = (void *)(MAPPED + *(uint64_t *)addr);
-		ret = _tucana_key_cmp(index_key_buf, key_buf, KV_FORMAT, query_key_format);
+		ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, query_key_format);
 		if (ret == 0) {
 			// log_debug("I passed from this corner case1 %s",
 			// (char*)(index_key_buf+4));
@@ -1941,7 +2036,7 @@ void assert_index_node(node_header *node)
 		// log_info("key %s\n", (char *)key_tmp + sizeof(int32_t));
 
 		if (key_tmp_prev != NULL) {
-			if (_tucana_key_cmp(key_tmp_prev, key_tmp, KV_FORMAT, KV_FORMAT) >= 0) {
+			if (bt_key_cmp(key_tmp_prev, key_tmp, KV_FORMAT, KV_FORMAT) >= 0) {
 				log_fatal("corrupted index %d:%s something else %d:%s\n", *(uint32_t *)key_tmp_prev,
 					  key_tmp_prev + 4, *(uint32_t *)key_tmp, key_tmp + 4);
 				raise(SIGINT);
@@ -1960,8 +2055,6 @@ void assert_index_node(node_header *node)
 	}
 	// printf("\t\tpointer to last child %llu\n", (LLU)(uint64_t)child-MAPPED);
 }
-#if 0
-#endif
 
 void print_node(node_header *node)
 {
@@ -2277,7 +2370,7 @@ release_and_retry:
 				son->v2++;
 			} else {
 				son->v1++;
-				split_res = split_leaf(ins_req, (leaf_node *)son);
+				split_res = bt_split_leaf(ins_req, (leaf_node *)son);
 				if ((uint64_t)son != (uint64_t)split_res.left_child) {
 					/*cow happened*/
 					seg_free_leaf_node(ins_req->metadata.handle->volume_desc,
@@ -2408,7 +2501,7 @@ release_and_retry:
 	}
 
 	son->v1++; /*lamport counter*/
-	ret = insert_KV_at_leaf(ins_req, son);
+	ret = bt_insert_kv_at_leaf(ins_req, son);
 	son->v2++; /*lamport counter*/
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);
@@ -2557,11 +2650,11 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	}
 	/*Succesfully reached a bin (bottom internal node)*/
 	if (son->height != 0) {
-		log_fatal("FATAL son corrupted");
+		log_fatal("son corrupted");
 		exit(EXIT_FAILURE);
 	}
 	son->v1++; /*lamport counter*/
-	ret = insert_KV_at_leaf(ins_req, son);
+	ret = bt_insert_kv_at_leaf(ins_req, son);
 	son->v2++; /*lamport counter*/
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);

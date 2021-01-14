@@ -1,3 +1,4 @@
+#if 0
 #include <stdlib.h>
 #include <inttypes.h>
 #include <string.h>
@@ -442,6 +443,7 @@ void underflow_borrow_from_right_neighbor(leaf_node *curr, leaf_node *right, del
 {
 	rel_pos neighbor_metadata = { .left_entry = NULL, .right_entry = NULL };
 	node_header *parent = req->ancs->parent[req->ancs->size - 1];
+		ret = bt_key_cmp(nd_1->kv_prefix, &nd_2->key_value.kv, KV_PREFIX, KV_FORMAT);
 	void *key_addr;
 	/* raise(SIGINT); */
 
@@ -462,6 +464,7 @@ void underflow_borrow_from_right_neighbor(leaf_node *curr, leaf_node *right, del
 
 	_index_node_binary_search_posret((index_node *)req->ancs->parent[req->ancs->size - 1], req->key_buf, KV_FORMAT,
 					 &neighbor_metadata);
+		ret = bt_key_cmp(nd_1->kv_prefix, &nd_2->key_value.kv, KV_PREFIX, KV_FORMAT);
 
 	if (neighbor_metadata.right_entry == NULL) {
 		log_fatal("We are the rightmost node so we cannot borrow from the right leaf");
@@ -533,6 +536,7 @@ void merge_with_right_neighbor(leaf_node *curr, leaf_node *right, delete_request
 	parent->p[parent_metadata.right_pos].pivot = parent->p[parent_metadata.right_pos + 1].pivot;
 	memmove(&parent->p[parent_metadata.right_pos + 1], &parent->p[parent_metadata.right_pos + 2], remaining_bytes);
 	--parent->header.numberOfEntriesInNode;
+		ret = bt_key_cmp(nd_1->kv_prefix, &nd_2->key_value.kv, KV_PREFIX, KV_FORMAT);
 	assert(parent->header.numberOfEntriesInNode >= 1);
 	//In this case we do not have to change anything to the right neighbor
 	//nor to change the pivots in our parent.Reclaim the node space here.
@@ -1090,3 +1094,4 @@ int8_t merge_with_index_neighbor(index_node *curr, index_node *parent, rotate_da
 
 	return ret;
 }
+#endif

@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 #define COMPACTION
-
+#include <signal.h>
 #include <pthread.h>
 #include <assert.h>
 #include "../scanner/scanner.h"
@@ -85,7 +85,10 @@ void *compaction_daemon(void *args)
 					spin_loop(&(comp_req->db_desc->levels[0].active_writers), 0);
 
 					/*done now atomically change active tree*/
-					db_desc->levels[0].active_tree = i;
+
+					while (!__sync_bool_compare_and_swap(&db_desc->levels[0].active_tree,
+									     db_desc->levels[0].active_tree, i)) {
+					}
 
 					/*Release guard lock*/
 					if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
@@ -272,31 +275,30 @@ void *compaction(void *_comp_req)
 		}
 		struct sh_min_heap *m_heap = (struct sh_min_heap *)malloc(sizeof(struct sh_min_heap));
 		sh_init_heap(m_heap, comp_req->src_level);
-		struct sh_heap_node nd_min = {
-			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
-		};
-		struct sh_heap_node nd_src = {
-			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
-		};
-		struct sh_heap_node nd_dst = {
-			.KV = NULL, .level_id = 0, .active_tree = 0, .duplicate = 0, .type = KV_PREFIX
-		};
+		struct sh_heap_node nd_src;
+		struct sh_heap_node nd_dst;
+		struct sh_heap_node nd_min;
 
-		nd_src.KV = level_src->keyValue;
+		memset(&nd_src, 0x00, sizeof(struct sh_heap_node));
+		memset(&nd_dst, 0x00, sizeof(struct sh_heap_node));
+		memset(&nd_min, 0x00, sizeof(struct sh_heap_node));
+		nd_src.kv_prefix = level_src->kv_prefix;
 		nd_src.level_id = comp_req->src_level;
 		nd_src.active_tree = comp_req->src_tree;
+		nd_src.type = KV_PREFIX;
 		sh_insert_heap_node(m_heap, &nd_src);
 
-		nd_dst.KV = level_dst->keyValue;
+		nd_dst.kv_prefix = level_dst->kv_prefix;
 		nd_dst.level_id = comp_req->dst_level;
 		nd_dst.active_tree = comp_req->dst_tree;
+		nd_dst.type = KV_PREFIX;
 		sh_insert_heap_node(m_heap, &nd_dst);
 		log_info("level scanners and min heap ready");
 		int32_t num_of_keys = (SPILL_BUFFER_SIZE - (2 * sizeof(uint32_t))) / (PREFIX_SIZE + sizeof(uint64_t));
 		enum sh_heap_status stat = GOT_MIN_HEAP;
 		do {
 			//while (handle.volume_desc->snap_preemption == SNAP_INTERRUPT_ENABLE)
-			//	usleep(50000);
+			//usleep(50000);
 
 			db_desc->dirty = 0x01;
 			if (handle.db_desc->stat == DB_IS_CLOSING) {
@@ -316,12 +318,10 @@ void *compaction(void *_comp_req)
 			for (i = 0; i < num_of_keys; i++) {
 				stat = sh_remove_min(m_heap, &nd_min);
 				if (stat != EMPTY_MIN_HEAP) {
-					ins_req.key_value_buf = nd_min.KV;
+					ins_req.key_value_buf = &nd_min.kv_prefix;
+					ins_req.metadata.is_tombstone = nd_min.kv_prefix.tombstone;
 				} else
 					break;
-				// log_info("Compacting key %s from level %d",
-				//	 (*(uint64_t *)(ins_req.key_value_buf + PREFIX_SIZE)) + 4,
-				// nd_min.level_id);
 				if (!nd_min.duplicate)
 					_insert_key_value(&ins_req);
 				// log_info("level size
@@ -338,7 +338,7 @@ void *compaction(void *_comp_req)
 				}
 				rc = _get_next_KV(curr_scanner);
 				if (rc != END_OF_DATABASE) {
-					nd_min.KV = curr_scanner->keyValue;
+					nd_min.kv_prefix = curr_scanner->kv_prefix;
 					sh_insert_heap_node(m_heap, &nd_min);
 				}
 				++local_spilled_keys;

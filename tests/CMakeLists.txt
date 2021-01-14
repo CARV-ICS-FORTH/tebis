@@ -27,9 +27,6 @@ target_link_libraries(test_scans kreon)
 add_executable(test_dirty_scans test_dirty_scans.c)
 target_link_libraries(test_dirty_scans kreon)
 
-add_executable(test_spillscans test_spillscanner.c)
-target_link_libraries(test_spillscans kreon)
-
 add_executable(test_deletes test_deletes.c)
 target_link_libraries(test_deletes kreon)
 
