@@ -66,7 +66,7 @@ add_executable(
   deserialize_index.c
   zk_utils.c
   djb2.c
-  replica_utilities.c
+  # replica_utilities.c
   globals.c
   # zk_string_vector.c
   # regions_manager.c

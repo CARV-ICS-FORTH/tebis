@@ -85,8 +85,7 @@ void snapshot(volume_descriptor *volume_desc)
 	struct commit_log_info log_info;
 	pr_db_group *db_group;
 	pr_db_entry *db_entry;
-	//forest *new_forest;
-	node_header *old_root;
+	//node_header *old_root;
 	uint64_t a, b;
 	uint64_t c;
 	uint32_t i;
@@ -138,7 +137,7 @@ void snapshot(volume_descriptor *volume_desc)
 
 				memcpy(new_group, db_group, sizeof(pr_db_group));
 				new_group->epoch = volume_desc->mem_catalogue->epoch;
-				free_block(volume_desc, db_group, sizeof(pr_db_group), -1);
+				free_block(volume_desc, db_group, sizeof(pr_db_group));
 				db_group = new_group;
 				volume_desc->mem_catalogue->db_group_index[db_desc->group_id] =
 					(pr_db_group *)((uint64_t)db_group - MAPPED);
@@ -173,16 +172,16 @@ void snapshot(volume_descriptor *volume_desc)
 							((uint64_t)db_desc->levels[i].root_w[j]) - MAPPED;
 
 						/*mark old root to free it later*/
-						old_root = db_desc->levels[i].root_r[j];
+						//old_root = db_desc->levels[i].root_r[j];
 						db_desc->levels[i].root_r[j] = db_desc->levels[i].root_w[j];
 						db_desc->levels[i].root_w[j] = NULL;
-
-						if (old_root) {
-							if (old_root->type == rootNode)
-								free_block(volume_desc, old_root, INDEX_NODE_SIZE, -1);
-							else
-								free_block(volume_desc, old_root, LEAF_NODE_SIZE, -1);
-						}
+						/*Kreon frees space after compactions*/
+						//if (old_root) {
+						//	if (old_root->type == rootNode)
+						//		free_block(volume_desc, old_root, INDEX_NODE_SIZE);
+						//	else
+						//		free_block(volume_desc, old_root, LEAF_NODE_SIZE);
+						//}
 
 					} else if (db_desc->levels[i].root_r[j] == NULL) {
 						//log_warn("set %lu to %llu of db_entry %llu", i * j,
@@ -214,7 +213,7 @@ void snapshot(volume_descriptor *volume_desc)
 	}
 	if (dirty > 0) { /*At least one db is dirty proceed to snapshot()*/
 
-		free_block(volume_desc, volume_desc->dev_catalogue, sizeof(pr_system_catalogue), -1);
+		free_block(volume_desc, volume_desc->dev_catalogue, sizeof(pr_system_catalogue));
 		volume_desc->dev_catalogue = volume_desc->mem_catalogue;
 		/*allocate a new position for superindex*/
 
@@ -254,23 +253,8 @@ void snapshot(volume_descriptor *volume_desc)
 	volume_desc->last_commit = volume_desc->last_snapshot;
 	volume_desc->last_sync = get_timestamp(); /*update snapshot ts*/
 
-	/*release locks*/
-	node = get_first(volume_desc->open_databases);
-	while (node != NULL) {
-		db_desc = (db_descriptor *)node->data;
-		//#if LOG_WITH_MUTEX
-		//		MUTEX_UNLOCK(&db_desc->lock_log);
-		//#else
-		//		SPIN_UNLOCK(&db_desc->lock_log);
-		//#endif
-		for (i = 0; i < MAX_LEVELS; i++)
-			RWLOCK_UNLOCK(&db_desc->levels[i].guard_of_level.rx_lock);
-
-		node = node->next;
-	}
-	volume_desc->snap_preemption = SNAP_INTERRUPT_DISABLE;
-
-	if (dirty > 0) { /*At least one db is dirty proceed to snapshot()*/
+	if (dirty > 0) {
+		/*At least one db is dirty proceed to snapshot()*/
 		//double t1,t2;
 		//struct timeval tim;
 
@@ -294,6 +278,22 @@ void snapshot(volume_descriptor *volume_desc)
 		//t2=tim.tv_sec+(tim.tv_usec/1000000.0);
 		//fprintf(stderr, "snap_time=[%lf]sec\n", (t2-t1));
 	}
+
+	/*release locks*/
+	node = get_first(volume_desc->open_databases);
+	while (node != NULL) {
+		db_desc = (db_descriptor *)node->data;
+		//#if LOG_WITH_MUTEX
+		//		MUTEX_UNLOCK(&db_desc->lock_log);
+		//#else
+		//		SPIN_UNLOCK(&db_desc->lock_log);
+		//#endif
+		for (i = 0; i < MAX_LEVELS; i++)
+			RWLOCK_UNLOCK(&db_desc->levels[i].guard_of_level.rx_lock);
+
+		node = node->next;
+	}
+	volume_desc->snap_preemption = SNAP_INTERRUPT_DISABLE;
 
 	/*stats counters*/
 	//printf("[%s:%s:%d] hit l0 %lld miss l0 %lld hit l1 %lld miss l1 %lld\n",__FILE__,__func__,__LINE__,ins_prefix_hit_l0,ins_prefix_miss_l0,ins_prefix_hit_l1, ins_prefix_miss_l1);

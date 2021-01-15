@@ -126,7 +126,7 @@ int main()
 		}
 		if (i % 10 == 0)
 			snapshot(volume_desc);
-		free_block(volume_desc, address, AT_SEGMENT_SIZE, -1);
+		free_block(volume_desc, address, AT_SEGMENT_SIZE);
 	}
 	log_info("Done :D");
 	return 1;

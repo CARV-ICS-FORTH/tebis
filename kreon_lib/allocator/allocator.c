@@ -78,7 +78,7 @@ static void check(int test, const char *message, ...)
 	}
 }
 
-void __add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry);
+static void add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry);
 void mount_volume(char *volume_name, int64_t start, int64_t size); /*Called once from a region server*/
 void clean_log_entries(void *volume_desc);
 void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t length, char free, uint64_t *bit_idx);
@@ -1143,7 +1143,7 @@ uint64_t get_timestamp(void)
 	return tv.tv_sec * (uint64_t)1000000 + tv.tv_usec;
 }
 
-void __add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry)
+static void add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry)
 {
 	void *addr;
 	pthread_mutex_t *lock;
@@ -1209,28 +1209,21 @@ void __add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t len
 	// pthread_mutex_unlock(lock);
 }
 
-void free_block(void *handle, void *block_address, uint32_t length, int height)
+void free_block(struct volume_descriptor *volume_desc, void *address, uint32_t length)
 {
-	volume_descriptor *volume_desc;
-	if (height == -1)
-		volume_desc = (volume_descriptor *)handle;
-	else {
-		log_fatal("faulty value for height?");
-		exit(EXIT_FAILURE);
-		// volume_desc = ((db_handle *)handle)->volume_desc;
-	}
+	//uint64_t pageno = ((uint64_t)address - MAPPED) / DEVICE_BLOCK_SIZE;
+	//int32_t num_of_pages = length / 4096;
+	//int32_t i;
+	//assert((uint64_t)address >= MAPPED &&
+	//      (uint64_t)address <= (MAPPED + volume_desc->size));
+	add_log_entry(volume_desc, address, length, FREE_BLOCK);
 
-	uint64_t pageno = ((uint64_t)block_address - MAPPED) / DEVICE_BLOCK_SIZE;
-	int32_t num_of_pages = length / 4096;
-	int32_t i;
-	__add_log_entry(volume_desc, block_address, length, FREE_BLOCK);
-
-	for (i = 0; i < num_of_pages; i++) {
-		// printf("[%s:%s:%d] reducing priority of pageno
-		// %llu\n",__FILE__,__func__,__LINE__,(LLU)pageno);
-		dmap_change_page_priority(FD, pageno, 10);
-		pageno++;
-	}
+	//for (i = 0; i < num_of_pages; i++) {
+	//printf("[%s:%s:%d] reducing priority of pageno
+	//%llu\n",__FILE__,__func__,__LINE__,(LLU)pageno);
+	//dmap_change_page_priority(FD, pageno, 10);
+	//pageno++;
+	//}
 }
 
 /**
@@ -1271,8 +1264,8 @@ void clean_log_entries(void *v_desc)
 		rc = MUTEX_LOCK(&volume_desc->mutex); // pthread_mutex_lock(&(volume_desc->mutex));
 		rc = pthread_cond_timedwait(&(volume_desc->cond), &(volume_desc->mutex), &ts);
 
-		if (rc == 0) { /*cleaner singaled due to space pressure*/
-
+		if (rc == 0) {
+			/*cleaner singaled due to space pressure*/
 			log_info("Space pressure forcing snapshot");
 			MUTEX_UNLOCK(&volume_desc->mutex);
 			// pthread_mutex_unlock(&(volume_desc->mutex));/*unlock*/

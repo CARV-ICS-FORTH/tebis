@@ -76,7 +76,6 @@ extern int32_t index_order;
 struct lookup_reply {
 	void *addr;
 	uint8_t tombstone;
-	uint8_t lc_failed;
 };
 
 typedef enum {
@@ -128,8 +127,8 @@ typedef struct node_header {
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
                perform copy on write*/
 	uint64_t fragmentation;
-	volatile uint64_t v1;
-	volatile uint64_t v2;
+	//volatile uint64_t v1;
+	//volatile uint64_t v2;
 	/*data log info, KV log for leaves private for index*/
 	IN_log_header *first_IN_log_header;
 	IN_log_header *last_IN_log_header;
@@ -266,6 +265,7 @@ typedef struct level_descriptor {
 	char tree_status[NUM_TREES_PER_LEVEL];
 	uint8_t active_tree;
 	char in_recovery_mode;
+	uint8_t level_id;
 } level_descriptor;
 
 struct bt_compaction_callback_args {

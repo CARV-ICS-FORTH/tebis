@@ -9,8 +9,8 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 {
 	struct node_header *header = &leaf->header;
 	header->epoch = r_desc->db->volume_desc->mem_catalogue->epoch;
-	header->v1 = 0;
-	header->v2 = 0;
+	//header->v1 = 0;
+	//header->v2 = 0;
 	for (int i = 0; i < header->numberOfEntriesInNode; i++) {
 		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
 		// log_info("offt = %llu leaf pointer[%d] =
@@ -150,8 +150,8 @@ void di_rewrite_index(struct krm_region_desc *r_desc, uint8_t level_id, uint8_t 
 				return;
 			}
 			index->header.epoch = r_desc->db->volume_desc->mem_catalogue->epoch;
-			index->header.v1 = 0;
-			index->header.v2 = 0;
+			//index->header.v1 = 0;
+			//index->header.v2 = 0;
 			index->header.first_IN_log_header =
 				(struct IN_log_header *)index_entry->my_seg + primary_segment_offt;
 			c->state = DI_INDEX_NODE_LAST_IN;
