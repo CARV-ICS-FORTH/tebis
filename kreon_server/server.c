@@ -151,6 +151,11 @@ struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
 	return root_server->numa_servers[my_desc->root_server_id]->channel;
 }
 
+void on_completion_notify(struct rdma_message_context *msg_ctx)
+{
+	sem_post(&msg_ctx->wait_for_completion);
+}
+
 void *socket_thread(void *args)
 {
 	struct ds_numa_server *my_server = (struct ds_numa_server *)args;
@@ -224,7 +229,11 @@ void *socket_thread(void *args)
 
 		connection_type incoming_connection_type = -1;
 		struct ibv_mr *recv_mr = rdma_reg_msgs(new_conn_id, &incoming_connection_type, sizeof(connection_type));
-		ret = rdma_post_recv(new_conn_id, NULL, &incoming_connection_type, sizeof(connection_type), recv_mr);
+		struct rdma_message_context msg_ctx;
+		client_rdma_init_message_context(&msg_ctx, NULL);
+		msg_ctx.on_completion_callback = on_completion_notify;
+		ret = rdma_post_recv(new_conn_id, &msg_ctx, &incoming_connection_type, sizeof(connection_type),
+				     recv_mr);
 		if (ret) {
 			log_fatal("rdma_post_recv: %s", strerror(errno));
 			exit(EXIT_FAILURE);
@@ -237,8 +246,8 @@ void *socket_thread(void *args)
 			exit(EXIT_FAILURE);
 		}
 
-		while (incoming_connection_type == -1)
-			; // Wait for message to arrive
+		// Block until client sends connection type
+		sem_wait(&msg_ctx.wait_for_completion);
 		rdma_dereg_mr(recv_mr);
 
 		if (incoming_connection_type == CLIENT_TO_SERVER_CONNECTION) {
@@ -353,7 +362,7 @@ void *socket_thread(void *args)
 		conn->peer_mr = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
 		memset(conn->peer_mr, 0, sizeof(struct ibv_mr));
 		recv_mr = rdma_reg_msgs(new_conn_id, conn->peer_mr, sizeof(struct ibv_mr));
-		ret = rdma_post_recv(new_conn_id, NULL, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
+		ret = rdma_post_recv(new_conn_id, &msg_ctx, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
 		if (ret) {
 			log_fatal("rdma_post_recv: %s", strerror(errno));
 			exit(EXIT_FAILURE);
@@ -366,8 +375,8 @@ void *socket_thread(void *args)
 			log_fatal("rdma_post_send: %s", strerror(errno));
 			exit(EXIT_FAILURE);
 		}
-		while (!conn->peer_mr->rkey)
-			; // Wait for message to arrive
+		// Block until client sends memory region information
+		sem_wait(&msg_ctx.wait_for_completion);
 		rdma_dereg_mr(send_mr);
 		rdma_dereg_mr(recv_mr);
 

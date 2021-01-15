@@ -835,11 +835,13 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		log_fatal("rdma_connect failed: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-
 	conn->peer_mr = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
 	memset(conn->peer_mr, 0, sizeof(struct ibv_mr));
 	struct ibv_mr *recv_mr = rdma_reg_msgs(rdma_cm_id, conn->peer_mr, sizeof(struct ibv_mr));
-	ret = rdma_post_recv(rdma_cm_id, NULL, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
+	struct rdma_message_context msg_ctx;
+	client_rdma_init_message_context(&msg_ctx, NULL);
+	msg_ctx.on_completion_callback = on_completion_client;
+	ret = rdma_post_recv(rdma_cm_id, &msg_ctx, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
 	if (ret) {
 		log_fatal("rdma_post_recv: %s", strerror(errno));
 		exit(EXIT_FAILURE);
@@ -878,9 +880,8 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	conn->priority = LOW_PRIORITY; // FIXME I don't think I use this anymore
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
 
-	// Receive server's memory region information
-	while (conn->peer_mr->rkey == 0)
-		; // Wait for message to arrive
+	// Block until server sends memory region information
+	sem_wait(&msg_ctx.wait_for_completion);
 	rdma_dereg_mr(send_mr);
 	rdma_dereg_mr(recv_mr);
 
