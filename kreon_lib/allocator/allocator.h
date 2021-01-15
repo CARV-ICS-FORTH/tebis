@@ -207,6 +207,6 @@ void set_priority(uint64_t pageno, char allocation_code, uint64_t num_bytes);
 void *allocate(void *_volume_desc, uint64_t num_bytes, int extensions, char allocation_code);
 void *allocate_segment(void *_handle, uint64_t num_bytes, int level_id, char allocation_code);
 
-void free_block(void *_volume_desc, void *block_address, uint32_t length, int height);
+void free_block(struct volume_descriptor *volume_desc, void *address, uint32_t length);
 
 uint64_t get_timestamp(void);

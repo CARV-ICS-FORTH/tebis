@@ -30,9 +30,19 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 
 	if (available_space < size) {
 		/*we need to go to the actual allocator to get space*/
-		MUTEX_LOCK(&volume_desc->allocator_lock);
-		new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, reason);
-		MUTEX_UNLOCK(&volume_desc->allocator_lock);
+		if (level_desc->level_id != 0) {
+			MUTEX_LOCK(&volume_desc->allocator_lock);
+			new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, reason);
+			MUTEX_UNLOCK(&volume_desc->allocator_lock);
+			assert(new_segment);
+		} else {
+			if (posix_memalign((void **)&new_segment, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
+				log_info("MEMALIGN FAILED");
+				exit(EXIT_FAILURE);
+			}
+			assert(new_segment);
+		}
+
 		if (level_desc->offset[tree_id]) {
 			//log_info("Adding another index segmet for [%u] available_space = %d", tree_id, available_space);
 			int *pad = (int *)((uint64_t)level_desc->last_segment[tree_id] +
@@ -86,8 +96,8 @@ index_node *seg_get_index_node(volume_descriptor *volume_desc, level_descriptor 
 	ptr->header.epoch = volume_desc->mem_catalogue->epoch;
 	ptr->header.numberOfEntriesInNode = 0;
 	ptr->header.fragmentation = 0;
-	ptr->header.v1 = 0;
-	ptr->header.v2 = 0;
+	//ptr->header.v1 = 0;
+	//ptr->header.v2 = 0;
 
 	/*private key log for index nodes*/
 	bh = (IN_log_header *)((uint64_t)ptr + INDEX_NODE_SIZE);
@@ -119,13 +129,17 @@ void seg_free_index_node_header(volume_descriptor *volume_desc, level_descriptor
 	//leave for future use
 	(void)level_desc;
 	(void)tree_id;
-	free_block(volume_desc, node, INDEX_NODE_SIZE, -1);
+	(void)volume_desc;
+	(void)node;
+	//free_block(volume_desc, node, INDEX_NODE_SIZE);
+	return;
 }
 
 void seg_free_index_node(volume_descriptor *volume_desc, level_descriptor *level_desc, uint8_t tree_id,
 			 index_node *inode)
 {
 	//leave for future use
+	return;
 	(void)level_desc;
 	(void)tree_id;
 	if (inode->header.type == leafNode || inode->header.type == leafRootNode) {
@@ -144,11 +158,11 @@ void seg_free_index_node(volume_descriptor *volume_desc, level_descriptor *level
 	while ((uint64_t)curr != (uint64_t)last) {
 		to_free = curr;
 		curr = (IN_log_header *)((uint64_t)MAPPED + (uint64_t)curr->next);
-		free_block(volume_desc, to_free, KEY_BLOCK_SIZE, -1);
+		free_block(volume_desc, to_free, KEY_BLOCK_SIZE);
 	}
-	free_block(volume_desc, last, KEY_BLOCK_SIZE, -1);
+	free_block(volume_desc, last, KEY_BLOCK_SIZE);
 	/*finally node_header*/
-	free_block(volume_desc, inode, INDEX_NODE_SIZE, -1);
+	free_block(volume_desc, inode, INDEX_NODE_SIZE);
 	return;
 }
 
@@ -160,8 +174,8 @@ leaf_node *seg_get_leaf_node(volume_descriptor *volume_desc, level_descriptor *l
 	leaf->header.epoch = volume_desc->mem_catalogue->epoch;
 	leaf->header.numberOfEntriesInNode = 0;
 	leaf->header.fragmentation = 0;
-	leaf->header.v1 = 0;
-	leaf->header.v2 = 0;
+	//leaf->header.v1 = 0;
+	//leaf->header.v2 = 0;
 
 	leaf->header.first_IN_log_header = NULL; /*unused field in leaves*/
 	leaf->header.last_IN_log_header = NULL; /*unused field in leaves*/
@@ -181,7 +195,8 @@ void seg_free_leaf_node(volume_descriptor *volume_desc, level_descriptor *level_
 	//leave for future use
 	(void)level_desc;
 	(void)tree_id;
-	free_block(volume_desc, leaf, LEAF_NODE_SIZE, -1);
+	return;
+	free_block(volume_desc, leaf, LEAF_NODE_SIZE);
 }
 
 segment_header *seg_get_raw_index_segment(volume_descriptor *volume_desc, level_descriptor *level_desc, int tree_id)
@@ -219,7 +234,7 @@ segment_header *seg_get_raw_log_segment(volume_descriptor *volume_desc)
 
 void free_raw_segment(volume_descriptor *volume_desc, segment_header *segment)
 {
-	free_block(volume_desc, segment, SEGMENT_SIZE, -1);
+	free_block(volume_desc, segment, SEGMENT_SIZE);
 	return;
 }
 
@@ -300,31 +315,27 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);
 
 	curr_segment = handle->db_desc->levels[level_id].first_segment[tree_id];
+	//if (level_id == 0) {
+	//	if (RWLOCK_WRLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
+	//		exit(EXIT_FAILURE);
+	//	}
+	//}
 	if (curr_segment == NULL) {
 		log_warn("trying to free an empty level valid in case of replicas");
 		return;
+		//goto finish;
 	}
 	while (1) {
-#if 0
-		if (spill_task_desc->region->db->volume_desc->segment_utilization_vector[s_id] != 0 &&
-		    spill_task_desc->region->db->volume_desc->segment_utilization_vector[s_id] <
-			    SEGMENT_MEMORY_THREASHOLD) {
-			//printf("[%s:%s:%d] last segment remains\n",__FILE__,__func__,__LINE__);
-			/*dimap hook, release dram frame*/
-			/*if(dmap_dontneed(FD, ((uint64_t)free_addr-MAPPED)/PAGE_SIZE, BUFFER_SEGMENT_SIZE/PAGE_SIZE)!=0){
-								printf("[%s:%s:%d] fatal ioctl failed\n",__FILE__,__func__,__LINE__);
-								exit(-1);
-								}
-								__sync_fetch_and_sub(&(handle->db_desc->zero_level_memory_size), (unsigned long long)handle->volume_desc->segment_utilization_vector[s_id]*4096);
-								*/
-			spill_task_desc->region->db->volume_desc->segment_utilization_vector[s_id] = 0;
-		}
-#endif
-		free_block(handle->volume_desc, curr_segment, SEGMENT_SIZE, -1);
+		uint64_t next_dev_offt = (uint64_t)curr_segment->next_segment;
+		if (level_id == 0)
+			free(curr_segment);
+		else
+			free_block(handle->volume_desc, curr_segment, SEGMENT_SIZE);
 		space_freed += SEGMENT_SIZE;
-		if (curr_segment->next_segment == NULL)
+		if (!next_dev_offt)
 			break;
-		curr_segment = MAPPED + curr_segment->next_segment;
+		else
+			curr_segment = (struct segment_header *)(MAPPED + next_dev_offt);
 	}
 	log_info("Freed space %llu MB from db:%s level tree [%u][%u]", space_freed / (1024 * 1024),
 		 handle->db_desc->db_name, level_id, tree_id);
@@ -340,4 +351,10 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	handle->db_desc->levels[level_id].offset[tree_id] = 0;
 	handle->db_desc->levels[level_id].root_r[tree_id] = NULL;
 	handle->db_desc->levels[level_id].root_w[tree_id] = NULL;
+	//finish:
+	//if (level_id == 0) {
+	//	if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
+	//		exit(EXIT_FAILURE);
+	//	}
+	//}
 }
