@@ -94,8 +94,13 @@ void mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 
 	if (MAPPED == 0) {
 		log_info("Opening Volume %s", volume_name);
-
-		FD = open(volume_name, O_RDWR); /* open the device */
+		/* open the device */
+		FD = open(volume_name, O_RDWR | __O_DIRECT);
+		if (FD < 0) {
+			log_fatal("Failed to open %s", volume_name);
+			perror("Reason:\n");
+			exit(EXIT_FAILURE);
+		}
 		if (ioctl(FD, BLKGETSIZE64, &device_size) == -1) {
 			/*maybe we have a file?*/
 			device_size = lseek(FD, 0, SEEK_END);
@@ -710,7 +715,7 @@ void *allocate(void *_volume_desc, uint64_t num_bytes, int unused, char allocati
 			continue;
 		}
 		((size - suffix_size) < WORD_SIZE) ? (mask = 0xFFFFFFFFFFFFFFFF >> (WORD_SIZE - (size - suffix_size))) :
-						     (mask = 0xFFFFFFFFFFFFFFFF);
+							   (mask = 0xFFFFFFFFFFFFFFFF);
 #ifdef DEBUG_ALLOCATOR
 		log_warn("Mask is %llu word is %llu suffix is %llu\n", (LLU)mask, (LLU) * (uint64_t *)(word_address),
 			 suffix_size);

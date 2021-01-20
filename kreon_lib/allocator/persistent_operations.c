@@ -203,7 +203,7 @@ void snapshot(volume_descriptor *volume_desc)
 			log_info.first_kv_log = (segment_header *)db_desc->KV_log_first_segment;
 			log_info.last_kv_log = (segment_header *)db_desc->KV_log_last_segment;
 			log_info.kv_log_size = db_desc->KV_log_size;
-			commit_db_log(db_desc, &log_info);
+			//commit_db_log(db_desc, &log_info);
 			db_desc->L0_start_log_offset = db_desc->KV_log_size;
 			db_desc->L0_end_log_offset = db_desc->KV_log_size;
 			db_entry->L0_start_log_offset = (uint64_t)db_desc->L0_start_log_offset;

@@ -1,6 +1,8 @@
 #pragma once
 #include "btree.h"
 
+struct segment_header *get_segment_for_explicit_IO(volume_descriptor *volume_desc, level_descriptor *level_desc,
+						   uint8_t tree_id);
 /*functions for index nodes*/
 index_node *seg_get_index_node(volume_descriptor *volume_desc, level_descriptor *level_desc, uint8_t tree_id,
 			       char reason);
