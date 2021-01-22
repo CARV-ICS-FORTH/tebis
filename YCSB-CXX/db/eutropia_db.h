@@ -55,8 +55,8 @@ class EutropiaDB : public YCSBDB {
 								       CoreWorkload::FIELD_COUNT_DEFAULT))),
 		  dbs()
 	{
-		const char *pathname = "/dev/dmap/dmap1";
-		//const char *pathname = "/usr/local/gesalous/mounts/kreon.dat";
+		//const char *pathname = "/dev/dmap/dmap1";
+		const char *pathname = "/tmp/ramdisk/kreon.dat";
 		int64_t size;
 
 		int fd = open(pathname, O_RDONLY);
@@ -278,7 +278,8 @@ class EutropiaDB : public YCSBDB {
           exit(EXIT_FAILURE);
         }
 #endif
-			std::string value(val + sizeof(int32_t), *(int32_t *)val);
+			val = val + sizeof(uint32_t) + *(uint32_t *)val;
+			std::string value(val + sizeof(uint32_t), *(uint32_t *)val);
 
 			std::vector<std::string> tokens;
 			boost::split(tokens, value, boost::is_any_of(" "));

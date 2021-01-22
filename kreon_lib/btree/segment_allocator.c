@@ -70,7 +70,6 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 		}
 		offset_in_segment = level_desc->offset[tree_id] % SEGMENT_SIZE;
 	}
-
 	node = (node_header *)((uint64_t)level_desc->last_segment[tree_id] + offset_in_segment);
 	level_desc->offset[tree_id] += size;
 	//level_desc->level_size += size;
@@ -78,6 +77,42 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 	assert(node != NULL);
 	//log_info("prt %llu",node);
 	return node;
+}
+
+struct segment_header *get_segment_for_explicit_IO(volume_descriptor *volume_desc, level_descriptor *level_desc,
+						   uint8_t tree_id)
+{
+	if (level_desc->level_id == 0) {
+		log_warn("Not allowed this kind of allocations for L0!");
+		return NULL;
+	}
+	MUTEX_LOCK(&volume_desc->allocator_lock);
+	struct segment_header *new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, 1);
+	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	assert(new_segment);
+
+	if (level_desc->offset[tree_id]) {
+		uint64_t segment_id;
+		segment_id = level_desc->last_segment[tree_id]->segment_id + 1;
+		/*chain segments*/
+		new_segment->next_segment = NULL;
+		new_segment->prev_segment = (segment_header *)((uint64_t)level_desc->last_segment[tree_id] - MAPPED);
+
+		level_desc->last_segment[tree_id]->next_segment = (segment_header *)((uint64_t)new_segment - MAPPED);
+		level_desc->last_segment[tree_id] = new_segment;
+		level_desc->last_segment[tree_id]->segment_id = segment_id;
+		level_desc->offset[tree_id] += BUFFER_SEGMENT_SIZE;
+	} else {
+		//log_info("Adding first index segmet for [%u]",tree_id);
+		/*special case for the first segment for this level*/
+		new_segment->next_segment = NULL;
+		new_segment->prev_segment = NULL;
+		level_desc->first_segment[tree_id] = new_segment;
+		level_desc->last_segment[tree_id] = new_segment;
+		level_desc->last_segment[tree_id]->segment_id = 0;
+		level_desc->offset[tree_id] = BUFFER_SEGMENT_SIZE;
+	}
+	return new_segment;
 }
 
 index_node *seg_get_index_node(volume_descriptor *volume_desc, level_descriptor *level_desc, uint8_t tree_id,
