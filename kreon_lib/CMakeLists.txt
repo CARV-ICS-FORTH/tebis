@@ -40,7 +40,6 @@ add_library(
   btree/segment_allocator.c
   btree/btree.c
   btree/compaction_daemon.c
-  btree/delete.c
   btree/gc.c
   scanner/stack.c
   scanner/scanner.c
@@ -56,7 +55,6 @@ add_library(
   btree/segment_allocator.c
   btree/btree.c
   btree/compaction_daemon.c
-  btree/delete.c
   btree/gc.c
   scanner/stack.c
   scanner/min_max_heap.c

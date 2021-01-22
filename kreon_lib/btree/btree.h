@@ -8,8 +8,6 @@
 #include "conf.h"
 #include "../../build/config.h"
 #include "../allocator/allocator.h"
-#include "uthash.h"
-//#include "../CLHT/include/clht.h"
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -19,39 +17,17 @@
 #define SUCCESS 4
 #define FAILED 5
 
-#define O_CREATE_REPLICA_DB 0x05
-#define DYNAMIC_KEYS 0
-
 #define SEGMENT_SIZE 2097152
 
-#define MAX_TS 0xFFFFFFFFFFFFFFFF
-
 #define KREON_OK 10
-#define KREON_FAILED 18
-#define KREON_STANDALONE 19
-#define REPLICA_PENDING_SPILL 20
 
 #define KEY_NOT_FOUND 11
-#define MERGE_NODE 12 //?
-
-/*hierarchy of trees parameters*/
-#define MAX_LEVELS 8
 
 #define MAX_COUNTER_VERSIONS 4
 
 #define PREFIX_SIZE 12
 
-#define SPILL_BUFFER_SIZE 32 * 1024
-#define SIZEOF_LOG_BUFFER 8
-#define SIZEOF_SEGMENT_IN_LOG_BUFFER 2097152
 #define MAX_HEIGHT 9
-#define MIN_ENTRIES_TO_SPILL NUM_OF_SPILL_THREADS_PER_DB - 1
-
-/**
- * FLAGS used of during _insert
- */
-#define SEARCH_PERSISTENT_TREE 0x01
-#define SEARCH_DIRTY_TREE 0x02
 
 /* types used for the keys
  * KV_FORMAT: [key_len|key]
@@ -60,10 +36,6 @@
 enum KV_type { KV_FORMAT = 19, KV_PREFIX = 20 };
 #define SYSTEM_ID 0
 #define KV_LOG_ID 5
-
-#define SPILL_ALL_DBS_IMMEDIATELY 0x01
-#define DO_NOT_FORCE_SPILL 0x02
-#define SPILLS_ISSUED 0x00
 
 extern unsigned long long ins_prefix_hit_l0;
 extern unsigned long long ins_prefix_hit_l1;
@@ -115,7 +87,6 @@ typedef struct segment_header {
 typedef struct IN_log_header {
 	nodeType_t type;
 	void *next;
-	/*XXX TODO XXX, add garbage info in the future?*/
 } IN_log_header;
 
 /*leaf or internal node metadata, place always in the first 4KB data block*/
@@ -127,8 +98,6 @@ typedef struct node_header {
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
                perform copy on write*/
 	uint64_t fragmentation;
-	//volatile uint64_t v1;
-	//volatile uint64_t v2;
 	/*data log info, KV log for leaves private for index*/
 	IN_log_header *first_IN_log_header;
 	IN_log_header *last_IN_log_header;
@@ -225,23 +194,11 @@ typedef struct lock_table {
 	char pad[8];
 } lock_table;
 
-typedef struct map_entry {
-	uint64_t key;
-	uint64_t value;
-	UT_hash_handle hh;
-} map_entry;
-
 typedef struct kv_location {
 	void *kv_addr;
 	uint64_t log_offset;
 	uint32_t rdma_key;
 } kv_location;
-
-typedef struct kv_proposal {
-	void *kv;
-	void *master_log_addr;
-	uint64_t log_offset;
-} kv_proposal;
 
 typedef struct level_descriptor {
 	lock_table guard_of_level;
@@ -286,11 +243,7 @@ typedef struct db_descriptor {
 	level_descriptor levels[MAX_LEVELS];
 	/*for kreonR sorry*/
 	int64_t pending_replica_operations;
-#if LOG_WITH_MUTEX
 	pthread_mutex_t lock_log;
-#else
-	pthread_spinlock_t lock_log;
-#endif
 	// compaction daemon staff
 	pthread_t compaction_daemon;
 	sem_t compaction_daemon_interrupts;
@@ -356,8 +309,6 @@ typedef struct rotate_data {
 db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG);
 
 void *compaction_daemon(void *args);
-void flush_volume(volume_descriptor *volume_desc, char force_spill);
-void spill_database(db_handle *handle);
 
 typedef struct bt_mutate_req {
 	db_handle *handle;
@@ -473,7 +424,7 @@ void *append_key_value_to_log(log_operation *req);
 uint8_t _insert_index_entry(db_handle *db, kv_location *location, int INSERT_FLAGS);
 char *node_type(nodeType_t type);
 void *find_key(db_handle *handle, void *key, uint32_t key_size);
-void *__find_key(db_handle *handle, void *key, char SEARCH_MODE);
+void *__find_key(db_handle *handle, void *key);
 int8_t delete_key(db_handle *handle, void *key, uint32_t size);
 
 int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format);

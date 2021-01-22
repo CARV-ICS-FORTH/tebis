@@ -125,7 +125,6 @@ void bt_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_
 int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf);
 bt_split_result split_leaf(bt_insert_req *req, leaf_node *node);
 
-void *__find_key(db_handle *handle, void *key, char SEARCH_MODE);
 static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key);
 
 void assert_leaf_node(node_header *leaf);
@@ -705,8 +704,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 			} else if (empty_group == -1)
 				empty_group = i;
 		}
-		if (CREATE_FLAG != CREATE_DB && CREATE_FLAG != O_CREATE_REPLICA_DB) {
-			DPRINT("DB not found instructed not to create one returning NULL\n");
+		if (CREATE_FLAG != CREATE_DB) {
+			log_warn("DB not found instructed not to create one returning NULL");
 			return NULL;
 		}
 		/*db not found allocate a new slot for it*/
@@ -830,11 +829,7 @@ finish_init:
 			db_desc->levels[level_id].tree_status[tree_id] = NO_SPILLING;
 		}
 	}
-#if LOG_WITH_MUTEX
 	MUTEX_INIT(&db_desc->lock_log, NULL);
-#else
-	SPINLOCK_INIT(&db_desc->lock_log, PTHREAD_PROCESS_PRIVATE);
-#endif
 	SPINLOCK_INIT(&db_desc->back_up_segment_table_lock, PTHREAD_PROCESS_PRIVATE);
 
 	add_first(volume_desc->open_databases, db_desc, db_name);
@@ -919,12 +914,8 @@ char db_close(db_handle *handle)
 	log_info("closing region/db %s snapshotting volume\n", handle->db_desc->db_name);
 	handle->db_desc->stat = DB_IS_CLOSING;
 	snapshot(handle->volume_desc);
-/*stop log appenders*/
-#if LOG_WITH_MUTEX
+	/*stop log appenders*/
 	MUTEX_LOCK(&handle->db_desc->lock_log);
-#else
-	SPIN_LOCK(&handle->db_desc->lock_log);
-#endif
 	/*stop all writers at all levels*/
 	uint8_t level_id;
 	for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
@@ -940,123 +931,6 @@ char db_close(db_handle *handle)
 		return COULD_NOT_FIND_DB;
 	}
 	return KREON_OK;
-}
-
-void spill_database(db_handle *handle)
-{
-	if (handle)
-		log_warn("Spill database deprecated");
-#if 0
-	int32_t i;
-
-	if (handle->db_desc->db_mode != PRIMARY_DB) {
-		log_info("ommiting spill for back up db");
-		return;
-	}
-	if (memcmp(handle->db_desc->tree_status, DB_NO_SPILLING, NUM_OF_TREES_PER_LEVEL) != 0) {
-		log_info("Nothing to do spill operation already active");
-		return;
-	}
-	RWLOCK_WRLOCK(&handle->db_desc->guard_level_0.rx_lock);
-	spin_loop(&handle->db_desc->count_writers_level_0, 0);
-
-	/*switch to another tree, but which?*/
-	for (i = 0; i < NUM_OF_TREES_PER_LEVEL; i++) {
-		if (i != handle->db_desc->active_tree && handle->db_desc->tree_status[i] != SPILLING_IN_PROGRESS) {
-			int32_t level_id = handle->db_desc->active_tree;
-			handle->db_desc->tree_status[level_id] = SPILLING_IN_PROGRESS;
-			handle->db_desc->active_tree = i;
-
-			/*spawn a spiller thread*/
-			spill_request *spill_req =
-				(spill_request *)malloc(sizeof(spill_request)); /*XXX TODO XXX MEMORY LEAK*/
-			spill_req->db_desc = handle->db_desc;
-			spill_req->volume_desc = handle->volume_desc;
-
-			if (handle->db_desc->root_w[level_id] != NULL)
-				spill_req->src_root = handle->db_desc->root_w[level_id];
-			else if (handle->db_desc->root_r[level_id] != NULL)
-				spill_req->src_root = handle->db_desc->root_r[level_id];
-			else {
-				log_info("empty level-0, nothing to do");
-				free(spill_req);
-				handle->db_desc->tree_status[level_id] = NO_SPILLING;
-				break;
-			}
-			if (handle->db_desc->root_w[level_id] != NULL)
-				spill_req->src_root = handle->db_desc->root_w[level_id];
-			else
-				spill_req->src_root = handle->db_desc->root_r[level_id];
-
-			spill_req->src_tree_id = level_id;
-			spill_req->dst_tree_id = NUM_OF_TREES_PER_LEVEL;
-			spill_req->start_key = NULL;
-			spill_req->end_key = NULL;
-			handle->db_desc->count_active_spillers = 1;
-
-			if (pthread_create(&(handle->db_desc->spiller), NULL, (void *)spill_buffer,
-					   (void *)spill_req) != 0) {
-				log_info("FATAL: error creating spiller thread");
-				exit(EXIT_FAILURE);
-			}
-			break;
-		}
-	}
-	RWLOCK_UNLOCK(&handle->db_desc->guard_level_0.rx_lock);
-#endif
-}
-
-/*method for closing a database*/
-void flush_volume(volume_descriptor *volume_desc, char force_spill)
-{
-	(void)volume_desc;
-	(void)force_spill;
-#if 0
-  db_descriptor *db_desc;
-	db_handle *handles;
-	handles = (db_handle *)malloc(sizeof(db_handle) * volume_desc->open_databases->size);
-
-	int db_id = 0;
-	NODE *node;
-	int i;
-
-	while (1) {
-		log_info("Waiting for pending spills to finish");
-		node = get_first(volume_desc->open_databases);
-		while (node != NULL) {
-			db_desc = (db_descriptor *)(node->data);
-			/*wait for pending spills for this db to finish*/
-			i = 0;
-			while (i < TOTAL_TREES) {
-				if (db_desc->tree_status[i] == SPILLING_IN_PROGRESS) {
-					log_info("Waiting for db %s to finish spills", db_desc->db_name);
-					sleep(4);
-					i = 0;
-				} else
-					i++;
-			}
-			node = node->next;
-		}
-		log_info("ok... no pending spills\n");
-
-		if (force_spill == SPILL_ALL_DBS_IMMEDIATELY) {
-			node = get_first(volume_desc->open_databases);
-			while (node != NULL) {
-				handles[db_id].db_desc = (db_descriptor *)(node->data);
-				handles[db_id].volume_desc = volume_desc;
-				spill_database(&handles[db_id]);
-				++db_id;
-				node = node->next;
-			}
-			force_spill = SPILLS_ISSUED;
-		} else
-			break;
-	}
-	log_info("Finally, snapshoting volume\n");
-	snapshot(volume_desc);
-	free(handles);
-	return;
-#endif
 }
 
 enum optype { insert_op, delete_op };
@@ -1186,11 +1060,7 @@ void *append_key_value_to_log(log_operation *req)
 	db_handle *handle = req->metadata->handle;
 	extract_keyvalue_size(req, &data_size);
 
-#ifdef LOG_WITH_MUTEX
 	MUTEX_LOCK(&handle->db_desc->lock_log);
-#elif SPINLOCK
-	pthread_spin_lock(&handle->db_desc->lock_log);
-#endif
 	/*append data part in the data log*/
 	if (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE != 0)
 		available_space_in_log = BUFFER_SEGMENT_SIZE - (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE);
@@ -1231,11 +1101,7 @@ void *append_key_value_to_log(log_operation *req)
 	req->metadata->log_offset = handle->db_desc->KV_log_size;
 	handle->db_desc->KV_log_size += data_size.kv_size;
 
-#ifdef LOG_WITH_MUTEX
 	MUTEX_UNLOCK(&handle->db_desc->lock_log);
-#elif SPINLOCK
-	pthread_spin_unlock(&handle->db_desc->lock_log);
-#endif
 
 	write_keyvalue_inlog(req, &data_size, addr_inlog);
 
@@ -1343,10 +1209,9 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 }
 
 /*this function will be reused in various places such as deletes*/
-void *__find_key(db_handle *handle, void *key, char SEARCH_MODE)
+void *__find_key(db_handle *handle, void *key)
 {
 	struct lookup_reply rep = { .addr = NULL, .tombstone = 0 };
-	(void)SEARCH_MODE;
 
 	/*again special care for L0*/
 	uint8_t tree_id = handle->db_desc->levels[0].active_tree;
@@ -1432,12 +1297,12 @@ void *find_key(db_handle *handle, void *key, uint32_t key_size)
 		key_buf = &(buf[0]);
 		*(uint32_t *)key_buf = key_size;
 		memcpy((void *)key_buf + sizeof(uint32_t), key, key_size);
-		value = __find_key(handle, key_buf, SEARCH_DIRTY_TREE);
+		value = __find_key(handle, key_buf);
 	} else {
 		key_buf = malloc(key_size + sizeof(uint32_t));
 		*(uint32_t *)key_buf = key_size;
 		memcpy((void *)key_buf + sizeof(uint32_t), key, key_size);
-		value = __find_key(handle, key_buf, SEARCH_DIRTY_TREE);
+		value = __find_key(handle, key_buf);
 		free(key_buf);
 	}
 

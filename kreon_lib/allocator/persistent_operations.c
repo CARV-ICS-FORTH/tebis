@@ -57,20 +57,12 @@ void commit_db_logs_per_volume(volume_descriptor *volume_desc)
 		/*spinning*/
 		spin_loop(&(db_desc->levels[0].active_writers), 0);
 
-#if LOG_WITH_MUTEX
 		MUTEX_LOCK(&db_desc->lock_log);
-#else
-		SPIN_LOCK(&db_desc->lock_log);
-#endif
 		info.first_kv_log = (segment_header *)db_desc->KV_log_first_segment;
 		info.last_kv_log = (segment_header *)db_desc->KV_log_last_segment;
 		info.kv_log_size = db_desc->KV_log_size;
 
-#if LOG_WITH_MUTEX
 		MUTEX_UNLOCK(&db_desc->lock_log);
-#else
-		SPIN_UNLOCK(&db_desc->lock_log);
-#endif
 		RWLOCK_UNLOCK(&db_desc->levels[0].guard_of_level.rx_lock);
 
 		if (db_desc->commit_log->kv_log_size != db_desc->KV_log_size)

@@ -787,8 +787,8 @@ typedef unsigned char uint8_t;
 #endif
 #define MUR_GETBLOCK(p, i)                                                                                             \
 	(MUR_PLUS0_ALIGNED(p) ? ((p)[i]) :                                                                             \
-				(MUR_PLUS1_ALIGNED(p) ? MUR_THREE_ONE(p) :                                             \
-							(MUR_PLUS2_ALIGNED(p) ? MUR_TWO_TWO(p) : MUR_ONE_THREE(p))))
+				      (MUR_PLUS1_ALIGNED(p) ? MUR_THREE_ONE(p) :                                             \
+							      (MUR_PLUS2_ALIGNED(p) ? MUR_TWO_TWO(p) : MUR_ONE_THREE(p))))
 #endif
 #define MUR_ROTL32(x, r) (((x) << (r)) | ((x) >> (32 - (r))))
 #define MUR_FMIX(_h)                                                                                                   \
@@ -1003,8 +1003,8 @@ typedef unsigned char uint8_t;
 					for (_hs_i = 0; _hs_i < _hs_insize; ++_hs_i) {                                  \
 						_hs_psize++;                                                            \
 						_hs_q = ((_hs_q->next != NULL) ?                                        \
-								 HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :            \
-								 NULL);                                                 \
+								       HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :            \
+								       NULL);                                                 \
 						if (_hs_q == NULL) {                                                    \
 							break;                                                          \
 						}                                                                       \
@@ -1014,16 +1014,16 @@ typedef unsigned char uint8_t;
 						if (_hs_psize == 0U) {                                                  \
 							_hs_e = _hs_q;                                                  \
 							_hs_q = ((_hs_q->next != NULL) ?                                \
-									 HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :    \
-									 NULL);                                         \
+									       HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :    \
+									       NULL);                                         \
 							_hs_qsize--;                                                    \
 						} else if ((_hs_qsize == 0U) || (_hs_q == NULL)) {                      \
 							_hs_e = _hs_p;                                                  \
 							if (_hs_p != NULL) {                                            \
 								_hs_p = ((_hs_p->next != NULL) ?                        \
-										 HH_FROM_ELMT((head)->hh.tbl,           \
+										       HH_FROM_ELMT((head)->hh.tbl,           \
 											      _hs_p->next) :            \
-										 NULL);                                 \
+										       NULL);                                 \
 							}                                                               \
 							_hs_psize--;                                                    \
 						} else if ((cmpfcn(DECLTYPE(head)(ELMT_FROM_HH((head)->hh.tbl, _hs_p)), \
@@ -1032,31 +1032,31 @@ typedef unsigned char uint8_t;
 							_hs_e = _hs_p;                                                  \
 							if (_hs_p != NULL) {                                            \
 								_hs_p = ((_hs_p->next != NULL) ?                        \
-										 HH_FROM_ELMT((head)->hh.tbl,           \
+										       HH_FROM_ELMT((head)->hh.tbl,           \
 											      _hs_p->next) :            \
-										 NULL);                                 \
+										       NULL);                                 \
 							}                                                               \
 							_hs_psize--;                                                    \
 						} else {                                                                \
 							_hs_e = _hs_q;                                                  \
 							_hs_q = ((_hs_q->next != NULL) ?                                \
-									 HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :    \
-									 NULL);                                         \
+									       HH_FROM_ELMT((head)->hh.tbl, _hs_q->next) :    \
+									       NULL);                                         \
 							_hs_qsize--;                                                    \
 						}                                                                       \
 						if (_hs_tail != NULL) {                                                 \
 							_hs_tail->next =                                                \
 								((_hs_e != NULL) ?                                      \
-									 ELMT_FROM_HH((head)->hh.tbl, _hs_e) :          \
-									 NULL);                                         \
+									       ELMT_FROM_HH((head)->hh.tbl, _hs_e) :          \
+									       NULL);                                         \
 						} else {                                                                \
 							_hs_list = _hs_e;                                               \
 						}                                                                       \
 						if (_hs_e != NULL) {                                                    \
 							_hs_e->prev =                                                   \
 								((_hs_tail != NULL) ?                                   \
-									 ELMT_FROM_HH((head)->hh.tbl, _hs_tail) :       \
-									 NULL);                                         \
+									       ELMT_FROM_HH((head)->hh.tbl, _hs_tail) :       \
+									       NULL);                                         \
 						}                                                                       \
 						_hs_tail = _hs_e;                                                       \
 					}                                                                               \
@@ -1150,7 +1150,7 @@ typedef unsigned char uint8_t;
 	(((head) != NULL) ? ((size_t)(((head)->hh.tbl->num_items * sizeof(UT_hash_handle)) +                           \
 				      ((head)->hh.tbl->num_buckets * sizeof(UT_hash_bucket)) + sizeof(UT_hash_table) + \
 				      (HASH_BLOOM_BYTELEN))) :                                                         \
-			    0U)
+				  0U)
 
 #ifdef NO_DECLTYPE
 #define HASH_ITER(hh, head, el, tmp)                                                                                   \

@@ -21,11 +21,7 @@ void recovery_worker(void *args)
 
 	handle.volume_desc = recover_req->volume_desc;
 	handle.db_desc = recover_req->db_desc;
-#if LOG_WITH_MUTEX
 	MUTEX_LOCK(&handle.db_desc->lock_log);
-#else
-	SPIN_LOCK(&handle.db_desc->lock_log);
-#endif
 
 	if (recover_req->db_desc->commit_log->kv_log_size < recover_req->db_desc->KV_log_size)
 		log_warn("warning commit log should be larger than g_kv_log");
@@ -144,9 +140,6 @@ void recovery_worker(void *args)
 		 recover_req->db_desc->db_name, (LLU)log_offset, (LLU)db_desc->commit_log->kv_log_size);
 	assert(log_offset == (LLU)db_desc->commit_log->kv_log_size);
 	log_offset = recover_req->db_desc->KV_log_size;
-#if LOG_WITH_MUTEX
 	MUTEX_UNLOCK(&handle.db_desc->lock_log);
-#else
-	SPIN_UNLOCK(&handle.db_desc->lock_log);
-#endif
+	return;
 }

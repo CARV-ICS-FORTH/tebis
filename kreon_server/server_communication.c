@@ -5,7 +5,7 @@
 #include "globals.h"
 #include "metadata.h"
 #include "../utilities/circular_buffer.h"
-#include "../kreon_lib/btree/uthash.h"
+#include "uthash.h"
 #include <log.h>
 
 struct sc_conn_per_server {

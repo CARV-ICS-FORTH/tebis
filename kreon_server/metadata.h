@@ -5,10 +5,9 @@
 #include <semaphore.h>
 #include <zookeeper/zookeeper.h>
 #include <pthread.h>
-#include "../kreon_lib/btree/uthash.h"
 #include "../utilities/list.h"
 #include "../kreon_lib/btree/btree.h"
-#include "../kreon_lib/btree/uthash.h"
+#include "uthash.h"
 #include "../kreon_rdma/rdma.h"
 #define KRM_MAX_REGIONS 1024
 #define KRM_MAX_DS_REGIONS 512

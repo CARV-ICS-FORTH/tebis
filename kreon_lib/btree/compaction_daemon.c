@@ -783,7 +783,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 		nd_dst.type = KV_PREFIX;
 		sh_insert_heap_node(m_heap, &nd_dst);
 	}
-	int32_t num_of_keys = (SPILL_BUFFER_SIZE - (2 * sizeof(uint32_t))) / (PREFIX_SIZE + sizeof(uint64_t));
+	int32_t num_of_keys = COMPACTION_UNIT_OF_WORK;
 	enum sh_heap_status stat = GOT_MIN_HEAP;
 	do {
 		// while (handle.volume_desc->snap_preemption == SNAP_INTERRUPT_ENABLE)
