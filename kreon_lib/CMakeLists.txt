@@ -73,8 +73,10 @@ add_library(${KREON_LIB_SHARED} SHARED ${KREON_C_SOURCE_FILES})
 set_property(TARGET ${KREON_LIB} PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET ${KREON_LIB_SHARED} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(${KREON_LIB} log)
-target_link_libraries(${KREON_LIB_SHARED} log)
+target_link_libraries(${KREON_LIB} log libbloom)
+target_link_libraries(${KREON_LIB_SHARED} log libbloom)
+target_link_libraries(kreonr log libbloom)
+target_link_libraries(kreonr-shared log libbloom)
 
 set_source_files_properties(allocator/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                              "-O0")
@@ -86,7 +88,7 @@ add_executable(
   allocator/persistent_operations.c btree/segment_allocator.c
   ../utilities/spin_loop.c ../utilities/list.c)
 
-target_link_libraries(mkfs.kreon log)
+target_link_libraries(mkfs.kreon log libbloom)
 
 if(KREON_BUILD_CPACK)
   install(

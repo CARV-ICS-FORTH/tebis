@@ -10,7 +10,8 @@ if(Zookeeper_LIBRARY)
     ycsb-blocking-kreon db/db_factory_blocking_kreonR.cc core/core_workload.cc
                         driver/ycsbc.cc ../kreon_server/globals.c)
 
-  target_link_libraries(ycsb-blocking-kreon kreon_client kreon_rdma kreonr log)
+  target_link_libraries(ycsb-blocking-kreon kreon_client kreon_rdma kreonr log
+                        libbloom)
   set_target_properties(
     ycsb-blocking-kreon
     PROPERTIES
@@ -22,7 +23,8 @@ if(Zookeeper_LIBRARY)
     ycsb-async-kreon db/db_factory_async_kreonR.cc core/core_workload.cc
                      driver/ycsbc.cc ../kreon_server/globals.c)
 
-  target_link_libraries(ycsb-async-kreon kreon_client kreon_rdma kreonr log)
+  target_link_libraries(ycsb-async-kreon kreon_client kreon_rdma kreonr log
+                        libbloom)
   set_target_properties(
     ycsb-async-kreon
     PROPERTIES
@@ -50,5 +52,5 @@ endif()
 add_executable(ycsb-edb db/db_factory_eutropiadb.cc core/core_workload.cc
                         driver/ycsbc.cc ../utilities/list.c)
 
-target_link_libraries(ycsb-edb kreon)
+target_link_libraries(ycsb-edb kreon libbloom)
 set_target_properties(ycsb-edb PROPERTIES LINK_FLAGS "-pthread -lnuma")
