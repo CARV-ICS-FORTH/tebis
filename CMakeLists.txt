@@ -1,11 +1,12 @@
 # File: CMakeLists.txt Author: Michalis Vardoulakis <mvard@ics.forth.gr>
 
-include(cmake_utils/PreventInSouceBuilds.cmake.in)
 cmake_minimum_required(VERSION 3.11.0)
-include(FetchContent)
+project(kreon VERSION 1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-project(kreon VERSION 1.0)
+include(FetchContent)
+include(ExternalProject)
+include(cmake_utils/PreventInSouceBuilds.cmake.in)
 
 # Set a default build type if none was specified
 set(default_build_type "Release")
@@ -32,15 +33,21 @@ include(cmake_utils/ycsb.cmake.in)
 FetchContent_Declare(
   uthash # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/troydhanson/uthash.git
-  SOURCE_DIR
-  external-deps/src/uthash # (Relative) path within in the build directory.
+  SOURCE_DIR external-deps/src/uthash # (Relative) path within in the build
+                                      # directory.
 )
 
 FetchContent_Declare(log # Recommendation: Stick close to the original name.
                      GIT_REPOSITORY https://github.com/innerout/log.c.git)
 
+FetchContent_Declare(
+  libbloom # Recommendation: Stick close to the original name.
+  GIT_REPOSITORY https://github.com/innerout/libbloom
+  GIT_TAG cmake)
+
 FetchContent_GetProperties(uthash)
 FetchContent_GetProperties(log)
+FetchContent_GetProperties(libbloom)
 
 if(NOT uthash_POPULATED)
   FetchContent_Populate(uthash)
@@ -52,6 +59,14 @@ if(NOT log_POPULATED)
   add_subdirectory(${log_SOURCE_DIR} ${log_BINARY_DIR})
   include_directories(${log_SOURCE_DIR}/include)
   FetchContent_MakeAvailable(log)
+endif()
+
+if(NOT libbloom_POPULATED)
+  FetchContent_Populate(libbloom)
+  add_subdirectory(${libbloom_SOURCE_DIR} ${libbloom_BINARY_DIR})
+  include_directories(${libbloom_SOURCE_DIR}/include)
+  message(${libbloom_SOURCE_DIR}/include)
+  FetchContent_MakeAvailable(libbloom)
 endif()
 
 set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
