@@ -60,6 +60,8 @@ typedef enum {
 	paddedSpace = 2222222
 } nodeType_t;
 
+enum db_status { DB_OPEN, DB_IS_CLOSING };
+
 /*descriptor describing a spill operation and its current status*/
 
 typedef enum {
@@ -175,19 +177,22 @@ typedef struct leaf_node {
  *      2. commit_log() persists KV log, assuring that data in the KV-log after
  *      this operation are recoverable
  **/
+
+#if 0
 typedef struct commit_log_info {
 	segment_header *first_kv_log;
 	segment_header *last_kv_log;
 	uint64_t kv_log_size;
 	char pad[4072];
 } commit_log_info;
+#endif
 
 /**
  * db_descriptor is a soft state descriptor per open database. superindex
-*structure
+ * structure
  * keeps a serialized from of the vital information needed to restore each
-*db_descriptor
-**/
+ * db_descriptor
+ **/
 
 typedef struct lock_table {
 	pthread_rwlock_t rx_lock;
@@ -207,7 +212,6 @@ typedef struct level_descriptor {
 	node_header *root_r[NUM_TREES_PER_LEVEL];
 	node_header *root_w[NUM_TREES_PER_LEVEL];
 	pthread_t spiller[NUM_TREES_PER_LEVEL];
-
 	pthread_mutex_t spill_trigger;
 	pthread_mutex_t level_allocation_lock;
 	segment_header *first_segment[NUM_TREES_PER_LEVEL];
@@ -241,7 +245,7 @@ typedef int (*bt_flush_replicated_logs)(void *);
 typedef struct db_descriptor {
 	char db_name[MAX_DB_NAME_SIZE];
 	level_descriptor levels[MAX_LEVELS];
-	/*for kreonR sorry*/
+	/*for distributed version*/
 	int64_t pending_replica_operations;
 	pthread_mutex_t lock_log;
 	// compaction daemon staff
@@ -249,19 +253,21 @@ typedef struct db_descriptor {
 	sem_t compaction_daemon_interrupts;
 	pthread_cond_t client_barrier;
 	pthread_mutex_t client_barrier_lock;
+	/*for distributed version*/
 	bt_compaction_callback t;
 	bt_flush_replicated_logs fl;
 
-	pthread_spinlock_t back_up_segment_table_lock;
-	volatile segment_header *KV_log_first_segment;
-	volatile segment_header *KV_log_last_segment;
-	volatile uint64_t KV_log_size;
+	struct segment_header *KV_log_first_segment;
+	struct segment_header *KV_log_last_segment;
+	uint64_t KV_log_size;
 	uint64_t latest_proposal_start_segment_offset;
-	/*coordinates of the latest persistent L0*/
-	uint64_t L0_start_log_offset;
-	uint64_t L0_end_log_offset;
+	uint64_t L1_index_end_log_offset;
+	struct segment_header *L1_segment;
+#if 0
 	commit_log_info *commit_log;
-	int32_t reference_count;
+#endif
+	/*how many guys have a reference to this db*/
+	int32_t ref_count;
 	int32_t group_id;
 	int32_t group_index;
 	volatile char dirty;
@@ -293,8 +299,10 @@ typedef struct recovery_request {
 void recovery_worker(void *);
 
 void snapshot(volume_descriptor *volume_desc);
+#if 0
 void commit_db_log(db_descriptor *db_desc, commit_log_info *info);
 void commit_db_logs_per_volume(volume_descriptor *volume_desc);
+#endif
 
 typedef struct rotate_data {
 	node_header *left;
@@ -307,6 +315,7 @@ typedef struct rotate_data {
 /*client API*/
 /*management operations*/
 db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG);
+char db_close(db_handle *handle);
 
 void *compaction_daemon(void *args);
 
@@ -404,15 +413,6 @@ typedef struct split_data {
 	node_header *father;
 	node_header *son;
 } split_data;
-
-typedef struct spill_data_totrigger {
-	db_descriptor *db_desc;
-	uint64_t prev_level_size;
-	int prev_active_tree;
-	int active_tree;
-	int level_id;
-	int tree_to_spill;
-} spill_data_totrigger;
 
 void bt_set_db_in_replicated_mode(db_handle *handle);
 void bt_decrease_level0_writers(db_handle *handle);

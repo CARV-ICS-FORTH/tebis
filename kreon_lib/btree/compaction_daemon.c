@@ -234,11 +234,13 @@ static void comp_init_write_cursor(struct comp_level_write_cursor *c, struct db_
 			c->last_index[i]->header.numberOfEntriesInNode = 0;
 			c->last_index[i]->header.fragmentation = 0;
 			/*private key log for index nodes*/
-			IN_log_header *bh = (IN_log_header *)((uint64_t)c->last_index[i] + INDEX_NODE_SIZE);
-			bh->type = keyBlockHeader;
-			bh->next = (void *)NULL;
-			c->last_index[i]->header.first_IN_log_header =
-				(IN_log_header *)((uint64_t)c->dev_offt[i] + ((uint64_t)bh % BUFFER_SEGMENT_SIZE));
+			IN_log_header *bh =
+				(IN_log_header *)((uint64_t)c->dev_offt[i] +
+						  (c->segment_offt[i] % BUFFER_SEGMENT_SIZE) + INDEX_NODE_SIZE);
+			IN_log_header *tmp = (IN_log_header *)&c->segment_buf[i][(uint64_t)bh % BUFFER_SEGMENT_SIZE];
+			tmp->type = keyBlockHeader;
+			tmp->next = (void *)NULL;
+			c->last_index[i]->header.first_IN_log_header = bh;
 			c->last_index[i]->header.last_IN_log_header = c->last_index[i]->header.first_IN_log_header;
 			c->last_index[i]->header.key_log_size = sizeof(IN_log_header);
 			c->segment_offt[i] += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
@@ -317,6 +319,7 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 			ssize_t total_bytes_written = sizeof(struct segment_header);
 			ssize_t bytes_written = sizeof(struct segment_header);
 			while (total_bytes_written < BUFFER_SEGMENT_SIZE) {
+				//log_info("Writing leaf segment at offset %llu", c->dev_offt[0] + total_bytes_written);
 				bytes_written = pwrite(c->fd, &c->segment_buf[0][total_bytes_written],
 						       BUFFER_SEGMENT_SIZE - total_bytes_written,
 						       c->dev_offt[0] + total_bytes_written);
@@ -439,11 +442,10 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 		uint64_t offt = c->last_index[height]->p[c->last_index[height]->header.numberOfEntriesInNode - 1].pivot;
 
 		new_pivot = &c->segment_buf[height][offt % BUFFER_SEGMENT_SIZE];
-
-		assert(*(uint32_t *)(new_pivot) > 0);
-		assert(*(uint32_t *)(new_pivot) < 26);
+		//assert(*(uint32_t *)new_pivot > 0);
 		new_pivot_buf = (char *)malloc(*(uint32_t *)new_pivot + sizeof(uint32_t));
 		memcpy(new_pivot_buf, new_pivot, *(uint32_t *)new_pivot + sizeof(uint32_t));
+		//log_info("Done adding pivot %s for height %u", new_pivot + 4, height);
 		--c->last_index[height]->header.numberOfEntriesInNode;
 		comp_get_space(c, height, internalNode);
 		/*last leaf updated*/
@@ -451,18 +453,22 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 		new_index = 1;
 	}
 	/*copy pivot*/
-	char *addr = (char *)(uint64_t)c->last_index[height]->header.last_IN_log_header +
-		     (c->last_index[height]->header.key_log_size % KEY_BLOCK_SIZE);
-	addr = &c->segment_buf[height][(uint64_t)addr % BUFFER_SEGMENT_SIZE];
+	uint64_t pivot_offt = (uint64_t)c->last_index[height]->header.last_IN_log_header +
+			      (c->last_index[height]->header.key_log_size % KEY_BLOCK_SIZE);
+	//log_info("pivot location at the device within the segment %llu", pivot_offt % BUFFER_SEGMENT_SIZE);
+	char *pivot_addr = &c->segment_buf[height][(uint64_t)pivot_offt % BUFFER_SEGMENT_SIZE];
 
-	memcpy(addr, pivot, pivot_size);
+	memcpy(pivot_addr, pivot, pivot_size);
+	//log_info("Adding pivot %u:%s for height %u num entries %u", pivot_size, pivot + 4, height,
+	//	 c->last_index[height]->header.numberOfEntriesInNode);
+
 	c->last_index[height]->header.key_log_size += pivot_size;
-	assert(*(uint32_t *)(addr) > 0);
-	assert(*(uint32_t *)(addr) < 26);
+	//assert(*(uint32_t *)(pivot_addr) > 0);
+	//assert(*(uint32_t *)(pivot) > 0);
 	++c->last_index[height]->header.numberOfEntriesInNode;
 	uint32_t idx = c->last_index[height]->header.numberOfEntriesInNode - 1;
 	c->last_index[height]->p[idx].left[0] = left_node_offt;
-	c->last_index[height]->p[idx].pivot = c->dev_offt[height] + ((uint64_t)addr % BUFFER_SEGMENT_SIZE);
+	c->last_index[height]->p[idx].pivot = pivot_offt;
 	c->last_index[height]->p[idx].right[0] = right_node_offt;
 
 	if (new_index) {
@@ -472,7 +478,6 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 	return;
 }
 
-#define COMP_MAX_KEY_SIZE 8192
 static void comp_append_entry_to_leaf_node(struct comp_level_write_cursor *c, struct kv_prefix *kvPrefix)
 {
 	int new_leaf = 0;
@@ -507,15 +512,14 @@ static void comp_append_entry_to_leaf_node(struct comp_level_write_cursor *c, st
 	return;
 }
 
-/*####################################################*/
-
 /* Checks for pending compactions. It is responsible to check for dependencies
  * between two levels before triggering a compaction. */
 
 struct compaction_request {
 	db_descriptor *db_desc;
 	volume_descriptor *volume_desc;
-	uint64_t l0_start;
+	struct segment_header *value_log_seg;
+	uint64_t value_log_offt;
 	uint8_t src_level;
 	uint8_t src_tree;
 	uint8_t dst_level;
@@ -538,6 +542,11 @@ void *compaction_daemon(void *args)
 	while (1) {
 		/*special care for Level 0 to 1*/
 		sem_wait(&db_desc->compaction_daemon_interrupts);
+		if (db_desc->stat == DB_IS_CLOSING) {
+			log_warn("Compaction daemon instructed to exit because DB %s is closing, Bye bye!...",
+				 db_desc->db_name);
+			return NULL;
+		}
 		struct level_descriptor *level_0 = &handle->db_desc->levels[0];
 		struct level_descriptor *level_1 = &handle->db_desc->levels[1];
 
@@ -549,6 +558,7 @@ void *compaction_daemon(void *args)
 			int L1_tree = 0;
 			if (level_1->tree_status[L1_tree] == NO_SPILLING &&
 			    level_1->level_size[L1_tree] < level_1->max_level_size) {
+				/*for Tebis*/
 				if (handle->db_desc->is_in_replicated_mode && handle->db_desc->fl != NULL) {
 					(*handle->db_desc->fl)((void *)handle);
 				}
@@ -564,6 +574,21 @@ void *compaction_daemon(void *args)
 				comp_req->src_level = 0;
 				comp_req->src_tree = L0_tree;
 				comp_req->dst_level = 1;
+
+				/*keep info where the resulting L1 will cover*/
+				if (RWLOCK_WRLOCK(&(handle->db_desc->levels[0].guard_of_level.rx_lock))) {
+					log_fatal("Failed to acquire guard lock");
+					exit(EXIT_FAILURE);
+				}
+
+				spin_loop(&(db_desc->levels[0].active_writers), 0);
+				comp_req->value_log_seg = db_desc->KV_log_last_segment;
+				comp_req->value_log_offt = db_desc->KV_log_size;
+
+				if (RWLOCK_UNLOCK(&(handle->db_desc->levels[0].guard_of_level.rx_lock))) {
+					log_fatal("Failed to acquire guard lock");
+					exit(EXIT_FAILURE);
+				}
 
 #ifdef COMPACTION
 				comp_req->dst_tree = 1;
@@ -589,7 +614,7 @@ void *compaction_daemon(void *args)
 				}
 				spin_loop(&(comp_req->db_desc->levels[0].active_writers), 0);
 
-				db_desc->levels[0].active_tree = next_active_tree; // i
+				db_desc->levels[0].active_tree = next_active_tree;
 
 				/*Release guard lock*/
 				if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
@@ -722,8 +747,14 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	struct comp_level_read_cursor *l_dst = NULL;
 
 	struct db_handle handle = { .db_desc = comp_req->db_desc, .volume_desc = comp_req->volume_desc };
-	struct comp_level_write_cursor *merged_level =
-		(struct comp_level_write_cursor *)malloc(sizeof(struct comp_level_write_cursor));
+	struct comp_level_write_cursor *merged_level = NULL;
+	//(struct comp_level_write_cursor *)malloc(sizeof(struct comp_level_write_cursor));
+	if (posix_memalign((void **)&merged_level, BUFFER_SEGMENT_SIZE, sizeof(struct comp_level_write_cursor)) != 0) {
+		log_fatal("Posix memalign failed");
+		perror("Reason: ");
+		exit(EXIT_FAILURE);
+	}
+
 	comp_init_write_cursor(merged_level, &handle, comp_req->dst_level, FD);
 
 	uint64_t local_spilled_keys = 0;
@@ -732,13 +763,23 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 		snapshot(comp_req->volume_desc);
 		level_src = _init_spill_buffer_scanner(&handle, src_root, NULL);
 	} else {
-		l_src = (struct comp_level_read_cursor *)malloc(sizeof(struct comp_level_read_cursor));
+		if (posix_memalign((void **)&l_src, BUFFER_SEGMENT_SIZE, sizeof(struct comp_level_read_cursor)) != 0) {
+			log_fatal("Posix memalign failed");
+			perror("Reason: ");
+			exit(EXIT_FAILURE);
+		}
+		//l_src = (struct comp_level_read_cursor *)malloc(sizeof(struct comp_level_read_cursor));
 		comp_init_read_cursor(l_src, &handle, comp_req->src_level, 0, FD);
 		comp_get_next_key(l_src);
 	}
 
 	if (dst_root) {
-		l_dst = (struct comp_level_read_cursor *)malloc(sizeof(struct comp_level_read_cursor));
+		if (posix_memalign((void **)&l_dst, BUFFER_SEGMENT_SIZE, sizeof(struct comp_level_read_cursor)) != 0) {
+			log_fatal("Posix memalign failed");
+			perror("Reason: ");
+			exit(EXIT_FAILURE);
+		}
+		//l_dst = (struct comp_level_read_cursor *)malloc(sizeof(struct comp_level_read_cursor));
 		if (!l_dst) {
 			log_fatal("Malloc failed!");
 			exit(EXIT_FAILURE);
@@ -791,14 +832,15 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 		handle.db_desc->dirty = 0x01;
 		if (handle.db_desc->stat == DB_IS_CLOSING) {
-			log_info("db %s is closing compaction thread exiting...", handle.db_desc->db_name);
+			log_info("DB %s is closing compaction thread exiting...", handle.db_desc->db_name);
 			if (l_src)
 				free(l_src);
 			if (l_dst)
 				free(l_dst);
 			return;
 		}
-
+		//This is to synchronize compactions with snapshot
+		RWLOCK_WRLOCK(&handle.db_desc->levels[comp_req->dst_level].guard_of_level.rx_lock);
 		for (int i = 0; i < num_of_keys; i++) {
 			stat = sh_remove_min(m_heap, &nd_min);
 			if (stat == EMPTY_MIN_HEAP)
@@ -836,6 +878,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 				}
 			}
 		}
+		RWLOCK_UNLOCK(&handle.db_desc->levels[comp_req->dst_level].guard_of_level.rx_lock);
 	} while (stat != EMPTY_MIN_HEAP);
 
 	if (comp_req->src_level == 0)
@@ -953,8 +996,8 @@ static void comp_compact_with_mmap_IO(struct compaction_request *comp_req, struc
 	if (dst_root)
 		_close_spill_buffer_scanner(level_dst, dst_root);
 
-	assert(local_spilled_keys == handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree] +
-					     handle.db_desc->levels[comp_req->dst_level].level_size[0]);
+	//assert(local_spilled_keys == handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree] +
+	//				     handle.db_desc->levels[comp_req->dst_level].level_size[0]);
 	return;
 }
 #endif
@@ -1064,6 +1107,10 @@ void *compaction(void *_comp_req)
 
 		/*free src level*/
 		seg_free_level(&hd, comp_req->src_level, comp_req->src_tree);
+		if (comp_req->src_level == 0) {
+			hd.db_desc->L1_index_end_log_offset = comp_req->value_log_offt;
+			hd.db_desc->L1_segment = comp_req->value_log_seg;
+		}
 
 		if (RWLOCK_UNLOCK(&(comp_req->db_desc->levels[comp_req->src_level].guard_of_level.rx_lock))) {
 			log_fatal("Failed to acquire guard lock");
@@ -1245,17 +1292,6 @@ void *spill_buffer(void *_comp_req)
 	log_info("DONE Compaction from level's tree [%u][%u] to level's tree[%u][%u] "
 		 "cleaning src level",
 		 comp_req->src_level, comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);
-
-	/*assert check
-if(db_desc->spilled_keys !=
-db_desc->total_keys[comp_req->src_tree_id]){
-printf("[%s:%s:%d] FATAL keys missing --- spilled keys %llu actual
-%llu spiller
-id
-%d\n",__FILE__,__func__,__LINE__,(LLU)db_desc->spilled_keys,(LLU)db_desc->total_keys[comp_req->src_tree_id],
-comp_req->src_tree_id);
-exit(EXIT_FAILURE);
-}*/
 
 	db_desc->levels[comp_req->src_level].tree_status[comp_req->src_tree] = NO_SPILLING;
 	db_desc->levels[comp_req->dst_level].tree_status[comp_req->dst_tree] = NO_SPILLING;

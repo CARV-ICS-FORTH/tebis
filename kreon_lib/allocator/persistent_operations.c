@@ -3,8 +3,10 @@
 #include "allocator.h"
 #include "../btree/btree.h"
 #include "../btree/segment_allocator.h"
+#include <assert.h>
 #include <log.h>
 
+#if 0
 /*persists the KV-log of a DB, not thread safe!*/
 void commit_db_log(db_descriptor *db_desc, commit_log_info *info)
 {
@@ -70,23 +72,22 @@ void commit_db_logs_per_volume(volume_descriptor *volume_desc)
 		node = node->next;
 	}
 }
+#endif
 
 /*persists a consistent snapshot of the system*/
 void snapshot(volume_descriptor *volume_desc)
 {
-	struct commit_log_info log_info;
+	//struct commit_log_info log_info;
 	pr_db_group *db_group;
 	pr_db_entry *db_entry;
 	//node_header *old_root;
 	uint64_t a, b;
 	uint64_t c;
-	uint32_t i;
-	uint32_t j;
 	int32_t dirty = 0;
 	uint8_t level_id;
 	int l;
 
-	log_info("trigerring snapshot");
+	log_info("Trigerring Snapshot");
 	volume_desc->snap_preemption = SNAP_INTERRUPT_ENABLE;
 	/*1. Acquire all write locks for each database of the specific volume*/
 	NODE *node = get_first(volume_desc->open_databases);
@@ -94,15 +95,8 @@ void snapshot(volume_descriptor *volume_desc)
 
 	while (node != NULL) {
 		db_desc = (db_descriptor *)(node->data);
-		/*stop log appenders*/
-		//#if LOG_WITH_MUTEX
-		//		MUTEX_LOCK(&db_desc->lock_log);
-		//#else
-		//		SPIN_LOCK(&db_desc->lock_log);
-		//#endif
-		/*stop all level writers*/
+		/*stop all writers clients and compaction threads*/
 		for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
-			/*stop level 0 writers for this db*/
 			RWLOCK_WRLOCK(&db_desc->levels[level_id].guard_of_level.rx_lock);
 			/*spinning*/
 			spin_loop(&(db_desc->levels[level_id].active_writers), 0);
@@ -110,7 +104,6 @@ void snapshot(volume_descriptor *volume_desc)
 		/*all levels locked*/
 		dirty += db_desc->dirty;
 		/*update the catalogue if db is dirty*/
-
 		if (db_desc->dirty > 0) {
 			db_desc->dirty = 0x00;
 			/*cow check*/
@@ -136,37 +129,37 @@ void snapshot(volume_descriptor *volume_desc)
 			}
 
 			db_entry = &(db_group->db_entries[db_desc->group_index]);
+			strcpy(db_entry->db_name, db_desc->db_name);
 			//log_info("pr db entry name %s db name %s", db_entry->db_name, db_desc->db_name);
 
-			for (i = 0; i < MAX_LEVELS; i++) {
-				for (j = 0; j < NUM_TREES_PER_LEVEL; j++) {
+			for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
+				for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
 					/*Serialize and persist space allocation info for all levels*/
-					if (db_desc->levels[i].last_segment[j] != NULL) {
-						db_entry->first_segment[(i * NUM_TREES_PER_LEVEL) + j] =
-							(uint64_t)db_desc->levels[i].first_segment[j] - MAPPED;
-
-						db_entry->last_segment[(i * NUM_TREES_PER_LEVEL) + j] =
-							(uint64_t)db_desc->levels[i].last_segment[j] - MAPPED;
-
-						db_entry->offset[(i * NUM_TREES_PER_LEVEL) + j] =
-							(uint64_t)db_desc->levels[i].offset[j];
+					if (db_desc->levels[level_id].last_segment[tree_id] != NULL) {
+						db_entry->first_segment[level_id][tree_id] =
+							(uint64_t)db_desc->levels[level_id].first_segment[tree_id] -
+							MAPPED;
+						db_entry->last_segment[level_id][tree_id] =
+							(uint64_t)db_desc->levels[level_id].last_segment[tree_id] -
+							MAPPED;
+						db_entry->offset[level_id][tree_id] =
+							(uint64_t)db_desc->levels[level_id].offset[tree_id];
 					} else {
-						db_entry->first_segment[(i * NUM_TREES_PER_LEVEL) + j] = 0;
-
-						db_entry->last_segment[(i * NUM_TREES_PER_LEVEL) + j] = 0;
-
-						db_entry->offset[(i * NUM_TREES_PER_LEVEL) + j] = 0;
+						db_entry->first_segment[level_id][tree_id] = 0;
+						db_entry->last_segment[level_id][tree_id] = 0;
+						db_entry->offset[level_id][tree_id] = 0;
 					}
 
 					/*now mark new roots*/
-					if (db_desc->levels[i].root_w[j] != NULL) {
-						db_entry->root_r[(i * NUM_TREES_PER_LEVEL) * j] =
-							((uint64_t)db_desc->levels[i].root_w[j]) - MAPPED;
+					if (db_desc->levels[level_id].root_w[tree_id] != NULL) {
+						db_entry->root_r[level_id][tree_id] =
+							((uint64_t)db_desc->levels[level_id].root_w[tree_id]) - MAPPED;
 
 						/*mark old root to free it later*/
 						//old_root = db_desc->levels[i].root_r[j];
-						db_desc->levels[i].root_r[j] = db_desc->levels[i].root_w[j];
-						db_desc->levels[i].root_w[j] = NULL;
+						db_desc->levels[level_id].root_r[tree_id] =
+							db_desc->levels[level_id].root_w[tree_id];
+						db_desc->levels[level_id].root_w[tree_id] = NULL;
 						/*Kreon frees space after compactions*/
 						//if (old_root) {
 						//	if (old_root->type == rootNode)
@@ -175,36 +168,46 @@ void snapshot(volume_descriptor *volume_desc)
 						//		free_block(volume_desc, old_root, LEAF_NODE_SIZE);
 						//}
 
-					} else if (db_desc->levels[i].root_r[j] == NULL) {
+					} else if (db_desc->levels[level_id].root_r[tree_id] != NULL) {
 						//log_warn("set %lu to %llu of db_entry %llu", i * j,
 						//	 db_entry->root_r[(i * MAX_LEVELS) + j], (uint64_t)db_entry - MAPPED);
-						db_entry->root_r[(i * NUM_TREES_PER_LEVEL) + j] = 0;
+						db_entry->root_r[level_id][tree_id] =
+							((uint64_t)db_desc->levels[level_id].root_r[tree_id]) - MAPPED;
+					} else {
+						db_entry->root_r[level_id][tree_id] = 0;
 					}
 
-					db_entry->level_size[(i * NUM_TREES_PER_LEVEL) + j] =
-						db_desc->levels[i].level_size[j];
+					db_entry->level_size[level_id][tree_id] =
+						db_desc->levels[level_id].level_size[tree_id];
 				}
 			}
-			/*KV log status, not needed commit log is the truth*/
-			//db_group->db_entries[db_desc->group_index].KV_log_first_segment = (segment_header *)((uint64_t)db_desc->KV_log_first_segment - MAPPED);
-			//db_group->db_entries[db_desc->group_index].KV_log_last_segment =  (segment_header *)((uint64_t)db_desc->KV_log_last_segment - MAPPED);
-			//db_group->db_entries[db_desc->group_index].KV_log_size = (uint64_t)db_desc->KV_log_size;
+			/*KV log status*/
+			if (db_desc->KV_log_first_segment != NULL) {
+				db_entry->KV_log_first_seg_offt = (uint64_t)db_desc->KV_log_first_segment - MAPPED;
+				db_entry->KV_log_last_seg_offt = (uint64_t)db_desc->KV_log_last_segment - MAPPED;
+				db_entry->KV_log_size = (uint64_t)db_desc->KV_log_size;
+			} else {
+				db_entry->KV_log_first_seg_offt = 0;
+				db_entry->KV_log_last_seg_offt = 0;
+				db_entry->KV_log_size = 0;
+			}
+			db_entry->L1_index_end_log_offset = db_desc->L1_index_end_log_offset;
+			if (db_desc->L1_segment != NULL)
+				db_entry->L1_segment_offt = (uint64_t)db_desc->L1_segment - MAPPED;
+			else
+				db_entry->L1_segment_offt = 0;
+#if 0
 			db_entry->commit_log = (uint64_t)db_desc->commit_log - MAPPED;
-
-			/*L0 bounds*/
 			log_info.first_kv_log = (segment_header *)db_desc->KV_log_first_segment;
 			log_info.last_kv_log = (segment_header *)db_desc->KV_log_last_segment;
 			log_info.kv_log_size = db_desc->KV_log_size;
-			//commit_db_log(db_desc, &log_info);
-			db_desc->L0_start_log_offset = db_desc->KV_log_size;
-			db_desc->L0_end_log_offset = db_desc->KV_log_size;
-			db_entry->L0_start_log_offset = (uint64_t)db_desc->L0_start_log_offset;
-			db_entry->L0_end_log_offset = (uint64_t)db_desc->L0_end_log_offset;
+			commit_db_log(db_desc, &log_info);
+#endif
 		}
 		node = node->next;
 	}
-	if (dirty > 0) { /*At least one db is dirty proceed to snapshot()*/
-
+	if (dirty > 0) {
+		/*At least one db is dirty proceed to snapshot()*/
 		free_block(volume_desc, volume_desc->dev_catalogue, sizeof(pr_system_catalogue));
 		volume_desc->dev_catalogue = volume_desc->mem_catalogue;
 		/*allocate a new position for superindex*/
@@ -214,10 +217,6 @@ void snapshot(volume_descriptor *volume_desc)
 		memcpy(tmp, volume_desc->dev_catalogue, sizeof(pr_system_catalogue));
 		++tmp->epoch;
 		volume_desc->mem_catalogue = tmp;
-
-		/*XXX TODO XXX write superblock(!), caution! this command in future version should be executed after msync*/
-		volume_desc->volume_superblock->system_catalogue =
-			(pr_system_catalogue *)((uint64_t)volume_desc->dev_catalogue - MAPPED);
 
 		/*protect this segment because cleaner may run in parallel */
 		MUTEX_LOCK(&volume_desc->allocator_lock);
@@ -270,6 +269,9 @@ void snapshot(volume_descriptor *volume_desc)
 		//t2=tim.tv_sec+(tim.tv_usec/1000000.0);
 		//fprintf(stderr, "snap_time=[%lf]sec\n", (t2-t1));
 	}
+	/*Write superblock*/
+	volume_desc->volume_superblock->system_catalogue =
+		(pr_system_catalogue *)((uint64_t)volume_desc->dev_catalogue - MAPPED);
 
 	/*release locks*/
 	node = get_first(volume_desc->open_databases);
@@ -280,16 +282,10 @@ void snapshot(volume_descriptor *volume_desc)
 		//#else
 		//		SPIN_UNLOCK(&db_desc->lock_log);
 		//#endif
-		for (i = 0; i < MAX_LEVELS; i++)
-			RWLOCK_UNLOCK(&db_desc->levels[i].guard_of_level.rx_lock);
+		for (int level_id = 0; level_id < MAX_LEVELS; level_id++)
+			RWLOCK_UNLOCK(&db_desc->levels[level_id].guard_of_level.rx_lock);
 
 		node = node->next;
 	}
 	volume_desc->snap_preemption = SNAP_INTERRUPT_DISABLE;
-
-	/*stats counters*/
-	//printf("[%s:%s:%d] hit l0 %lld miss l0 %lld hit l1 %lld miss l1 %lld\n",__FILE__,__func__,__LINE__,ins_prefix_hit_l0,ins_prefix_miss_l0,ins_prefix_hit_l1, ins_prefix_miss_l1);
-	//printf("[%s:%s:%d] L-0 hit ratio %lf\n",__FILE__,__func__,__LINE__,(double)ins_prefix_hit_l0/(double)(ins_prefix_hit_l0+ins_prefix_miss_l0)*100);
-	//printf("[%s:%s:%d] L-1 hit ratio %lf\n",__FILE__,__func__,__LINE__,(double)ins_prefix_hit_l1/(double)(ins_prefix_hit_l1+ins_prefix_miss_l1)*100);
-	//printf("[%s:%s:%d] hack hit %llu hack miss %llu\n",__FILE__,__func__,__LINE__,ins_hack_hit,ins_hack_miss);
 }

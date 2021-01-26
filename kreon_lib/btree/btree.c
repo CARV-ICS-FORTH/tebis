@@ -36,13 +36,13 @@
 
 #define SYSTEM_NAME "kreon"
 
-#define USE_SYNC
-#undef USE_SYNC
 #define DEVICE_BLOCK_SIZE 4096
-#define DB_STILL_ACTIVE 0x01
 #define COULD_NOT_FIND_DB 0x02
+#define PAGE_SIZE 4096
+#define LEAF_ROOT_NODE_SPLITTED 0xFC
 
-#define LOG_SEGMENT_CHUNK 262144
+#define FAILURE 0
+
 int32_t leaf_order;
 int32_t index_order;
 /*stats counters*/
@@ -65,15 +65,6 @@ pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_spinlock_t log_buffer_lock;
 /*number of locks per level*/
 uint32_t size_per_height[MAX_HEIGHT] = { 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32 };
-
-#define PAGE_SIZE 4096
-#define LEAF_ROOT_NODE_SPLITTED 0xFC
-
-#define MUTATION_LOG_SIZE 2048
-#define STATIC 0x01
-#define DYNAMIC 0x02
-#define MUTATION_BATCH_EXPANDED 0x03
-#define FAILURE 0
 
 static uint8_t _writers_join_as_readers(bt_insert_req *ins_req);
 static uint8_t _concurrent_insert(bt_insert_req *ins_req);
@@ -149,47 +140,6 @@ void bt_decrease_level0_writers(db_handle *handle)
 		exit(EXIT_FAILURE);
 	}
 	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
-}
-
-/*XXX TODO XXX REMOVE HEIGHT UNUSED VARIABLE*/
-void free_buffered(void *_handle, void *address, uint32_t num_bytes, int height)
-{
-	(void)_handle;
-	(void)address;
-	(void)num_bytes;
-	(void)height;
-	log_info("gesalous fix update free_buffered");
-#if 0
-	db_handle *handle = (db_handle *)_handle;
-	uint64_t segment_id = (uint64_t)address - (uint64_t)handle->volume_desc->bitmap_end;
-	segment_id = segment_id - (segment_id % BUFFER_SEGMENT_SIZE);
-	segment_id = segment_id / BUFFER_SEGMENT_SIZE;
-#ifdef AGGRESIVE_FREE_POLICY
-	__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size), (unsigned long long)num_bytes);
-
-	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
-	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD)
-		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
-#else
-	handle->volume_desc->segment_utilization_vector[segment_id] += (num_bytes / DEVICE_BLOCK_SIZE);
-	if (handle->volume_desc->segment_utilization_vector[segment_id] >= SEGMENT_MEMORY_THREASHOLD) {
-		__sync_fetch_and_sub(&(((db_handle *)_handle)->db_desc->zero_level_memory_size),
-				     (unsigned long long)BUFFER_SEGMENT_SIZE);
-		/*dimap hook, release dram frame*/
-		if (dmap_dontneed(FD, ((uint64_t)address - MAPPED) / PAGE_SIZE, BUFFER_SEGMENT_SIZE / PAGE_SIZE) != 0) {
-			log_fatal("fatal ioctl failed");
-			exit(EXIT_FAILURE);
-		}
-		handle->volume_desc->segment_utilization_vector[segment_id] = 0;
-		if (handle->db_desc->throttle_clients == STOP_INSERTS_DUE_TO_MEMORY_PRESSURE &&
-		    handle->db_desc->zero_level_memory_size <= ZERO_LEVEL_MEMORY_UPPER_BOUND) {
-			handle->db_desc->throttle_clients = NORMAL_OPERATION;
-			log_info("releasing clients");
-		}
-	}
-#endif
-#endif
-	return;
 }
 
 /**
@@ -366,9 +316,299 @@ static void init_level_locktable(db_descriptor *database, uint8_t level_id)
 static void destroy_level_locktable(db_descriptor *database, uint8_t level_id)
 {
 	int i;
-
+	//log_info("Destroying lock table for DB %s level_id %u", database->db_name, level_id);
 	for (i = 0; i < MAX_HEIGHT; ++i)
-		free(&database->levels[level_id].level_lock_table[i]);
+		free(database->levels[level_id].level_lock_table[i]);
+}
+
+static void bt_init_fresh_db(struct db_handle *hd, char *db_name, int group_id, int group_index, uint8_t init_kv_log)
+{
+	memset(hd->db_desc, 0x00, sizeof(db_descriptor));
+	/*initialize database descriptor, soft state first*/
+	hd->db_desc->ref_count = 0;
+	hd->db_desc->group_id = group_id;
+	hd->db_desc->group_index = group_index;
+
+	strcpy(hd->db_desc->db_name, db_name);
+	hd->db_desc->dirty = 0x01;
+	for (int level_id = 0; level_id < MAX_LEVELS; level_id++) {
+		for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
+			hd->db_desc->levels[level_id].root_r[tree_id] = NULL;
+			hd->db_desc->levels[level_id].root_w[tree_id] = NULL;
+			hd->db_desc->levels[level_id].level_size[tree_id] = 0;
+			hd->db_desc->levels[level_id].first_segment[tree_id] = NULL;
+			hd->db_desc->levels[level_id].last_segment[tree_id] = NULL;
+			hd->db_desc->levels[level_id].offset[tree_id] = 0;
+		}
+	}
+
+	//db_desc->commit_log = (commit_log_info *)get_space_for_system(volume_desc, sizeof(commit_log_info));
+	if (!init_kv_log) {
+		log_warn("Ommiting KV log initialization for DB %s", hd->db_desc->db_name);
+		hd->db_desc->KV_log_first_segment = NULL;
+		hd->db_desc->KV_log_last_segment = NULL;
+		hd->db_desc->KV_log_size = 0;
+		hd->db_desc->L1_index_end_log_offset = 0;
+		hd->db_desc->L1_segment = NULL;
+		//db_desc->commit_log->first_kv_log = NULL;
+		//db_desc->commit_log->last_kv_log = NULL;
+		//db_desc->commit_log->kv_log_size = 0;
+	} else {
+		log_info("Initializing KV log for DB %s", hd->db_desc->db_name);
+		hd->db_desc->KV_log_first_segment = seg_get_raw_log_segment(hd->volume_desc);
+		memset((void *)hd->db_desc->KV_log_first_segment->garbage_bytes, 0x00,
+		       2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
+		hd->db_desc->KV_log_last_segment = hd->db_desc->KV_log_first_segment;
+		hd->db_desc->KV_log_last_segment->segment_id = 0;
+		hd->db_desc->KV_log_last_segment->next_segment = NULL;
+		hd->db_desc->KV_log_last_segment->prev_segment = NULL;
+		hd->db_desc->KV_log_size = sizeof(segment_header);
+		hd->db_desc->L1_index_end_log_offset = sizeof(segment_header);
+		hd->db_desc->L1_segment = hd->db_desc->KV_log_last_segment;
+#if 0
+			db_desc->commit_log->first_kv_log =
+				(segment_header *)((uint64_t)db_desc->KV_log_first_segment - MAPPED);
+			db_desc->commit_log->last_kv_log =
+				(segment_header *)((uint64_t)db_desc->KV_log_last_segment - MAPPED);
+			db_desc->commit_log->kv_log_size = (uint64_t)db_desc->KV_log_size;
+			/*persist commit log information, this location stays permanent, there no
+* need to rewrite it during snapshot()*/
+			db_entry->commit_log = (uint64_t)db_desc->commit_log - MAPPED;
+#endif
+	}
+}
+
+static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, int group_id, int group_index)
+{
+	/*initialize database descriptor, soft state first*/
+	hd->db_desc->ref_count = 0;
+	hd->db_desc->group_id = group_id;
+	hd->db_desc->group_index = group_index;
+	/*restore db name, in memory*/
+	strcpy(hd->db_desc->db_name, db_entry->db_name);
+	hd->db_desc->dirty = 0;
+
+	//Zero l0
+	for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
+		hd->db_desc->levels[0].first_segment[tree_id] = NULL;
+		hd->db_desc->levels[0].last_segment[tree_id] = NULL;
+		hd->db_desc->levels[0].offset[tree_id] = 0;
+		hd->db_desc->levels[0].root_w[tree_id] = NULL;
+		hd->db_desc->levels[0].root_r[tree_id] = NULL;
+	}
+
+	/*restore now all device levels*/
+	for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
+		for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
+			/*segments info per level*/
+			if (db_entry->first_segment[level_id][tree_id] != 0)
+				hd->db_desc->levels[level_id].first_segment[tree_id] =
+					(struct segment_header *)(MAPPED + db_entry->first_segment[level_id][tree_id]);
+			else
+				hd->db_desc->levels[level_id].first_segment[tree_id] = NULL;
+
+			if (db_entry->last_segment[level_id][tree_id] != 0)
+				hd->db_desc->levels[level_id].last_segment[tree_id] =
+					(struct segment_header *)(MAPPED + db_entry->last_segment[level_id][tree_id]);
+			else
+				hd->db_desc->levels[level_id].last_segment[tree_id] = NULL;
+			hd->db_desc->levels[level_id].offset[tree_id] = db_entry->offset[level_id][tree_id];
+
+			/*total keys*/
+			hd->db_desc->levels[level_id].level_size[tree_id] = db_entry->level_size[level_id][tree_id];
+			/*finally the roots*/
+			if (db_entry->root_r[level_id][tree_id] != 0) {
+				hd->db_desc->levels[level_id].root_r[tree_id] =
+					(node_header *)(MAPPED + db_entry->root_r[level_id][tree_id]);
+				//log_warn("Recovered root_r of [%lu][%lu] = %llu of DB %s", level_id, tree_id,
+				//	 hd->db_desc->levels[level_id].root_r[tree_id], hd->db_desc->db_name);
+			} else {
+				hd->db_desc->levels[level_id].root_r[tree_id] = NULL;
+				//log_info("NULL root for[%u][%u]", level_id, tree_id);
+			}
+
+			hd->db_desc->levels[level_id].root_w[tree_id] = NULL;
+		}
+	}
+	/*recover value log for this database*/
+	if (db_entry->KV_log_first_seg_offt != 0)
+		hd->db_desc->KV_log_first_segment = (struct segment_header *)(MAPPED + db_entry->KV_log_first_seg_offt);
+	else
+		hd->db_desc->KV_log_first_segment = NULL;
+
+	if (db_entry->KV_log_last_seg_offt != 0)
+		hd->db_desc->KV_log_last_segment = (struct segment_header *)(MAPPED + db_entry->KV_log_last_seg_offt);
+	else
+		hd->db_desc->KV_log_last_segment = NULL;
+	hd->db_desc->KV_log_size = db_entry->KV_log_size;
+	hd->db_desc->L1_index_end_log_offset = db_entry->L1_index_end_log_offset;
+	if (db_entry->L1_segment_offt != 0)
+		hd->db_desc->L1_segment = (struct segment_header *)(MAPPED + db_entry->L1_segment_offt);
+	else
+		hd->db_desc->L1_segment = NULL;
+
+	log_info("DB: %s KV log status - First segment: %llu Last segment: %llu KV log size %llu", hd->db_desc->db_name,
+		 (LLU)hd->db_desc->KV_log_first_segment, (LLU)hd->db_desc->KV_log_last_segment,
+		 (LLU)hd->db_desc->KV_log_size);
+}
+
+static void bt_recover_L0(struct db_handle *hd)
+{
+	if (hd->db_desc->KV_log_size <= hd->db_desc->L1_index_end_log_offset) {
+		log_info("No recovery needed for DB %s", hd->db_desc->db_name);
+		return;
+	}
+	log_info("Recovering L0 of DB %s ...", hd->db_desc->db_name);
+	struct segment_header *curr = hd->db_desc->L1_segment;
+	char *cursor = (char *)((uint64_t)curr + (hd->db_desc->L1_index_end_log_offset % SEGMENT_SIZE));
+	uint64_t log_offset = hd->db_desc->L1_index_end_log_offset;
+	log_info("L1 index ends at offset %llu value log is at %llu", hd->db_desc->L1_index_end_log_offset,
+		 hd->db_desc->KV_log_size);
+	int foo = 0;
+	while (log_offset < hd->db_desc->KV_log_size) {
+		struct kv_prefix p;
+		struct bt_insert_req ins_req;
+		ins_req.metadata.handle = hd;
+
+		ins_req.metadata.level_id = 0;
+		ins_req.metadata.key_format = KV_PREFIX;
+		ins_req.metadata.append_to_log = 0;
+		ins_req.metadata.gc_request = 0;
+		ins_req.metadata.recovery_request = 1;
+		ins_req.metadata.special_split = 0;
+		ins_req.metadata.is_tombstone = 0;
+		if (*(uint32_t *)cursor < PREFIX_SIZE)
+			memset(p.prefix, 0x00, PREFIX_SIZE);
+		if (!foo) {
+			log_info("Recovering key %u:%s log offset at %llu end of log %llu", *(uint32_t *)cursor,
+				 cursor + 4, log_offset, hd->db_desc->KV_log_size);
+			foo = 1;
+		}
+		//assert(*(uint32_t *)cursor > 0 && *(uint32_t *)cursor < 50);
+		memcpy(p.prefix, cursor + sizeof(uint32_t), PREFIX_SIZE);
+		p.device_offt = (uint64_t)cursor - MAPPED;
+		p.tombstone = 0;
+		ins_req.key_value_buf = &p;
+
+		_insert_key_value(&ins_req);
+		uint32_t kv_size = *(uint32_t *)cursor + sizeof(uint32_t);
+		cursor = cursor + kv_size;
+		log_offset += kv_size;
+		//assert(*(uint32_t *)cursor > 0 && *(uint32_t *)cursor < 1200);
+		kv_size = (*(uint32_t *)cursor + sizeof(uint32_t));
+		cursor = cursor + kv_size;
+		log_offset += kv_size;
+		uint32_t remaining;
+		if (log_offset % SEGMENT_SIZE == 0)
+			remaining = 0;
+		else
+			remaining = SEGMENT_SIZE - (log_offset % SEGMENT_SIZE);
+		//log_info("Remaining are %u",remaining);
+		if (remaining < sizeof(uint32_t) || *(uint32_t *)cursor == 0) {
+			//time to change segment
+			if (curr->next_segment == NULL)
+				break;
+			curr = (struct segment_header *)(MAPPED + curr->next_segment);
+			log_offset += remaining;
+			log_offset += sizeof(struct segment_header);
+			cursor = (char *)((uint64_t)curr + (log_offset % SEGMENT_SIZE));
+			//log_info("Changed segment!");
+		}
+	}
+	//assert(log_offset == hd->db_desc->KV_log_size);
+	log_info("Done recovering L0 of DB %s !", hd->db_desc->db_name);
+}
+
+static void bt_reclaim_db_space(struct db_descriptor *db_desc, struct volume_descriptor *volume_desc)
+{
+	for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
+		if (db_desc->levels[level_id].first_segment[1] != NULL) {
+			log_info("Reclaiming space from pending compactions for DB %s after an unclean shutdown",
+				 db_desc->db_name);
+			struct segment_header *curr_segment = db_desc->levels[level_id].first_segment[1];
+			while (curr_segment != NULL) {
+				struct segment_header *next = NULL;
+				if (curr_segment->next_segment != NULL)
+					next = (struct segment_header *)(MAPPED + curr_segment->next_segment);
+				free_block(volume_desc, curr_segment, SEGMENT_SIZE);
+				curr_segment = next;
+			}
+			db_desc->levels[level_id].first_segment[1] = NULL;
+			db_desc->levels[level_id].last_segment[1] = NULL;
+			db_desc->levels[level_id].offset[1] = 0;
+			db_desc->levels[level_id].level_size[1] = 0;
+			db_desc->levels[level_id].root_w[1] = NULL;
+			db_desc->levels[level_id].root_r[1] = NULL;
+		}
+	}
+}
+
+static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
+{
+	for (int i = 0; i < NUM_OF_DB_GROUPS; i++) {
+		if (volume_desc->mem_catalogue->db_group_index[i] != 0) {
+			struct pr_db_group *db_group =
+				(struct pr_db_group *)(MAPPED +
+						       (uint64_t)volume_desc->mem_catalogue->db_group_index[i]);
+			for (int j = 0; j < GROUP_SIZE; j++) {
+				if (db_group->db_entries[j].valid) {
+					/*hosts a database*/
+					struct pr_db_entry *db_entry = &db_group->db_entries[j];
+					log_info(" Recovering database: %s found at index [%d,%d]", db_entry->db_name,
+						 i, j);
+					struct db_descriptor db_desc;
+
+					/*initialize database descriptor, soft state first*/
+					db_desc.ref_count = 0;
+					db_desc.group_id = i;
+					db_desc.group_index = j;
+					/*restore db name, in memory*/
+					memset(db_desc.db_name, 0x00, MAX_DB_NAME_SIZE);
+					strcpy(db_desc.db_name, db_entry->db_name);
+					db_desc.dirty = 0;
+					/*restore now persistent levels*/
+					for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
+						for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
+							uint64_t s_first_offt =
+								db_entry->first_segment[level_id][tree_id];
+							uint64_t s_last_offt =
+								db_entry->last_segment[level_id][tree_id];
+							uint64_t offt = db_entry->offset[level_id][tree_id];
+
+							if (s_first_offt != 0)
+								db_desc.levels[level_id].first_segment[tree_id] =
+									(struct segment_header *)(MAPPED +
+												  s_first_offt);
+							else
+								db_desc.levels[level_id].first_segment[tree_id] = NULL;
+
+							if (s_last_offt != 0)
+								db_desc.levels[level_id].last_segment[tree_id] =
+									(struct segment_header *)(MAPPED + s_last_offt);
+							else
+								db_desc.levels[level_id].last_segment[tree_id] = NULL;
+							db_desc.levels[level_id].offset[tree_id] = offt;
+
+							/*total keys*/
+							db_desc.levels[level_id].level_size[tree_id] =
+								db_entry->level_size[level_id][tree_id];
+							/*finally the roots*/
+							if (db_entry->root_r[level_id][tree_id] != 0) {
+								db_desc.levels[level_id].root_r[tree_id] =
+									(node_header *)(MAPPED +
+											db_entry->root_r[level_id]
+													[tree_id]);
+							} else
+								db_desc.levels[level_id].root_r[tree_id] = NULL;
+
+							db_desc.levels[level_id].root_w[tree_id] = NULL;
+						}
+					}
+					bt_reclaim_db_space(&db_desc, volume_desc);
+				}
+			}
+		}
+	}
 }
 
 /**
@@ -417,8 +657,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 			 "node_header = %lu",
 			 index_order, leaf_order, sizeof(node_header));
 	}
-	/*Is requested volume already mapped?, construct key which will be
-* volumeName|start*/
+	//Is requested volume already mapped?, construct key which will be
+	//volumeName|start
 	val = start;
 	digits = 0;
 	while (val > 0) {
@@ -457,8 +697,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		allocator_init(volume_desc);
 		add_first(mappedVolumes, volume_desc, key);
 		volume_desc->reference_count++;
-		/*soft state about the in use pages of level-0 for each BUFFER_SEGMENT_SIZE
-* segment inside the volume*/
+		//soft state about the in use pages of level-0 for each BUFFER_SEGMENT_SIZE
+		//segment inside the volume
 		volume_desc->segment_utilization_vector_size =
 			((volume_desc->volume_superblock->dev_size_in_blocks -
 			  (1 + FREE_LOG_SIZE + volume_desc->volume_superblock->bitmap_size_in_blocks)) /
@@ -473,8 +713,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 			exit(EXIT_FAILURE);
 		}
 		memset(volume_desc->segment_utilization_vector, 0x00, volume_desc->segment_utilization_vector_size);
-
-		log_info("volume %s state created max_tries %d", volume_desc->volume_name, MAX_ALLOCATION_TRIES);
+		log_info("Open volume %s successfully", volume_desc->volume_name);
+		bt_reclaim_volume_space(volume_desc);
 	} else {
 		log_info("Volume already mapped");
 		volume_desc->reference_count++;
@@ -483,12 +723,12 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 * open databases*/
 	db_desc = find_element(volume_desc->open_databases, db_name);
 	if (db_desc != NULL) {
-		log_info("DB %s already open for volume %s", db_name, key);
+		log_info("DB %s already open in volume %s", db_name, key);
 		handle = malloc(sizeof(db_handle));
 		memset(handle, 0x00, sizeof(db_handle));
 		handle->volume_desc = volume_desc;
 		handle->db_desc = db_desc;
-		db_desc->reference_count++;
+		db_desc->ref_count++;
 		MUTEX_UNLOCK(&init_lock);
 		free(key);
 		return handle;
@@ -502,8 +742,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		log_info("Searching volume's %s catalogue for db %s...", volume_desc->volume_name, db_name);
 		empty_group = -1;
 		empty_index = -1;
-		/*we are going to search system's catalogue to find the root_r of the
-* corresponding database*/
+		//we are going to search system's catalogue to find the root_r of the
+		//corresponding database
 		for (i = 0; i < NUM_OF_DB_GROUPS; i++) {
 			/*is group empty?*/
 			if (volume_desc->mem_catalogue->db_group_index[i] != 0) {
@@ -525,178 +765,17 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 						//	 db_name, db_entry->offset[0]);
 						if (strcmp((const char *)db_entry->db_name, (const char *)db_name) ==
 						    0) {
-							/*found database, recover state and create the appropriate handle
-* and store it in the open_db's list*/
-							log_info("database: %s found at index [%d,%d]",
-								 db_entry->db_name, i, j);
+							//found database, recover state and create the appropriate handle
+							// and store it in the open_db's list
+							log_info("DB: %s found at index [%d,%d]", db_entry->db_name, i,
+								 j);
 							handle = malloc(sizeof(db_handle));
 							memset(handle, 0x00, sizeof(db_handle));
 							db_desc = malloc(sizeof(db_descriptor));
 
 							handle->volume_desc = volume_desc;
 							handle->db_desc = db_desc;
-							/*initialize database descriptor, soft state first*/
-							db_desc->reference_count = 0;
-							db_desc->group_id = i;
-							db_desc->group_index = j;
-							/*restore db name, in memory*/
-							memset(db_desc->db_name, 0x00, MAX_DB_NAME_SIZE);
-							strcpy(db_desc->db_name, db_entry->db_name);
-							db_desc->dirty = 0;
-
-							/*restore now persistent state of all levels*/
-							for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
-								for (tree_id = 0; tree_id < NUM_TREES_PER_LEVEL;
-								     tree_id++) {
-									db_desc->levels[level_id].level_size[tree_id] =
-										0;
-									/*segments info per level*/
-									if (db_entry->first_segment
-										    [(level_id * NUM_TREES_PER_LEVEL) +
-										     tree_id] != 0) {
-										db_desc->levels[level_id]
-											.first_segment[tree_id] =
-											(segment_header
-												 *)(MAPPED +
-												    db_entry->first_segment
-													    [(level_id *
-													      NUM_TREES_PER_LEVEL) +
-													     tree_id]);
-										db_desc->levels[level_id]
-											.last_segment[tree_id] =
-											(segment_header
-												 *)(MAPPED +
-												    db_entry->last_segment
-													    [(level_id *
-													      NUM_TREES_PER_LEVEL) +
-													     tree_id]);
-										db_desc->levels[level_id]
-											.offset[tree_id] =
-											db_entry->offset
-												[(level_id *
-												  NUM_TREES_PER_LEVEL) +
-												 tree_id];
-									} else {
-										db_desc->levels[level_id]
-											.first_segment[tree_id] = NULL;
-
-										db_desc->levels[level_id]
-											.last_segment[tree_id] = NULL;
-										db_desc->levels[level_id]
-											.offset[tree_id] = 0;
-									}
-									/*total keys*/
-									db_desc->levels[level_id].level_size[tree_id] =
-										db_entry->level_size
-											[(level_id *
-											  NUM_TREES_PER_LEVEL) +
-											 tree_id];
-									/*finally the roots*/
-									if (db_entry->root_r[(level_id *
-											      NUM_TREES_PER_LEVEL) +
-											     tree_id] != 0) {
-										db_desc->levels[level_id]
-											.root_r[tree_id] =
-											(node_header
-												 *)(MAPPED +
-												    db_entry->root_r
-													    [(level_id *
-													      NUM_TREES_PER_LEVEL) +
-													     tree_id]);
-										log_warn(
-											"Recovered root r of [%lu][%lu] = %llu ",
-											level_id, tree_id,
-											db_desc->levels[level_id]
-												.root_r[tree_id]);
-									} else
-										db_desc->levels[level_id]
-											.root_r[tree_id] = NULL;
-
-									db_desc->levels[level_id].root_w[tree_id] =
-										NULL;
-								}
-							}
-#if 0
-							/*recover replica L1 forest if needed*/
-							if (db_entry->replica_forest != NULL) {
-								memcpy((void *)&db_desc->replica_forest,
-								       (void *)MAPPED +
-									       (uint64_t)db_entry->replica_forest,
-								       sizeof(forest));
-								for (i = 0; i < MAX_FOREST_SIZE; i++) {
-									if (db_desc->replica_forest.tree_status[i] ==
-									    PERSISTED) {
-										db_desc->replica_forest
-											.tree_segment_list[i] =
-											(segment_header *)MAPPED +
-											*(uint64_t *)db_entry
-												 ->replica_forest
-												 ->tree_segment_list[i];
-										db_desc->replica_forest.dev / nvme0n1 =
-											(node_header *)MAPPED +
-											*(uint64_t *)db_entry
-												 ->replica_forest
-												 ->tree_roots[i];
-									} else if (db_desc->replica_forest
-												   .tree_status[i] !=
-											   NOT_USED ||
-										   db_desc->replica_forest
-												   .tree_status[i] !=
-											   PERSISTED) {
-										DPRINT("XXX TODO XXX needs recovery of space !\n");
-										exit(EXIT_FAILURE);
-									} else if (db_desc->replica_forest
-											   .tree_status[i] ==
-										   NOT_USED) {
-										db_desc->replica_forest
-											.tree_segment_list[i] = NULL;
-										db_desc->replica_forest.tree_roots[i] =
-											NULL;
-									} else {
-										DPRINT("FATAL DBs forest flags in inconsistent state\n");
-										exit(EXIT_FAILURE);
-									}
-								}
-								DPRINT("-*-*-*- Recovered db's level 1 forest used in replica "
-								       "mode * - * - *\n");
-							} else {
-								DPRINT(" - * - forest not present? skipping - * - *\n");
-								memset(&db_desc->replica_forest, 0x00, sizeof(forest));
-							}
-/*done with replica forest*/
-#endif
-							/*recover KV log for this database*/
-							db_desc->commit_log =
-								(commit_log_info *)(MAPPED +
-										    ((uint64_t)db_entry->commit_log));
-							if (db_desc->commit_log->first_kv_log != NULL)
-								db_desc->KV_log_first_segment =
-									(segment_header *)(MAPPED +
-											   (uint64_t)db_desc->commit_log
-												   ->first_kv_log);
-							else
-								db_desc->KV_log_first_segment = NULL;
-
-							if (db_desc->commit_log->last_kv_log != NULL)
-								db_desc->KV_log_last_segment =
-									(segment_header *)(MAPPED +
-											   (uint64_t)db_desc->commit_log
-												   ->last_kv_log);
-							else
-								db_desc->KV_log_last_segment = NULL;
-
-							db_desc->KV_log_size = db_desc->commit_log->kv_log_size;
-							db_desc->L0_start_log_offset = db_entry->L0_start_log_offset;
-							db_desc->L0_end_log_offset = db_entry->L0_end_log_offset;
-
-							log_info("KV log segments first: %llu last: %llu log_size %llu",
-								 (LLU)db_desc->KV_log_first_segment,
-								 (LLU)db_desc->KV_log_last_segment,
-								 (LLU)db_desc->KV_log_size);
-							log_info("L0 start log offset %llu end %llu",
-								 db_desc->L0_start_log_offset,
-								 db_desc->L0_end_log_offset);
-
+							bt_recover_db(handle, &db_group->db_entries[j], i, j);
 							goto finish_init;
 						}
 					}
@@ -705,7 +784,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 				empty_group = i;
 		}
 		if (CREATE_FLAG != CREATE_DB) {
-			log_warn("DB not found instructed not to create one returning NULL");
+			log_warn("DB %s not found instructed not to create one returning NULL", db_name);
 			return NULL;
 		}
 		/*db not found allocate a new slot for it*/
@@ -740,70 +819,12 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		handle = malloc(sizeof(db_handle));
 		memset(handle, 0x00, sizeof(db_handle));
 		db_desc = (db_descriptor *)malloc(sizeof(db_descriptor));
-
-		/*this nullifies replica also*/
-		memset(db_desc, 0x00, sizeof(db_descriptor));
-		handle->volume_desc = volume_desc;
 		handle->db_desc = db_desc;
-		/*initialize database descriptor, soft state first*/
-		db_desc->reference_count = 0;
-		db_desc->group_id = empty_group;
-		db_desc->group_index = empty_index;
-
-		// log_info("mem epoch %llu", volume_desc->mem_catalogue->epoch);
-		/*stored db name, in memory*/
-		memset(db_entry->db_name, 0x00, MAX_DB_NAME_SIZE);
-		strcpy(db_entry->db_name, db_name);
-		memset(db_desc->db_name, 0x00, MAX_DB_NAME_SIZE);
-		strcpy(db_desc->db_name, db_name);
-		db_desc->dirty = 0x01;
-		/*init all persistent fields levels*/
-		for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
-			for (tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
-				db_desc->levels[level_id].root_r[tree_id] = NULL;
-				db_desc->levels[level_id].root_w[tree_id] = NULL;
-				db_desc->levels[level_id].level_size[tree_id] = 0;
-				db_desc->levels[level_id].first_segment[tree_id] = NULL;
-				db_desc->levels[level_id].last_segment[tree_id] = NULL;
-				db_desc->levels[level_id].offset[tree_id] = 0;
-			}
-		}
-		/*initialize KV log for this db*/
-		db_desc->commit_log = (commit_log_info *)get_space_for_system(volume_desc, sizeof(commit_log_info));
-		/*get a page for commit_log info*/
-		if (CREATE_FLAG != CREATE_DB) {
-			log_warn("replica db ommiting KV log initialization");
-			db_desc->KV_log_first_segment = NULL;
-			db_desc->KV_log_last_segment = NULL;
-			db_desc->KV_log_size = 0;
-			db_desc->L0_start_log_offset = 0;
-			db_desc->L0_end_log_offset = 0;
-
-			db_desc->commit_log->first_kv_log = NULL;
-			db_desc->commit_log->last_kv_log = NULL;
-			db_desc->commit_log->kv_log_size = 0;
-		} else {
-			log_info("Primary db initializing KV log");
-			db_desc->KV_log_first_segment = seg_get_raw_log_segment(volume_desc);
-			memset((void *)db_desc->KV_log_first_segment->garbage_bytes, 0x00,
-			       2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
-			db_desc->KV_log_last_segment = db_desc->KV_log_first_segment;
-			db_desc->KV_log_last_segment->segment_id = 0;
-			db_desc->KV_log_last_segment->next_segment = NULL;
-			db_desc->KV_log_last_segment->prev_segment = NULL;
-			db_desc->KV_log_size = sizeof(segment_header);
-			db_desc->L0_start_log_offset = sizeof(segment_header);
-			db_desc->L0_end_log_offset = sizeof(segment_header);
-			/*get a page for commit_log info*/
-			db_desc->commit_log->first_kv_log =
-				(segment_header *)((uint64_t)db_desc->KV_log_first_segment - MAPPED);
-			db_desc->commit_log->last_kv_log =
-				(segment_header *)((uint64_t)db_desc->KV_log_last_segment - MAPPED);
-			db_desc->commit_log->kv_log_size = (uint64_t)db_desc->KV_log_size;
-			/*persist commit log information, this location stays permanent, there no
-* need to rewrite it during snapshot()*/
-			db_entry->commit_log = (uint64_t)db_desc->commit_log - MAPPED;
-		}
+		handle->volume_desc = volume_desc;
+		if (CREATE_FLAG == CREATE_DB)
+			bt_init_fresh_db(handle, db_name, empty_group, empty_index, 1);
+		else
+			bt_init_fresh_db(handle, db_name, empty_group, empty_index, 0);
 	}
 
 finish_init:
@@ -830,7 +851,6 @@ finish_init:
 		}
 	}
 	MUTEX_INIT(&db_desc->lock_log, NULL);
-	SPINLOCK_INIT(&db_desc->back_up_segment_table_lock, PTHREAD_PROCESS_PRIVATE);
 
 	add_first(volume_desc->open_databases, db_desc, db_name);
 	MUTEX_UNLOCK(&init_lock);
@@ -845,91 +865,62 @@ finish_init:
 		log_fatal("Failed to start compaction_daemon for db %s", db_name);
 		exit(EXIT_FAILURE);
 	}
-
-#if 0
-		else{
-		log_info("opened replica db");
-		db_desc->db_mode = BACKUP_DB_NO_PENDING_SPILL;
-		log_info("Initializing  segment table");
-		init_backup_db_segment_table(handle);
-	}
-	db_desc->log_buffer = NULL;
-	db_desc->latest_proposal_start_segment_offset = 0;
-#endif
-	/*recovery checks*/
-	log_info("performing recovery checks for db: %s", db_desc->db_name);
-	/*where is L0 located at the log?*/
-	if (db_desc->L0_end_log_offset > db_desc->L0_start_log_offset) {
-		log_info("L0 present performing recovery checks ...");
-		if (db_desc->L0_end_log_offset < db_desc->commit_log->kv_log_size) {
-			log_info("Commit log: %llu is ahead of L0: %llu replaying "
-				 "missing log parts",
-				 (LLU)db_desc->commit_log->kv_log_size, (LLU)db_desc->L0_end_log_offset);
-			recovery_request rh;
-			rh.volume_desc = volume_desc;
-			rh.db_desc = db_desc;
-			rh.recovery_start_log_offset = db_desc->L0_end_log_offset;
-			recovery_worker(&rh);
-			log_info("recovery completed successfully");
-		} else if (db_desc->L0_end_log_offset == db_desc->commit_log->kv_log_size)
-			log_info("no recovery needed for db: %s ready :-)\n", db_desc->db_name);
-		else {
-			log_fatal("Boom! Corrupted state for db: %s :-(", db_desc->db_name);
-			raise(SIGINT);
-			exit(EXIT_FAILURE);
-		}
-	} else if (db_desc->L0_end_log_offset == db_desc->L0_start_log_offset) {
-		log_info("L0 is absent L1 ends at %llu replaying missing parts", (LLU)db_desc->L0_end_log_offset);
-		if (db_desc->L0_end_log_offset < db_desc->commit_log->kv_log_size) {
-			log_info("Commit log (%llu) is ahead of L0 end (%llu) replaying missing "
-				 "log parts",
-				 (LLU)db_desc->commit_log->kv_log_size, (LLU)db_desc->L0_end_log_offset);
-			recovery_request rh;
-			rh.volume_desc = volume_desc;
-			rh.db_desc = db_desc;
-			rh.recovery_start_log_offset = db_desc->L0_end_log_offset;
-			recovery_worker(&rh);
-			log_info("recovery completed successfully");
-		} else if (db_desc->L0_end_log_offset == db_desc->commit_log->kv_log_size)
-			log_info("no recovery needed for db: %s ready :-)\n", db_desc->db_name);
-		else {
-			log_fatal("FATAL corrupted state for db: %s :-(", db_desc->db_name);
-			exit(EXIT_FAILURE);
-		}
-	} else {
-		log_fatal("FATAL Corrupted state detected");
-		exit(EXIT_FAILURE);
-	}
+	bt_recover_L0(handle);
 	return handle;
 }
 
 char db_close(db_handle *handle)
 {
+	MUTEX_LOCK(&init_lock);
 	/*verify that this is a valid db*/
 	if (find_element(handle->volume_desc->open_databases, handle->db_desc->db_name) == NULL) {
-		log_fatal("received close for db: %s that is not listed as open", handle->db_desc->db_name);
+		log_warn("Received close for db: %s that is not listed as open", handle->db_desc->db_name);
+		goto finish;
+	}
+	if (handle->db_desc->ref_count < 0) {
+		log_fatal("Negative referece count for DB %s", handle->db_desc->db_name);
 		exit(EXIT_FAILURE);
 	}
+	--handle->db_desc->ref_count;
 
-	log_info("closing region/db %s snapshotting volume\n", handle->db_desc->db_name);
-	handle->db_desc->stat = DB_IS_CLOSING;
-	snapshot(handle->volume_desc);
-	/*stop log appenders*/
-	MUTEX_LOCK(&handle->db_desc->lock_log);
-	/*stop all writers at all levels*/
-	uint8_t level_id;
-	for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
-		RWLOCK_WRLOCK(&handle->db_desc->levels[level_id].guard_of_level.rx_lock);
-		spin_loop(&(handle->db_desc->levels[level_id].active_writers), 0);
+	if (handle->db_desc->ref_count > 0) {
+		goto finish;
+		snapshot(handle->volume_desc);
 	}
 
-	destroy_level_locktable(handle->db_desc, 0);
+	log_info("Closing DB %s snapshotting volume", handle->db_desc->db_name);
+	handle->db_desc->stat = DB_IS_CLOSING;
+	sem_post(&handle->db_desc->compaction_daemon_interrupts);
+	/*wait for all pending compactions to finish for L0*/
+	for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
+		if (handle->db_desc->levels[0].tree_status[i] == SPILLING_IN_PROGRESS) {
+			i = 0;
+			usleep(500);
+			continue;
+		}
+	}
+	/*wait for all other pending compactions to finish*/
+	for (int i = 1; i < MAX_LEVELS; i++) {
+		if (handle->db_desc->levels[i].tree_status[0] == SPILLING_IN_PROGRESS) {
+			i = 0;
+			usleep(500);
+			continue;
+		}
+	}
+	log_info("All pending compactions done for db %s", handle->db_desc->db_name);
+	snapshot(handle->volume_desc);
 
 	if (remove_element(handle->volume_desc->open_databases, handle->db_desc) != 1) {
-		log_info("Could not find db: %s", handle->db_desc->db_name);
-		MUTEX_UNLOCK(&init_lock);
-		return COULD_NOT_FIND_DB;
+		log_fatal("Could not find db: %s", handle->db_desc->db_name);
+		exit(EXIT_FAILURE);
 	}
+	for (int i = 0; i < MAX_LEVELS; i++)
+		destroy_level_locktable(handle->db_desc, i);
+
+	free(handle->db_desc);
+finish:
+	free(handle);
+	MUTEX_UNLOCK(&init_lock);
 	return KREON_OK;
 }
 
@@ -942,27 +933,7 @@ uint8_t bt_insert(db_handle *handle, void *key, void *value, uint32_t key_size, 
 	char *key_buf = __tmp;
 	uint32_t kv_size;
 
-	int active_tree = handle->db_desc->levels[0].active_tree;
-	while (handle->db_desc->levels[0].level_size[active_tree] > handle->db_desc->levels[0].max_level_size) {
-		pthread_mutex_lock(&handle->db_desc->client_barrier_lock);
-		active_tree = handle->db_desc->levels[0].active_tree;
-
-		if (handle->db_desc->levels[0].level_size[active_tree] > handle->db_desc->levels[0].max_level_size) {
-			sem_post(&handle->db_desc->compaction_daemon_interrupts);
-			if (pthread_cond_wait(&handle->db_desc->client_barrier,
-					      &handle->db_desc->client_barrier_lock) != 0) {
-				log_fatal("failed to throttle");
-				exit(EXIT_FAILURE);
-			}
-		}
-		active_tree = handle->db_desc->levels[0].active_tree;
-		pthread_mutex_unlock(&handle->db_desc->client_barrier_lock);
-	}
-
 	kv_size = sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size + sizeof(uint64_t);
-#ifndef NDEBUG
-	assert(kv_size <= KV_MAX_SIZE);
-#endif
 
 	if (kv_size > KV_MAX_SIZE) {
 		log_fatal("Key buffer overflow");
@@ -1116,6 +1087,22 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 	uint8_t rc;
 
 	db_desc = ins_req->metadata.handle->db_desc;
+
+	int active_tree = db_desc->levels[0].active_tree;
+	while (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+		pthread_mutex_lock(&db_desc->client_barrier_lock);
+		active_tree = db_desc->levels[0].active_tree;
+
+		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+			sem_post(&db_desc->compaction_daemon_interrupts);
+			if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
+				log_fatal("failed to throttle");
+				exit(EXIT_FAILURE);
+			}
+		}
+		active_tree = db_desc->levels[0].active_tree;
+		pthread_mutex_unlock(&db_desc->client_barrier_lock);
+	}
 	db_desc->dirty = 0x01;
 
 	if (ins_req->metadata.key_format == KV_FORMAT) {
@@ -1622,13 +1609,6 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req)
 		ins_req->metadata.handle->volume_desc,
 		&ins_req->metadata.handle->db_desc->levels[ins_req->metadata.level_id], ins_req->metadata.tree_id,
 		INDEX_SPLIT);
-	// result.left_child->v1++; /*lamport counter*/
-	// result.right_child->v1++; /*lamport counter*/
-
-#ifdef USE_SYNC
-	__sync_synchronize();
-#endif
-
 	/*initialize*/
 	full_addr = (void *)((uint64_t)node + (uint64_t)sizeof(node_header));
 	/*set node heights*/
@@ -1724,9 +1704,6 @@ bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
 	rep.right_lchild =
 		seg_get_leaf_node(req->metadata.handle->volume_desc, &req->metadata.handle->db_desc->levels[level_id],
 				  req->metadata.tree_id, LEAF_SPLIT);
-#ifdef USE_SYNC
-	__sync_synchronize();
-#endif
 	int split_point;
 	int left_entries;
 	int right_entries;

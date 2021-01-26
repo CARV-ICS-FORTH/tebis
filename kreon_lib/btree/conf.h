@@ -19,18 +19,11 @@
 #define DEBUG_ALLOCATOR_NO
 #define DEBUG_CLEANER_NO
 #define DEBUG_SNAPSHOT_NO
-#define DEBUG_INSERT_NO
-#define DEBUG_READ_NO
-#define DEBUG_TUCANA_2_NO
-#define DEBUG_SCAN_NO
-#define DEBUG_DELETE_NO
 
 #define MAX_DB_NAME_SIZE 64
 /*hierarchy of trees parameters*/
 #define MAX_LEVELS 8
 #define NUM_TREES_PER_LEVEL 4
-#define TOTAL_TREES (MAX_LEVELS * NUM_TREES_PER_LEVEL)
-#define DB_ENTRY_SIZE 1024
 #define GROUP_SIZE 2
 #define NUM_OF_DB_GROUPS 506
 #define DEVICE_BLOCK_SIZE 4096
@@ -46,7 +39,7 @@
 #define SEC (1000000L)
 
 #define CLEAN_INTERVAL (10 * SEC)
-#define COMMIT_KV_LOG_INTERVAL (500 * SEC)
+//#define COMMIT_KV_LOG_INTERVAL (500 * SEC)
 #define SNAPSHOT_INTERVAL (1500 * SEC)
 #define GC_INTERVAL (50 * SEC)
 

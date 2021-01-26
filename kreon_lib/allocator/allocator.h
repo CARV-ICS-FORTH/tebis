@@ -56,8 +56,6 @@ typedef enum volume_state { VOLUME_IS_OPEN = 0x00, VOLUME_IS_CLOSING = 0x01, VOL
 #define SNAP_INTERRUPT_ENABLE 0x0A
 #define SNAP_INTERRUPT_DISABLE 0x0B
 
-typedef enum db_status { DB_OPEN, DB_IS_CLOSING } db_status;
-
 extern LIST *mappedVolumes;
 
 /*the global mountpoint of a volume*/
@@ -66,15 +64,21 @@ extern int32_t FD;
 
 typedef struct pr_db_entry {
 	char db_name[MAX_DB_NAME_SIZE];
-	uint64_t root_r[TOTAL_TREES];
-	uint64_t first_segment[TOTAL_TREES];
-	uint64_t last_segment[TOTAL_TREES];
-	uint64_t offset[TOTAL_TREES];
+	uint64_t root_r[MAX_LEVELS][NUM_TREES_PER_LEVEL];
+	uint64_t first_segment[MAX_LEVELS][NUM_TREES_PER_LEVEL];
+	uint64_t last_segment[MAX_LEVELS][NUM_TREES_PER_LEVEL];
+	uint64_t offset[MAX_LEVELS][NUM_TREES_PER_LEVEL];
 	//expressed in keys per level per tree
-	uint64_t level_size[TOTAL_TREES];
+	uint64_t level_size[MAX_LEVELS][NUM_TREES_PER_LEVEL];
+	uint64_t KV_log_first_seg_offt;
+	uint64_t KV_log_last_seg_offt;
+	uint64_t KV_log_size;
 
+	uint64_t L1_index_end_log_offset;
+	uint64_t L1_segment_offt;
+#if 0
 	/*commit log is in a different location on the device for the following reason:*
-	 * In Kreon for persistence we have two persistence operations commit_log and snapshot()
+	 *Kreon has two persistence operations commit_log and snapshot()
 	 * Commit log only commits the log and it is faster than snapshot. It actual trades performance vs recovery_time.
 	 * This is because db should replay a part of its tail log to add missing index.
 	 * Snapshot commits both index and log (it actually calls commit_log) and is slower but provides instant recovery.
@@ -87,9 +91,9 @@ typedef struct pr_db_entry {
 	 */
 	uint64_t L0_start_log_offset;
 	uint64_t L0_end_log_offset;
+#endif
 	uint32_t valid;
-	//forest *replica_forest;
-	char pad[36];
+	char pad[44];
 } pr_db_entry; //768 bytes or 12 cache lines
 
 typedef struct pr_db_group {
