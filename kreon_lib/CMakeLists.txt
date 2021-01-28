@@ -34,13 +34,11 @@ set(CMAKE_EXE_LINKER_FLAGS "-Wl,--no-as-needed -lrt -lm -pthread -lnuma")
 # Kreon with replication enabled
 add_library(
   kreonr STATIC
-  allocator/recovery.c
   allocator/allocator.c
   allocator/persistent_operations.c
   btree/segment_allocator.c
   btree/btree.c
   btree/compaction_daemon.c
-  btree/delete.c
   btree/gc.c
   scanner/stack.c
   scanner/scanner.c
@@ -50,13 +48,11 @@ add_library(
 
 add_library(
   kreonr-shared SHARED
-  allocator/recovery.c
   allocator/allocator.c
   allocator/persistent_operations.c
   btree/segment_allocator.c
   btree/btree.c
   btree/compaction_daemon.c
-  btree/delete.c
   btree/gc.c
   scanner/stack.c
   scanner/min_max_heap.c

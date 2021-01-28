@@ -34,7 +34,6 @@ extern unsigned priv_thread_count;
 extern "C" {
 #include "../kreon_lib/allocator/allocator.h"
 #include "../kreon_lib/btree/btree.h"
-#include "../kreon_lib/btree/delete.h"
 #include "../kreon_lib/scanner/scanner.h"
 }
 

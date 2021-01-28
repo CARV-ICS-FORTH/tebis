@@ -11,7 +11,6 @@
 #include <unistd.h>
 #include <log.h>
 #include "../kreon_lib/btree/btree.h"
-#include "../kreon_lib/btree/delete.h"
 #define NUM_KEYS num_keys
 #define PERSIST persist
 #define TOTAL_KEYS 0

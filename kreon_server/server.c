@@ -2492,7 +2492,7 @@ when test passes*/
 					   (uint64_t)task->msg->reply);
 		get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 		// for (int k = 0; k < 10; k++) {
-		value = __find_key(r_desc->db, &get_req->key_size, SEARCH_DIRTY_TREE);
+		value = __find_key(r_desc->db, &get_req->key_size);
 		// if (value != NULL)
 		//	break;
 		//}

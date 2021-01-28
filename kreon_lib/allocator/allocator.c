@@ -79,7 +79,7 @@ static void check(int test, const char *message, ...)
 }
 
 static void add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry);
-void mount_volume(char *volume_name, int64_t start, int64_t size); /*Called once from a region server*/
+static void mount_volume(char *volume_name, int64_t start, int64_t size); /*Called once from a region server*/
 void clean_log_entries(void *volume_desc);
 void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t length, char free, uint64_t *bit_idx);
 
@@ -1371,8 +1371,8 @@ exit(EXIT_FAILURE);
 		uint64_t ts = get_timestamp();
 		if ((ts - volume_desc->last_snapshot) >= SNAPSHOT_INTERVAL)
 			snapshot(volume_desc);
-		else if (ts - volume_desc->last_commit > COMMIT_KV_LOG_INTERVAL)
-			commit_db_logs_per_volume(volume_desc);
+		//else if (ts - volume_desc->last_commit > COMMIT_KV_LOG_INTERVAL)
+		//commit_db_logs_per_volume(volume_desc);
 	}
 }
 
