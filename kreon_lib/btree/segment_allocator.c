@@ -101,7 +101,7 @@ struct segment_header *get_segment_for_explicit_IO(volume_descriptor *volume_des
 		level_desc->last_segment[tree_id]->next_segment = (segment_header *)((uint64_t)new_segment - MAPPED);
 		level_desc->last_segment[tree_id] = new_segment;
 		level_desc->last_segment[tree_id]->segment_id = segment_id;
-		level_desc->offset[tree_id] += BUFFER_SEGMENT_SIZE;
+		level_desc->offset[tree_id] += SEGMENT_SIZE;
 	} else {
 		//log_info("Adding first index segmet for [%u]",tree_id);
 		/*special case for the first segment for this level*/
@@ -110,7 +110,7 @@ struct segment_header *get_segment_for_explicit_IO(volume_descriptor *volume_des
 		level_desc->first_segment[tree_id] = new_segment;
 		level_desc->last_segment[tree_id] = new_segment;
 		level_desc->last_segment[tree_id]->segment_id = 0;
-		level_desc->offset[tree_id] = BUFFER_SEGMENT_SIZE;
+		level_desc->offset[tree_id] = SEGMENT_SIZE;
 	}
 	return new_segment;
 }

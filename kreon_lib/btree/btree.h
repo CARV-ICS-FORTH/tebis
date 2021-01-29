@@ -17,8 +17,6 @@
 #define SUCCESS 4
 #define FAILED 5
 
-#define SEGMENT_SIZE 2097152
-
 #define KREON_OK 10
 
 #define KEY_NOT_FOUND 11

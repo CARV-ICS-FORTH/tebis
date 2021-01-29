@@ -305,16 +305,15 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 		offset += 4096;
 	}
 
-	/*do we need to pad? addresses need to be aligned at BUFFER_SEGMENT_SIZE
+	/*do we need to pad? addresses need to be aligned at SEGMENT_SIZE
 * granularity*/
-	uint64_t pad =
-		(start + ((1 + FREE_LOG_SIZE + bitmap_size_in_blocks) * DEVICE_BLOCK_SIZE)) % BUFFER_SEGMENT_SIZE;
-	pad = BUFFER_SEGMENT_SIZE - pad;
+	uint64_t pad = (start + ((1 + FREE_LOG_SIZE + bitmap_size_in_blocks) * DEVICE_BLOCK_SIZE)) % SEGMENT_SIZE;
+	pad = SEGMENT_SIZE - pad;
 	log_info("need to pad %llu bytes for alignment purposes", (LLU)pad);
-	/*reserve the first BUFFER_SEGMENT_SIZE for the initial version of the
+	/*reserve the first SEGMENT_SIZE for the initial version of the
 * superindex*/
-	int bitmap_bytes = ((BUFFER_SEGMENT_SIZE + pad) / DEVICE_BLOCK_SIZE) / sizeof(uint64_t);
-	int bitmap_bits = ((BUFFER_SEGMENT_SIZE + pad) / DEVICE_BLOCK_SIZE) % sizeof(uint64_t);
+	int bitmap_bytes = ((SEGMENT_SIZE + pad) / DEVICE_BLOCK_SIZE) / sizeof(uint64_t);
+	int bitmap_bits = ((SEGMENT_SIZE + pad) / DEVICE_BLOCK_SIZE) % sizeof(uint64_t);
 
 	memset(buffer + sizeof(uint64_t), 0x00, bitmap_bytes);
 	char tmp = 0xFF;
@@ -323,9 +322,9 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 		memcpy(buffer + sizeof(uint64_t) + bitmap_bytes, &tmp, sizeof(char));
 	}
 	fprintf(stderr,
-		"[%s:%s:%d] reserved for BUFFER_SEGMENT_SIZE %d bitmap_bytes "
+		"[%s:%s:%d] reserved for SEGMENT_SIZE %d bitmap_bytes "
 		"%d and bitmap_bits %d\n",
-		__FILE__, __func__, __LINE__, BUFFER_SEGMENT_SIZE, bitmap_bytes, bitmap_bits);
+		__FILE__, __func__, __LINE__, SEGMENT_SIZE, bitmap_bytes, bitmap_bits);
 
 	/*write it now*/
 	offset = start + 4096 + (FREE_LOG_SIZE * 4096);
@@ -356,7 +355,7 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	/*write super index*/
 	offset = start + (uint64_t)DEVICE_BLOCK_SIZE + (uint64_t)(FREE_LOG_SIZE * DEVICE_BLOCK_SIZE) +
 		 (uint64_t)(bitmap_size_in_blocks * DEVICE_BLOCK_SIZE) + pad;
-	if (offset % BUFFER_SEGMENT_SIZE != 0) {
+	if (offset % SEGMENT_SIZE != 0) {
 		log_fatal("FATAL misaligned initial address\n");
 		exit(EXIT_FAILURE);
 	}

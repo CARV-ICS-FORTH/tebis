@@ -710,7 +710,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		allocator_init(volume_desc);
 		add_first(mappedVolumes, volume_desc, key);
 		volume_desc->reference_count++;
-		//soft state about the in use pages of level-0 for each BUFFER_SEGMENT_SIZE
+		//soft state about the in use pages of level-0 for each SEGMENT_SIZE
 		//segment inside the volume
 		volume_desc->segment_utilization_vector_size =
 			((volume_desc->volume_superblock->dev_size_in_blocks -
@@ -1081,8 +1081,8 @@ void *append_key_value_to_log(log_operation *req)
 
 	MUTEX_LOCK(&handle->db_desc->lock_log);
 	/*append data part in the data log*/
-	if (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE != 0)
-		available_space_in_log = BUFFER_SEGMENT_SIZE - (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE);
+	if (handle->db_desc->KV_log_size % SEGMENT_SIZE != 0)
+		available_space_in_log = SEGMENT_SIZE - (handle->db_desc->KV_log_size % SEGMENT_SIZE);
 	else
 		available_space_in_log = 0;
 
@@ -1098,11 +1098,11 @@ void *append_key_value_to_log(log_operation *req)
 
 		/*pad with zeroes remaining bytes in segment*/
 		addr_inlog = (void *)((uint64_t)handle->db_desc->KV_log_last_segment +
-				      (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
+				      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 		memset(addr_inlog, 0x00, available_space_in_log);
 
 		allocated_space = data_size.kv_size + sizeof(segment_header);
-		allocated_space += BUFFER_SEGMENT_SIZE - (allocated_space % BUFFER_SEGMENT_SIZE);
+		allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
 
 		d_header = seg_get_raw_log_segment(handle->volume_desc);
 		assert(((uint64_t)d_header - MAPPED) % SEGMENT_SIZE == 0);
@@ -1116,7 +1116,7 @@ void *append_key_value_to_log(log_operation *req)
 	}
 
 	addr_inlog = (void *)((uint64_t)handle->db_desc->KV_log_last_segment +
-			      (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
+			      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 	req->metadata->log_offset = handle->db_desc->KV_log_size;
 	handle->db_desc->KV_log_size += data_size.kv_size;
 

@@ -90,7 +90,7 @@ void fix_nodes_in_log(volume_descriptor *volume_desc, db_descriptor *db_desc, lo
 {
 	if (prev_node) {
 		prev_node->metadata.next_segment = curr_node->metadata.next_segment;
-		free_block(volume_desc, curr_node, BUFFER_SEGMENT_SIZE);
+		free_block(volume_desc, curr_node, SEGMENT_SIZE);
 	} else
 		db_desc->KV_log_first_segment =
 			(segment_header *)REAL_ADDRESS((uint64_t)curr_node->metadata.next_segment);

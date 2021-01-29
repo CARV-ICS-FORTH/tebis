@@ -59,6 +59,7 @@
 /*various*/
 #define LLU long long unsigned
 
+#define SEGMENT_SIZE (2 * 1024 * 1024)
 #define GROWTH_FACTOR 4
 #define L0_SIZE 512000
 #define EXPLICIT_IO 1
@@ -69,6 +70,5 @@
 
 #define GB(x) (x * 1024LU * 1024LU * 1024LU)
 
-#define BUFFER_SEGMENT_SIZE (2 * 1024 * 1024)
 #define SEGMENT_MEMORY_THREASHOLD 511 /*Careful, in number of pages -1 used for chaining*/
 #define MAX_ALLOCATION_TRIES 2
