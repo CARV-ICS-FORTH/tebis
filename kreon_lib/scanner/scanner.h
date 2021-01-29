@@ -35,11 +35,16 @@ typedef struct level_scanner {
 typedef struct scannerHandle {
 	level_scanner LEVEL_SCANNERS[MAX_LEVELS][NUM_TREES_PER_LEVEL];
 	struct sh_min_heap heap;
+	struct sh_max_heap max_heap;
 	struct sc_full_kv key_value;
 	db_handle *db;
 	int32_t type; /*to be removed also*/
 	int32_t malloced;
 } scannerHandle;
+
+struct Kreoniterator {
+	scannerHandle *sc;
+};
 
 /*
  * Standalone version
@@ -75,3 +80,16 @@ void *getValuePtr(scannerHandle *sc);
 level_scanner *_init_spill_buffer_scanner(db_handle *handle, node_header *node, void *start_key);
 int32_t _get_next_KV(level_scanner *sc);
 void _close_spill_buffer_scanner(level_scanner *sc, node_header *root);
+
+int32_t _get_next_KV(level_scanner *sc);
+int32_t _get_prev_KV(level_scanner *sc);
+
+void seek_to_first(db_handle *, struct Kreoniterator *);
+
+void seek_to_last(db_handle *, struct Kreoniterator *);
+
+int get_next(struct Kreoniterator *it);
+
+int get_prev(struct Kreoniterator *it);
+
+int Seek(db_handle *hd, void *Keyname, struct Kreoniterator *it);
