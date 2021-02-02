@@ -536,15 +536,18 @@ void *compaction_daemon(void *args)
 {
 	struct db_handle *handle = (struct db_handle *)args;
 	struct db_descriptor *db_desc = handle->db_desc;
+	log_info("Starting compaction_daemon for DB %s", db_desc->db_name);
 	struct compaction_request *comp_req = NULL;
 	pthread_setname_np(pthread_self(), "compactiond");
 	int next_L0_tree_to_compact = 0;
+	db_desc->stat = DB_OPEN;
 	while (1) {
 		/*special care for Level 0 to 1*/
 		sem_wait(&db_desc->compaction_daemon_interrupts);
-		if (db_desc->stat == DB_IS_CLOSING) {
+		if (db_desc->stat == DB_TERMINATE_COMPACTION_DAEMON) {
 			log_warn("Compaction daemon instructed to exit because DB %s is closing, Bye bye!...",
 				 db_desc->db_name);
+			db_desc->stat = DB_IS_CLOSING;
 			return NULL;
 		}
 		struct level_descriptor *level_0 = &handle->db_desc->levels[0];

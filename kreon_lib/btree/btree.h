@@ -60,7 +60,7 @@ typedef enum {
 	paddedSpace = 2222222
 } nodeType_t;
 
-enum db_status { DB_OPEN, DB_IS_CLOSING };
+enum db_status { DB_START_COMPACTION_DAEMON, DB_OPEN, DB_TERMINATE_COMPACTION_DAEMON, DB_IS_CLOSING };
 
 /*descriptor describing a spill operation and its current status*/
 
