@@ -23,7 +23,6 @@
 #include "btree.h"
 #include "gc.h"
 #include "segment_allocator.h"
-#include "../../utilities/macros.h"
 #include "../allocator/dmap-ioctl.h"
 #include "../scanner/scanner.h"
 #include "../btree/stats.h"
@@ -395,6 +394,7 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 		hd->db_desc->levels[0].offset[tree_id] = 0;
 		hd->db_desc->levels[0].root_w[tree_id] = NULL;
 		hd->db_desc->levels[0].root_r[tree_id] = NULL;
+		hd->db_desc->levels[0].level_size[tree_id] = 0;
 	}
 
 	/*restore now all device levels*/
@@ -789,7 +789,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		}
 		/*db not found allocate a new slot for it*/
 		if (empty_group == -1 && empty_index == -1) {
-			log_info("FATAL MAX DBS %d reached", NUM_OF_DB_GROUPS * GROUP_SIZE);
+			log_fatal("MAX DBS %d reached", NUM_OF_DB_GROUPS * GROUP_SIZE);
 			exit(EXIT_FAILURE);
 		}
 
@@ -802,10 +802,10 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 			volume_desc->mem_catalogue->db_group_index[empty_group] =
 				(pr_db_group *)((uint64_t)new_group - MAPPED);
 			empty_index = 0;
-			log_info("allocated new pr_db_group epoch at %llu volume epoch %llu", new_group->epoch,
-				 volume_desc->mem_catalogue->epoch);
+			//log_info("allocated new pr_db_group epoch at %llu volume epoch %llu", new_group->epoch,
+			//	 volume_desc->mem_catalogue->epoch);
 		}
-		log_info("database %s not found, allocating slot [%d,%d] for it", (const char *)db_name, empty_group,
+		log_info("DB %s not found, allocating slot [%d,%d] for it", (const char *)db_name, empty_group,
 			 empty_index);
 		pr_db_group *cur_group =
 			(pr_db_group *)(MAPPED + (uint64_t)volume_desc->mem_catalogue->db_group_index[empty_group]);
@@ -850,14 +850,18 @@ finish_init:
 			db_desc->levels[level_id].tree_status[tree_id] = NO_SPILLING;
 		}
 	}
+
+	db_desc->stat = DB_START_COMPACTION_DAEMON;
+	db_desc->t = NULL;
+	db_desc->fl = NULL;
+	db_desc->is_in_replicated_mode = 0;
 	MUTEX_INIT(&db_desc->lock_log, NULL);
-
-	add_first(volume_desc->open_databases, db_desc, db_name);
-	MUTEX_UNLOCK(&init_lock);
-	free(key);
-
-	db_desc->stat = DB_OPEN;
-	log_info("opened DB %s starting its compaction daemon", db_name);
+	MUTEX_INIT(&db_desc->client_barrier_lock, NULL);
+	if (pthread_cond_init(&db_desc->client_barrier, NULL) != 0) {
+		log_fatal("Failed to init condition variable");
+		perror("pthread_cond_init() error");
+		exit(EXIT_FAILURE);
+	}
 
 	sem_init(&db_desc->compaction_daemon_interrupts, PTHREAD_PROCESS_PRIVATE, 0);
 	if (pthread_create(&(handle->db_desc->compaction_daemon), NULL, (void *)compaction_daemon, (void *)handle) !=
@@ -865,7 +869,17 @@ finish_init:
 		log_fatal("Failed to start compaction_daemon for db %s", db_name);
 		exit(EXIT_FAILURE);
 	}
+	int a = 0;
+	while (db_desc->stat != DB_OPEN) {
+		if (++a == 0)
+			a++;
+	}
+
+	add_first(volume_desc->open_databases, db_desc, db_name);
 	bt_recover_L0(handle);
+	MUTEX_UNLOCK(&init_lock);
+	free(key);
+
 	return handle;
 }
 
@@ -888,9 +902,13 @@ char db_close(db_handle *handle)
 		snapshot(handle->volume_desc);
 	}
 
-	log_info("Closing DB %s snapshotting volume", handle->db_desc->db_name);
-	handle->db_desc->stat = DB_IS_CLOSING;
+	handle->db_desc->stat = DB_TERMINATE_COMPACTION_DAEMON;
 	sem_post(&handle->db_desc->compaction_daemon_interrupts);
+	while (handle->db_desc->stat != DB_IS_CLOSING)
+		usleep(50);
+
+	log_info("Closing DB %s", handle->db_desc->db_name);
+
 	/*wait for all pending compactions to finish for L0*/
 	for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
 		if (handle->db_desc->levels[0].tree_status[i] == SPILLING_IN_PROGRESS) {
@@ -910,14 +928,31 @@ char db_close(db_handle *handle)
 	log_info("All pending compactions done for db %s", handle->db_desc->db_name);
 	snapshot(handle->volume_desc);
 
+	//free L0
+	for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; ++tree_id) {
+		if (RWLOCK_WRLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
+			exit(EXIT_FAILURE);
+		}
+		seg_free_level(handle, 0, tree_id);
+		if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
+			exit(EXIT_FAILURE);
+		}
+	}
+
 	if (remove_element(handle->volume_desc->open_databases, handle->db_desc) != 1) {
 		log_fatal("Could not find db: %s", handle->db_desc->db_name);
 		exit(EXIT_FAILURE);
 	}
 	for (int i = 0; i < MAX_LEVELS; i++)
 		destroy_level_locktable(handle->db_desc, i);
-
+	//memset(handle->db_desc, 0x00, sizeof(struct db_descriptor));
+	if (pthread_cond_destroy(&handle->db_desc->client_barrier) != 0) {
+		log_fatal("Failed to destroy condition variable");
+		perror("pthread_cond_destroy() error");
+		exit(EXIT_FAILURE);
+	}
 	free(handle->db_desc);
+
 finish:
 	free(handle);
 	MUTEX_UNLOCK(&init_lock);
