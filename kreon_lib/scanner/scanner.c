@@ -717,5 +717,870 @@ int32_t _get_next_KV(level_scanner *sc)
 		exit(EXIT_FAILURE);
 		break;
 	}
+
 	return SUCCESS;
+}
+
+int32_t _get_prev_KV(level_scanner *sc)
+{
+	stackElementT stack_top;
+	node_header *node;
+	index_node *inode;
+	leaf_node *lnode;
+	uint32_t idx;
+	uint32_t up = 1;
+	stack_top = stack_pop(&(sc->stack)); /*get the element*/
+	if (stack_top.guard) {
+		sc->key_value.kv = NULL;
+		return END_OF_DATABASE;
+	}
+
+	if (stack_top.node->type != leafNode && stack_top.node->type != leafRootNode) {
+		log_fatal("Corrupted scanner stack, top element should be a leaf node");
+		raise(SIGINT);
+		exit(EXIT_FAILURE);
+	}
+
+	node = stack_top.node;
+	//log_info("stack top rightmost %d leftmost %d", stack_top.rightmost, stack_top.leftmost);
+	while (1) {
+		if (up) {
+			/*check if we can advance in the current node*/
+			if (stack_top.leftmost) {
+				read_unlock_node(sc, stack_top.node);
+
+				stack_top = stack_pop(&(sc->stack));
+				//printf("rightmost? %s", stack_top.node->type);
+				//node_type(stack_top.node->type);
+				if (!stack_top.guard) {
+					continue;
+				} else {
+					return END_OF_DATABASE;
+				}
+			} else if (stack_top.rightmost) {
+				//log_debug("rightmost? %s", node_type(stack_top.node->type));
+				stack_top.rightmost = 0;
+				if (stack_top.node->type == leafNode || stack_top.node->type == leafRootNode) {
+					//log_info("got a rightmost leaf advance");
+					if (stack_top.node->numberOfEntriesInNode > 1) {
+						idx = stack_top.node->numberOfEntriesInNode - 2;
+						stack_top.idx = stack_top.node->numberOfEntriesInNode - 2;
+						if (node->numberOfEntriesInNode == 2)
+							stack_top.leftmost = 1;
+						node = stack_top.node;
+						stack_push(&sc->stack, stack_top);
+						break;
+					} else {
+						stack_top = stack_pop(&(sc->stack));
+						if (!stack_top.guard) {
+							continue;
+						} else
+							return END_OF_DATABASE;
+					}
+				} else if (stack_top.node->type == internalNode || stack_top.node->type == rootNode) {
+					if (stack_top.node->numberOfEntriesInNode == 1)
+						stack_top.leftmost = 1;
+					stack_top.idx = stack_top.node->numberOfEntriesInNode - 1;
+					stack_push(&sc->stack, stack_top);
+					inode = (index_node *)stack_top.node;
+					node = (node_header *)(MAPPED + inode->p[stack_top.idx].left[0]);
+					assert(node->type == rootNode || node->type == leafRootNode ||
+					       node->type == internalNode || node->type == leafNode);
+					up = 0;
+					continue;
+				} else {
+					log_fatal("Corrupted node");
+					assert(0);
+				}
+			} else {
+				--stack_top.idx;
+				if (stack_top.idx <= 0)
+					stack_top.leftmost = 1;
+			}
+			stack_push(&sc->stack, stack_top);
+			if (stack_top.node->type == leafNode || stack_top.node->type == leafRootNode) {
+				idx = stack_top.idx;
+				node = stack_top.node;
+				break;
+			} else if (stack_top.node->type == internalNode || stack_top.node->type == rootNode) {
+				inode = (index_node *)stack_top.node;
+				node = (node_header *)(MAPPED + (uint64_t)inode->p[stack_top.idx].left[0]);
+				up = 0;
+				assert(node->type == rootNode || node->type == leafRootNode ||
+				       node->type == internalNode || node->type == leafNode);
+				continue;
+			} else {
+				log_fatal("Corrupted node");
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+		} else {
+			stack_top.node = node;
+
+			read_lock_node(sc, stack_top.node);
+
+			stack_top.idx = stack_top.node->numberOfEntriesInNode - 1;
+			stack_top.leftmost = 0;
+			stack_top.rightmost = 1;
+			stack_top.guard = 0;
+			stack_push(&sc->stack, stack_top);
+			if (node->type == leafNode || node->type == leafRootNode) {
+				idx = stack_top.node->numberOfEntriesInNode - 1;
+				break;
+			} else if (node->type == internalNode || node->type == rootNode) {
+				inode = (index_node *)node;
+				node = (node_header *)(MAPPED + (uint64_t)inode->p[stack_top.idx].right[0]);
+			} else {
+				log_fatal("Reached corrupted node");
+				assert(0);
+			}
+		}
+	}
+
+	lnode = (leaf_node *)node;
+
+	switch (sc->type) {
+	case FULL_SCANNER:
+		sc->key_value.kv = (void *)MAPPED + lnode->kv_entry[idx].device_offt;
+		sc->key_value.deleted = lnode->kv_entry[idx].tombstone;
+		break;
+	case SPILL_BUFFER_SCANNER:
+		memcpy(sc->kv_prefix.prefix, lnode->prefix[idx], PREFIX_SIZE);
+		sc->kv_prefix.device_offt = lnode->kv_entry[idx].device_offt;
+		sc->kv_prefix.tombstone = lnode->kv_entry[idx].tombstone;
+		break;
+	default:
+		log_fatal("unknown scanner type");
+		raise(SIGINT);
+		exit(EXIT_FAILURE);
+		break;
+	}
+
+	//	printf("<-..%s\n" , sc->key_value.kv + sizeof(uint32_t));
+
+	return SUCCESS;
+}
+
+int32_t SeekFirst(level_scanner *level_sc, void *start_key_buf)
+{
+	char key_buf_prefix[PREFIX_SIZE];
+	stackElementT element;
+	void *addr = NULL;
+	char *index_key_prefix;
+	index_node *inode;
+	leaf_node *lnode;
+	node_header *node;
+	int64_t ret;
+	int32_t start_idx = 0;
+	int32_t end_idx = 0;
+	int32_t middle;
+	stack_reset(&(level_sc->stack));
+	element.guard = 1;
+	element.leftmost = 0;
+	element.rightmost = 0;
+	element.idx = 0;
+	element.node = NULL;
+	stack_push(&(level_sc->stack), element);
+	node = level_sc->root;
+
+	read_lock_node(level_sc, node);
+
+	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
+		read_unlock_node(level_sc, node);
+		return END_OF_DATABASE;
+	}
+
+	while (node->type != leafNode && node->type != leafRootNode) {
+		inode = (index_node *)node;
+		element.leftmost = 1;
+		element.rightmost = 0;
+		element.idx = 0;
+		element.node = node;
+		element.guard = 0;
+		node = (node_header *)(MAPPED + inode->p[0].left[0]);
+		stack_push(&(level_sc->stack), element);
+	}
+
+	if (start_key_buf == NULL)
+		memset(key_buf_prefix, 0, PREFIX_SIZE * sizeof(char));
+	else {
+		uint32_t s_key_size = *(uint32_t *)start_key_buf;
+		if (s_key_size >= PREFIX_SIZE)
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
+		else {
+			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
+			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
+		}
+	}
+
+	lnode = (leaf_node *)node;
+	start_idx = 0;
+	end_idx = lnode->header.numberOfEntriesInNode - 1;
+	middle = 0;
+
+	while (start_idx <= end_idx) {
+		middle = (start_idx + end_idx) / 2;
+		index_key_prefix = &lnode->prefix[middle][0];
+		ret = prefix_compare(index_key_prefix, key_buf_prefix, PREFIX_SIZE);
+		if (ret < 0) {
+			start_idx = middle + 1;
+		} else if (ret > 0) {
+			end_idx = middle - 1;
+		} else {
+			addr = (void *)(MAPPED + lnode->kv_entry[middle].device_offt);
+			ret = bt_key_cmp(addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+
+			if (ret == 0) {
+				break;
+			} else if (ret < 0) {
+				start_idx = middle + 1;
+				if (start_idx > end_idx) {
+					middle++;
+					break;
+				}
+			} else if (ret > 0) {
+				end_idx = middle - 1;
+				if (start_idx > end_idx)
+					break;
+			}
+		}
+	}
+
+	if (middle <= 0 && lnode->header.numberOfEntriesInNode > 1) {
+		element.node = node;
+		element.idx = 0;
+		element.leftmost = 1;
+		element.rightmost = 0;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = 0;
+	} else if (middle >= (int64_t)lnode->header.numberOfEntriesInNode - 1) {
+		middle = lnode->header.numberOfEntriesInNode - 1;
+		element.node = node;
+		element.idx = 0;
+		element.leftmost = 0;
+		element.rightmost = 1;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = lnode->header.numberOfEntriesInNode - 1;
+	} else {
+		element.node = node;
+		element.idx = middle;
+		element.leftmost = 0;
+		element.rightmost = 0;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+	}
+	level_sc->key_value.kv = (struct kv_format *)(MAPPED + lnode->kv_entry[middle].device_offt);
+	level_sc->key_value.deleted = lnode->kv_entry[middle].tombstone;
+
+	//printf("Found First:%s\n" , level_sc->key_value.kv + sizeof(uint32_t));
+
+	return KREON_OK;
+}
+
+int FindFirst(level_scanner *level_sc, enum scanner_type type, void *start_key)
+{
+	stack_init(&level_sc->stack);
+	level_sc->type = type;
+	if (SeekFirst(level_sc, start_key) == END_OF_DATABASE) {
+		stack_destroy(&(level_sc->stack));
+		return -1;
+	}
+	//level_sc->type = LEVEL_SCANNER;
+	return 0;
+}
+
+int32_t SeekLast(level_scanner *level_sc, void *start_key_buf)
+{
+	char key_buf_prefix[PREFIX_SIZE];
+	stackElementT element;
+	//void *full_pivot_key;
+	void *addr = NULL;
+	char *index_key_prefix;
+	index_node *inode;
+	leaf_node *lnode;
+	node_header *node;
+	int64_t ret;
+	int32_t start_idx = 0;
+	int32_t end_idx = 0;
+	int32_t middle;
+	//char level_key_format;
+	stack_reset(&(level_sc->stack));
+	element.guard = 1;
+	element.leftmost = 0;
+	element.rightmost = 0;
+	element.idx = 0;
+	element.node = NULL;
+	stack_push(&(level_sc->stack), element);
+	node = level_sc->root;
+
+	read_lock_node(level_sc, node);
+
+	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
+		read_unlock_node(level_sc, node);
+		return END_OF_DATABASE;
+	}
+
+	while (node->type != leafNode && node->type != leafRootNode) {
+		inode = (index_node *)node;
+		int pivot = inode->header.numberOfEntriesInNode - 1;
+		element.leftmost = 0;
+		element.rightmost = 1;
+		element.node = node;
+		element.guard = 0;
+		//element.idx = inode->header.numberOfEntriesInNode - 1;
+		node = (node_header *)(MAPPED + inode->p[pivot].right[0]);
+		stack_push(&(level_sc->stack), element);
+	}
+
+	if (start_key_buf == NULL)
+		memset(key_buf_prefix, 0, PREFIX_SIZE * sizeof(char));
+	else {
+		uint32_t s_key_size = *(uint32_t *)start_key_buf;
+		if (s_key_size >= PREFIX_SIZE)
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
+		else {
+			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
+			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
+		}
+	}
+
+	lnode = (leaf_node *)node;
+	start_idx = 0;
+	end_idx = lnode->header.numberOfEntriesInNode - 1;
+	middle = 0;
+
+	while (start_idx <= end_idx) {
+		middle = (start_idx + end_idx) / 2;
+		index_key_prefix = &lnode->prefix[middle][0];
+		ret = prefix_compare(index_key_prefix, key_buf_prefix, PREFIX_SIZE);
+		if (ret < 0) {
+			start_idx = middle + 1;
+		} else if (ret > 0) {
+			end_idx = middle - 1;
+		} else {
+			addr = (void *)(MAPPED + lnode->kv_entry[middle].device_offt);
+			ret = bt_key_cmp(addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+
+			if (ret == 0) {
+				break;
+			} else if (ret < 0) {
+				start_idx = middle + 1;
+				if (start_idx > end_idx) {
+					middle++;
+					break;
+				}
+			} else if (ret > 0) {
+				end_idx = middle - 1;
+				if (start_idx > end_idx)
+					break;
+			}
+		}
+	}
+
+	if (middle <= 0 && lnode->header.numberOfEntriesInNode > 1) {
+		element.node = node;
+		element.idx = lnode->header.numberOfEntriesInNode - 1;
+		element.leftmost = 0;
+		element.rightmost = 1;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = 0;
+	} else if (middle >= (int64_t)lnode->header.numberOfEntriesInNode - 1) {
+		middle = lnode->header.numberOfEntriesInNode - 1;
+		element.node = node;
+		element.idx = 0;
+		element.leftmost = 0;
+		element.rightmost = 1;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = lnode->header.numberOfEntriesInNode - 1;
+	} else {
+		element.node = node;
+		element.idx = middle;
+		element.leftmost = 1;
+		element.rightmost = 0;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+	}
+
+	middle = lnode->header.numberOfEntriesInNode - 1;
+	level_sc->key_value.kv = (struct kv_format *)(MAPPED + lnode->kv_entry[middle].device_offt);
+	level_sc->key_value.deleted = lnode->kv_entry[middle].tombstone;
+
+	//printf("Found Last:%s\n" , level_sc->key_value.kv + sizeof(uint32_t));
+	//level_key_format = KV_FORMAT;
+	return KREON_OK;
+}
+
+int FindLast(level_scanner *level_sc, enum scanner_type type, void *start_key)
+{
+	stack_init(&level_sc->stack);
+	level_sc->type = type;
+	if (SeekLast(level_sc, start_key) == END_OF_DATABASE) {
+		stack_destroy(&(level_sc->stack));
+		return -1;
+	}
+	return 0;
+}
+
+void seek_to_last(db_handle *handle, struct Kreoniterator *it)
+{
+	it->sc = (scannerHandle *)malloc(sizeof(scannerHandle));
+	struct sh_heap_node nd;
+	uint8_t active_tree;
+	int retval;
+
+	if (it->sc == NULL) {
+		log_fatal("NULL scannerHandle?");
+		exit(EXIT_FAILURE);
+	}
+
+	for (int i = 0; i < MAX_LEVELS; i++) {
+		for (int j = 0; j < NUM_TREES_PER_LEVEL; j++) {
+			it->sc->LEVEL_SCANNERS[i][j].valid = 0;
+		}
+	}
+
+	it->sc->type = FULL_SCANNER;
+	active_tree = handle->db_desc->levels[0].active_tree;
+	it->sc->db = handle;
+	sh_init_max_heap(&it->sc->max_heap, active_tree);
+
+	for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
+		struct node_header *root;
+		root = handle->db_desc->levels[0].root_r[i];
+
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[0][i].db = handle;
+			it->sc->LEVEL_SCANNERS[0][i].level_id = 0;
+			it->sc->LEVEL_SCANNERS[0][i].root = root;
+			retval = FindLast(&(it->sc->LEVEL_SCANNERS[0][i]), FULL_SCANNER, NULL);
+
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[0][i].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[0][i].key_value;
+				nd.level_id = 0;
+				nd.type = KV_FORMAT;
+				nd.active_tree = active_tree;
+				sh_insert_max_heap_node(&it->sc->max_heap, &nd);
+			}
+		}
+	}
+
+	for (uint32_t level_id = 1; level_id < MAX_LEVELS; level_id++) {
+		struct node_header *root = NULL;
+		int tree_id = 0;
+		root = handle->db_desc->levels[level_id].root_w[tree_id];
+		if (!root)
+			root = handle->db_desc->levels[level_id].root_r[tree_id];
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].db = handle;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].level_id = level_id;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].root = root;
+			retval = FindLast(&it->sc->LEVEL_SCANNERS[level_id][tree_id], FULL_SCANNER, NULL);
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[level_id][tree_id].key_value;
+				nd.type = KV_FORMAT;
+				nd.level_id = level_id;
+				nd.active_tree = tree_id;
+				sh_insert_max_heap_node(&it->sc->max_heap, &nd);
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+			}
+		}
+	}
+}
+
+void seek_to_first(db_handle *handle, struct Kreoniterator *it)
+{
+	it->sc = (scannerHandle *)malloc(sizeof(scannerHandle));
+	struct sh_heap_node nd;
+	uint8_t active_tree;
+	int retval;
+
+	if (it->sc == NULL) {
+		log_fatal("NULL scannerHandle?");
+		exit(EXIT_FAILURE);
+	}
+
+	for (int i = 0; i < MAX_LEVELS; i++) {
+		for (int j = 0; j < NUM_TREES_PER_LEVEL; j++) {
+			it->sc->LEVEL_SCANNERS[i][j].valid = 0;
+		}
+	}
+
+	it->sc->type = FULL_SCANNER;
+	active_tree = handle->db_desc->levels[0].active_tree;
+	it->sc->db = handle;
+	sh_init_heap(&it->sc->heap, active_tree);
+
+	for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
+		struct node_header *root;
+		root = handle->db_desc->levels[0].root_r[i];
+
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[0][i].db = handle;
+			it->sc->LEVEL_SCANNERS[0][i].level_id = 0;
+			it->sc->LEVEL_SCANNERS[0][i].root = root;
+			retval = FindFirst(&(it->sc->LEVEL_SCANNERS[0][i]), FULL_SCANNER, NULL);
+
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[0][i].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[0][i].key_value;
+				nd.level_id = 0;
+				nd.type = KV_FORMAT;
+				nd.active_tree = active_tree;
+				sh_insert_heap_node(&it->sc->heap, &nd);
+			}
+		}
+	}
+
+	for (uint32_t level_id = 1; level_id < MAX_LEVELS; level_id++) {
+		struct node_header *root = NULL;
+		int tree_id = 0;
+		root = handle->db_desc->levels[level_id].root_w[tree_id];
+		if (!root)
+			root = handle->db_desc->levels[level_id].root_r[tree_id];
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].db = handle;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].level_id = level_id;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].root = root;
+
+			retval = FindFirst(&it->sc->LEVEL_SCANNERS[level_id][tree_id], FULL_SCANNER, NULL);
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[level_id][tree_id].key_value;
+				nd.type = KV_FORMAT;
+				nd.level_id = level_id;
+				nd.active_tree = tree_id;
+				sh_insert_heap_node(&it->sc->heap, &nd);
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+			}
+		}
+	}
+}
+
+int get_next(struct Kreoniterator *it)
+{
+	enum sh_heap_status stat;
+	struct sh_heap_node nd;
+	struct sh_heap_node next_nd;
+	while (1) {
+		stat = sh_remove_min(&it->sc->heap, &nd);
+		if (stat != EMPTY_MIN_HEAP) {
+			it->sc->key_value = nd.key_value;
+			if (_get_next_KV(&(it->sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree])) != END_OF_DATABASE) {
+				next_nd.level_id = nd.level_id;
+				next_nd.active_tree = nd.active_tree;
+				next_nd.type = nd.type;
+				next_nd.key_value = it->sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree].key_value;
+				//printf("%s\n", next_nd.KV + sizeof(uint32_t));
+				sh_insert_heap_node(&it->sc->heap, &next_nd);
+			}
+			if (nd.duplicate == 1) {
+				continue;
+			}
+			return KREON_OK;
+		} else
+			return END_OF_DATABASE;
+	}
+}
+
+int get_prev(struct Kreoniterator *it)
+{
+	enum sh_heap_status stat;
+	struct sh_heap_node nd;
+	struct sh_heap_node next_nd;
+	while (1) {
+		stat = sh_remove_max(&it->sc->max_heap, &nd);
+		if (stat != EMPTY_MIN_HEAP) {
+			it->sc->key_value = nd.key_value;
+			if (_get_prev_KV(&(it->sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree])) != END_OF_DATABASE) {
+				next_nd.level_id = nd.level_id;
+				next_nd.active_tree = nd.active_tree;
+				next_nd.type = nd.type;
+				next_nd.key_value = it->sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree].key_value;
+				//	printf("%s\n", next_nd.KV + sizeof(uint32_t));
+				sh_insert_max_heap_node(&it->sc->max_heap, &next_nd);
+			}
+			if (nd.duplicate == 1) {
+				continue;
+			}
+			return KREON_OK;
+		} else
+			return END_OF_DATABASE;
+	}
+}
+
+/*giostil change for testing the reverse spillbuffer scans*/
+level_scanner *_init_reverse_spill_buffer_scanner(db_handle *handle, node_header *node, void *start_key)
+{
+	level_scanner *level_sc;
+	level_sc = malloc(sizeof(level_scanner));
+	stack_init(&level_sc->stack);
+	level_sc->db = handle;
+	level_sc->root = node;
+
+	level_sc->type = SPILL_BUFFER_SCANNER;
+	/*level_sc->keyValue = (void *)malloc(PREFIX_SIZE + sizeof(uint64_t)); typicall 20 bytes 8
+                                  prefix
+                                  the address to the KV
+                                  log*/
+	/*position scanner now to the appropriate row*/
+	if (SeekLast(level_sc, NULL) == END_OF_DATABASE) {
+		log_info("empty internal buffer during spill operation, is that possible?");
+		// will happen in close_spill_buffer_scanner stack_destroy(&(sc->stack));
+		// free(sc);
+		return NULL;
+	}
+	return level_sc;
+}
+
+int32_t SeekKey(level_scanner *level_sc, void *start_key_buf)
+{
+	char key_buf_prefix[PREFIX_SIZE];
+	stackElementT element;
+	db_descriptor *db_desc = level_sc->db->db_desc;
+	void *full_pivot_key;
+	void *addr = NULL;
+	char *index_key_prefix;
+	index_node *inode;
+	leaf_node *lnode;
+	node_header *node;
+	node_header *node2;
+	int64_t ret;
+	uint32_t level_id = level_sc->level_id;
+	int32_t start_idx = 0;
+	int32_t end_idx = 0;
+	int32_t middle;
+	char level_key_format;
+
+	stack_reset(&(level_sc->stack));
+	element.guard = 1;
+	element.leftmost = 0;
+	element.rightmost = 0;
+	element.idx = 0;
+	element.node = NULL;
+	stack_push(&(level_sc->stack), element);
+	node = level_sc->root;
+	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
+		//we seek in an empty tree
+		return END_OF_DATABASE;
+	}
+
+	while (node->type != leafNode && node->type != leafRootNode) {
+		inode = (index_node *)node;
+		start_idx = 0;
+		end_idx = inode->header.numberOfEntriesInNode - 1;
+		middle = (start_idx + end_idx) / 2;
+		while (1) {
+			middle = (start_idx + end_idx) / 2;
+			addr = &(inode->p[middle].pivot);
+			full_pivot_key = (void *)(MAPPED + *(uint64_t *)addr);
+			ret = bt_key_cmp(full_pivot_key, start_key_buf, KV_FORMAT, KV_FORMAT);
+			if (ret == 0) {
+				addr = &(inode->p[middle].right[0]);
+				break;
+
+			} else if (ret > 0) {
+				end_idx = middle - 1;
+				if (start_idx > end_idx) {
+					addr = &(inode->p[middle].left[0]);
+					middle--;
+					break;
+				}
+			} else {
+				start_idx = middle + 1;
+				if (start_idx > end_idx) {
+					addr = &(inode->p[middle].right[0]);
+					break;
+				}
+			}
+		}
+
+		assert(middle < (int64_t)node->numberOfEntriesInNode);
+		element.node = node;
+		element.guard = 0;
+		if (middle <= 0) {
+			element.leftmost = 1;
+			element.rightmost = 0;
+			element.idx = 0;
+			node = (node_header *)(MAPPED + inode->p[0].left[0]);
+			//printf("Went Left\n");
+		} else if (middle >= (int64_t)node->numberOfEntriesInNode - 1) {
+			element.leftmost = 0;
+			element.rightmost = 1;
+			element.idx = middle;
+			node = (node_header *)(MAPPED + inode->p[middle].right[0]);
+			//printf("Went Right\n");
+		} else {
+			element.leftmost = 0;
+			element.rightmost = 0;
+			element.idx = middle;
+			node = (node_header *)(MAPPED + inode->p[middle].right[0]);
+			//printf("Went Right\n");
+		}
+		stack_push(&(level_sc->stack), element);
+	}
+	if (start_key_buf == NULL)
+		memset(key_buf_prefix, 0, PREFIX_SIZE * sizeof(char));
+	else {
+		uint32_t s_key_size = *(uint32_t *)start_key_buf;
+		if (s_key_size >= PREFIX_SIZE)
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
+		else {
+			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
+			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
+		}
+	}
+
+	lnode = (leaf_node *)node;
+	start_idx = 0;
+	end_idx = lnode->header.numberOfEntriesInNode - 1;
+	middle = 0;
+	while (start_idx <= end_idx) {
+		middle = (start_idx + end_idx) / 2;
+		index_key_prefix = &lnode->prefix[middle][0];
+		ret = prefix_compare(index_key_prefix, index_key_prefix, PREFIX_SIZE);
+
+		if (ret < 0) {
+			start_idx = middle + 1;
+		} else if (ret > 0) {
+			end_idx = middle - 1;
+		} else {
+			addr = (void *)(MAPPED + lnode->kv_entry[middle].device_offt);
+			ret = bt_key_cmp(addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+
+			if (ret == 0) {
+				break;
+			} else if (ret < 0) {
+				start_idx = middle + 1;
+				if (start_idx > end_idx) {
+					middle++;
+					break;
+				}
+			} else if (ret > 0) {
+				end_idx = middle - 1;
+				if (start_idx > end_idx)
+					break;
+			}
+		}
+	}
+
+	if (middle <= 0 && lnode->header.numberOfEntriesInNode > 1) {
+		element.node = node;
+		element.idx = 0;
+		element.leftmost = 1;
+		element.rightmost = 0;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = 0;
+	} else if (middle >= (int64_t)lnode->header.numberOfEntriesInNode - 1) {
+		middle = lnode->header.numberOfEntriesInNode - 1;
+		element.node = node;
+		element.idx = 0;
+		element.leftmost = 0;
+		element.rightmost = 1;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+		middle = lnode->header.numberOfEntriesInNode - 1;
+	} else {
+		element.node = node;
+		element.idx = middle;
+		element.leftmost = 0;
+		element.rightmost = 0;
+		element.guard = 0;
+		stack_push(&(level_sc->stack), element);
+	}
+
+	level_sc->key_value.kv = (struct kv_format *)(MAPPED + lnode->kv_entry[middle].device_offt);
+	level_sc->key_value.deleted = lnode->kv_entry[middle].tombstone;
+
+	//printf("Found:%s\n" , level_sc->key_value.kv + sizeof(uint32_t));
+	return KREON_OK;
+}
+
+int MySeek(level_scanner *level_sc, void *start_key)
+{
+	stack_init(&level_sc->stack);
+	if (SeekKey(level_sc, start_key) == END_OF_DATABASE) {
+		stack_destroy(&(level_sc->stack));
+		return -1;
+	}
+	level_sc->type = LEVEL_SCANNER;
+	return 0;
+}
+
+int Seek(db_handle *handle, void *Keyname, struct Kreoniterator *it)
+{
+	it->sc = (scannerHandle *)malloc(sizeof(scannerHandle));
+	struct sh_heap_node nd;
+	uint8_t active_tree;
+	int retval;
+
+	if (it->sc == NULL) {
+		log_fatal("NULL scannerHandle?");
+		exit(EXIT_FAILURE);
+	}
+
+	for (int i = 0; i < MAX_LEVELS; i++) {
+		for (int j = 0; j < NUM_TREES_PER_LEVEL; j++) {
+			it->sc->LEVEL_SCANNERS[i][j].valid = 0;
+		}
+	}
+
+	it->sc->type = FULL_SCANNER;
+	active_tree = handle->db_desc->levels[0].active_tree;
+	it->sc->db = handle;
+	sh_init_heap(&it->sc->heap, active_tree);
+
+	for (int i = 0; i < NUM_TREES_PER_LEVEL; i++) {
+		struct node_header *root;
+		root = handle->db_desc->levels[0].root_r[i];
+
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[0][i].db = handle;
+			it->sc->LEVEL_SCANNERS[0][i].level_id = 0;
+			it->sc->LEVEL_SCANNERS[0][i].root = root;
+			retval = MySeek(&(it->sc->LEVEL_SCANNERS[0][i]), Keyname);
+
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[0][i].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[0][i].key_value;
+				nd.level_id = 0;
+				nd.type = KV_FORMAT;
+				nd.active_tree = active_tree;
+				sh_insert_heap_node(&it->sc->heap, &nd);
+			}
+		}
+	}
+
+	for (uint32_t level_id = 1; level_id < MAX_LEVELS; level_id++) {
+		struct node_header *root = NULL;
+		int tree_id = 0;
+		root = handle->db_desc->levels[level_id].root_w[tree_id];
+		if (!root)
+			root = handle->db_desc->levels[level_id].root_r[tree_id];
+		if (root != NULL) {
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].db = handle;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].level_id = level_id;
+			it->sc->LEVEL_SCANNERS[level_id][tree_id].root = root;
+			retval = MySeek(&it->sc->LEVEL_SCANNERS[level_id][tree_id], Keyname);
+			if (retval == 0) {
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+				nd.key_value = it->sc->LEVEL_SCANNERS[level_id][tree_id].key_value;
+				nd.type = KV_FORMAT;
+				nd.level_id = level_id;
+				nd.active_tree = tree_id;
+				sh_insert_heap_node(&it->sc->heap, &nd);
+				it->sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
+			}
+		}
+	}
+	return 1;
 }
