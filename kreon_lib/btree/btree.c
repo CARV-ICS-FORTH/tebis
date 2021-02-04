@@ -1,3 +1,16 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 /** @file btree.c
  *  @brief kreon system implementation
  *
@@ -1171,6 +1184,7 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 		/* log_info("Level %d with tree_id %d has root_w",level_id,tree_id); */
 		curr_node = db_desc->levels[level_id].root_r[tree_id];
 	} else {
+		__sync_fetch_and_sub(&db_desc->levels[level_id].active_writers, 1);
 		/* log_info("Level %d is empty with tree_id %d",level_id,tree_id); */
 		return rep;
 	}
@@ -2107,7 +2121,7 @@ uint8_t _concurrent_insert(bt_insert_req *ins_req)
 	int retry = 0;
 release_and_retry:
 	if (retry) {
-		retry = 0;
+		//retry = 0;
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
 		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
