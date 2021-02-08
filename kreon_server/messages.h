@@ -239,7 +239,7 @@ struct msg_replica_index_flush_req {
 	uint64_t root_r;
 	int level_id;
 	int tree_id;
-	int seg_id;
+	uint32_t seg_id;
 	int is_last;
 
 	uint32_t region_key_size;

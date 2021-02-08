@@ -112,9 +112,27 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req);
 
 static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node);
 
-void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+//void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+//{
+//	db_desc->t = t;
+//	return;
+//}
+
+void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init)
 {
-	db_desc->t = t;
+	db_desc->idx_init = idx_init;
+	return;
+}
+
+void set_destroy_local_rdma_buffer(struct db_descriptor *db_desc, destroy_local_rdma_buffer destroy_rdma_buf)
+{
+	db_desc->destroy_rdma_buf = destroy_rdma_buf;
+	return;
+}
+
+void set_send_index_segment_to_replicas(struct db_descriptor *db_desc, send_index_segment_to_replicas send_idx)
+{
+	db_desc->send_idx = send_idx;
 	return;
 }
 
@@ -865,7 +883,10 @@ finish_init:
 	}
 
 	db_desc->stat = DB_START_COMPACTION_DAEMON;
-	db_desc->t = NULL;
+	db_desc->idx_init = NULL;
+	db_desc->destroy_rdma_buf = NULL;
+	db_desc->send_idx = NULL;
+	//db_desc->t = NULL;
 	db_desc->fl = NULL;
 	db_desc->is_in_replicated_mode = 0;
 	MUTEX_INIT(&db_desc->lock_log, NULL);

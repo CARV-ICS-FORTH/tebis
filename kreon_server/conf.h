@@ -24,9 +24,6 @@ typedef enum kreon_op_status {
 //TODO move properties to a configuration file
 #define RDMA_IP_FILTER "192.168.4."
 
-//#define TU_RDMA 1 // 1 RDMA , 0 ZMQ
-//#define TU_TIMING 0 //We measure the time needed in each phase
-
 #define TU_RDMA_CONN_PER_REGION 0 // 1 RDMA connection per region, 0 RDMA connection per server
 #define TU_RDMA_CONN_PER_SERVER (!TU_RDMA_CONN_PER_REGION)
 
@@ -38,3 +35,7 @@ typedef enum kreon_op_status {
 #define TU_HEADER_SIZE (sizeof(struct msg_header))
 #define TU_TAIL_SIZE (sizeof(uint32_t))
 #define TU_HEADER_TAIL_SIZE (TU_HEADER_SIZE + TU_TAIL_SIZE)
+
+#define RCO_DISABLE_REMOTE_COMPACTIONS 0
+#define RCO_BUILD_INDEX_AT_REPLICA 0
+#define RCO_EXPLICIT_IO 1

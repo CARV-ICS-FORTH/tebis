@@ -31,9 +31,6 @@
 #define RU_MAX_NUM_REPLICAS 2
 //#define RU_MAX_INDEX_SEGMENTS 4
 
-#define RCO_DISABLE_REMOTE_COMPACTIONS 1
-#define RCO_BUILD_INDEX_AT_REPLICA 1
-
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
 
 enum krm_server_state {
@@ -248,16 +245,31 @@ enum di_decode_stage {
 	DI_COMPLETE
 };
 
+#if RCO_EXPLICIT_IO
+struct di_buffer {
+	struct krm_region_desc *r_desc;
+	char *data;
+	uint64_t primary_offt;
+	uint64_t replica_offt;
+	uint32_t size;
+	uint32_t offt;
+	uint32_t curr_entry;
+	int fd;
+	uint8_t level_id;
+	uint8_t allocated;
+	enum di_decode_stage state;
+};
+#else
 struct di_cursor {
 	uint64_t max_offset;
 	uint64_t offset;
-
 	struct segment_header *segment;
 	char *addr;
 	uint32_t inc;
-	int curr_entry;
+	uint32_t curr_entry;
 	enum di_decode_stage state;
 };
+#endif
 
 struct krm_region_desc {
 	pthread_mutex_t region_lock;
@@ -266,19 +278,29 @@ struct krm_region_desc {
 	/*for replica_role deserializing the index*/
 	struct krm_segment_entry *replica_log_map;
 	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
+#if RCO_EXPLICIT_IO
+	//RDMA related staff for sending the index
+	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
+	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
+	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
+	struct ibv_mr *local_buffer[MAX_LEVELS];
+	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
+	//Staff for deserializing the index at the replicas
+	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
+#else
 	struct di_cursor level_cursor[MAX_LEVELS];
+#endif
 
 	enum krm_region_role role;
 	db_handle *db;
 	volatile uint64_t next_segment_to_flush;
-	uint64_t pending_replication_operations;
-	int replica_bufs_initialized;
-	int region_halted;
-
 	union {
 		struct ru_master_state *m_state;
 		struct ru_replica_state *r_state;
 	};
+	uint64_t pending_replication_operations;
+	int replica_bufs_initialized;
+	int region_halted;
 	enum krm_region_status status;
 };
 
@@ -377,7 +399,19 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size);
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
 int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
+void di_set_cursor_buf(char *buf);
+
+#if RCO_EXPLICIT_IO
+int rco_init_index_transfer(uint64_t db_id, uint8_t level_id);
+int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
+int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
+				       uint8_t level_id, struct node_header *root);
+
+void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_region_desc *r_desc,
+				       uint64_t primary_seg_offt, uint8_t level_id);
+#else
 void di_rewrite_index(struct krm_region_desc *r_desc, uint8_t level_id, uint8_t tree_id);
+#endif
 
 #if RCO_BUILD_INDEX_AT_REPLICA
 struct rco_build_index_task {

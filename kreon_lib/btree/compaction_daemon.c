@@ -45,6 +45,23 @@ struct comp_level_read_cursor {
 	enum comp_level_read_cursor_state state;
 };
 
+static void comp_write_segment(char *buffer, uint64_t dev_offt, uint32_t buf_offt, uint32_t size, int fd)
+{
+	ssize_t total_bytes_written = buf_offt;
+	ssize_t bytes_written = buf_offt;
+	while (total_bytes_written < size) {
+		bytes_written = pwrite(fd, &buffer[total_bytes_written], size - total_bytes_written,
+				       dev_offt + total_bytes_written);
+		if (bytes_written == -1) {
+			log_fatal("Failed to writed segment for leaf nodes reason follows");
+			perror("Reason");
+			exit(EXIT_FAILURE);
+		}
+		total_bytes_written += bytes_written;
+	}
+	return;
+}
+
 static void comp_init_read_cursor(struct comp_level_read_cursor *c, db_handle *handle, uint32_t level_id,
 				  uint32_t tree_id, int fd)
 {
@@ -168,16 +185,16 @@ static void comp_get_next_key(struct comp_level_read_cursor *c)
 				goto fsm_entry;
 
 			case paddedSpace:
-				//log_info("Found padded space of size %llu",
+				// log_info("Found padded space of size %llu",
 				//	 (SEGMENT_SIZE - (c->offset % SEGMENT_SIZE)));
 				c->offset += (SEGMENT_SIZE - (c->offset % SEGMENT_SIZE));
 				c->state = COMP_CUR_CHECK_OFFT;
 				goto fsm_entry;
 			default:
-				log_fatal(
-					"Faulty read cursor of level %u Wrong node type %u offset was %llu total level offset %llu",
-					c->level_id, type, c->offset,
-					c->handle->db_desc->levels[c->level_id].offset[0]);
+				log_fatal("Faulty read cursor of level %u Wrong node type %u offset "
+					  "was %llu total level offset %llu",
+					  c->level_id, type, c->offset,
+					  c->handle->db_desc->levels[c->level_id].offset[0]);
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
@@ -225,6 +242,7 @@ static void comp_init_write_cursor(struct comp_level_write_cursor *c, struct db_
 
 			/*initialization*/
 			c->last_index[i]->header.type = internalNode;
+			c->last_index[i]->header.height = i;
 			c->last_index[i]->header.epoch = c->handle->volume_desc->mem_catalogue->epoch;
 			c->last_index[i]->header.numberOfEntriesInNode = 0;
 			c->last_index[i]->header.fragmentation = 0;
@@ -254,9 +272,10 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 				// c->segment_offt[0]);
 				*type = paddedSpace;
 			} else if (i > 0 && c->segment_offt[i] % SEGMENT_SIZE != 0) {
-				type = (uint32_t *)((uint64_t)c->last_index[i] + INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
-				// log_info("Marking padded space for %u segment offt %llu", i,
-				// c->segment_offt[i]);
+				type = (uint32_t *)((uint64_t)(c->last_index[i]) + INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
+				assert(c->last_index[i]->header.type == internalNode);
+				//log_info("Marking padded space for %u segment offt %llu entries of last node %llu", i,
+				//c->segment_offt[i],c->last_index[i]->header.numberOfEntriesInNode);
 				*type = paddedSpace;
 			}
 		} else {
@@ -267,22 +286,24 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 		}
 
 		if (i == c->tree_height) {
-			log_info("Merged level has a height off %u", c->tree_height);
+			//log_info("Merged level has a height off %u", c->tree_height);
 			c->last_index[i]->header.type = rootNode;
 			c->root_offt = c->dev_offt[i] + ((uint64_t)c->last_index[i] % SEGMENT_SIZE);
 		}
-		ssize_t total_bytes_written = sizeof(struct segment_header);
-		ssize_t bytes_written = sizeof(struct segment_header);
-		while (total_bytes_written < SEGMENT_SIZE) {
-			bytes_written =
-				pwrite(c->fd, &c->segment_buf[i][total_bytes_written],
-				       SEGMENT_SIZE - total_bytes_written, c->dev_offt[i] + total_bytes_written);
-			if (bytes_written == -1) {
-				log_fatal("Failed to writed segment for leaf nodes reason follows");
-				perror("Reason");
-				exit(EXIT_FAILURE);
-			}
-			total_bytes_written += bytes_written;
+
+		comp_write_segment(c->segment_buf[i], c->dev_offt[i], sizeof(struct segment_header), SEGMENT_SIZE,
+				   c->fd);
+		if (c->handle->db_desc->send_idx && i <= c->tree_height) {
+			//log_info("Closing cursor for level %u height %u",c->level_id, i);
+			if (i != c->tree_height)
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
+								(struct segment_header *)c->segment_buf[i],
+								SEGMENT_SIZE, c->level_id, NULL);
+			else
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
+								(struct segment_header *)c->segment_buf[i],
+								SEGMENT_SIZE, c->level_id,
+								(struct node_header *)(MAPPED + c->root_offt));
 		}
 		// log_info("Dumped buffer %u at dev_offt %llu",i,c->dev_offt[i]);
 	}
@@ -311,19 +332,12 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 				*(uint32_t *)(&c->segment_buf[0][c->segment_offt[0] % SEGMENT_SIZE]) = paddedSpace;
 				c->segment_offt[0] += remaining_space;
 			}
-			ssize_t total_bytes_written = sizeof(struct segment_header);
-			ssize_t bytes_written = sizeof(struct segment_header);
-			while (total_bytes_written < SEGMENT_SIZE) {
-				//log_info("Writing leaf segment at offset %llu", c->dev_offt[0] + total_bytes_written);
-				bytes_written = pwrite(c->fd, &c->segment_buf[0][total_bytes_written],
-						       SEGMENT_SIZE - total_bytes_written,
-						       c->dev_offt[0] + total_bytes_written);
-				if (bytes_written == -1) {
-					log_fatal("Failed to writed segment for leaf nodes reason follows");
-					perror("Reason");
-					exit(EXIT_FAILURE);
-				}
-				total_bytes_written += bytes_written;
+			comp_write_segment(c->segment_buf[0], c->dev_offt[0], sizeof(struct segment_header),
+					   SEGMENT_SIZE, c->fd);
+			if (c->handle->db_desc->send_idx) {
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[0],
+								(struct segment_header *)c->segment_buf[0],
+								SEGMENT_SIZE, c->level_id, NULL);
 			}
 			// uint32_t *type = (uint32_t *)&c->segment_buf[0][4096];
 			// assert(*type == leafNode || *type == leafRootNode);
@@ -372,18 +386,12 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 					paddedSpace;
 				c->segment_offt[height] += remaining_space;
 			}
-			ssize_t total_bytes_written = sizeof(struct segment_header);
-			ssize_t bytes_written = sizeof(struct segment_header);
-			while (total_bytes_written < SEGMENT_SIZE) {
-				bytes_written = pwrite(c->fd, &c->segment_buf[height][total_bytes_written],
-						       SEGMENT_SIZE - total_bytes_written,
-						       c->dev_offt[height] + total_bytes_written);
-				if (bytes_written == -1) {
-					log_fatal("Failed to writed segment for leaf nodes reason follows");
-					perror("Reason");
-					exit(EXIT_FAILURE);
-				}
-				total_bytes_written += bytes_written;
+			comp_write_segment(c->segment_buf[height], c->dev_offt[height], sizeof(struct segment_header),
+					   SEGMENT_SIZE, c->fd);
+			if (c->handle->db_desc->send_idx) {
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[height],
+								(struct segment_header *)c->segment_buf[height],
+								SEGMENT_SIZE, c->level_id, NULL);
 			}
 			log_info("Dumped index %d segment buffer", height);
 			/*get space from allocator*/
@@ -397,6 +405,7 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 		c->segment_offt[height] += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
 		/*initialization*/
 		c->last_index[height]->header.type = type;
+		c->last_index[height]->header.height = height;
 		c->last_index[height]->header.epoch = c->handle->volume_desc->mem_catalogue->epoch;
 		c->last_index[height]->header.numberOfEntriesInNode = 0;
 		c->last_index[height]->header.fragmentation = 0;
@@ -444,7 +453,7 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 		uint64_t offt = c->last_index[height]->p[c->last_index[height]->header.numberOfEntriesInNode - 1].pivot;
 
 		new_pivot = &c->segment_buf[height][offt % SEGMENT_SIZE];
-		//assert(*(uint32_t *)new_pivot > 0);
+		// assert(*(uint32_t *)new_pivot > 0);
 		new_pivot_buf = (char *)malloc(*(uint32_t *)new_pivot + sizeof(uint32_t));
 		memcpy(new_pivot_buf, new_pivot, *(uint32_t *)new_pivot + sizeof(uint32_t));
 		// log_info("Done adding pivot %s for height %u", new_pivot + 4, height);
@@ -458,7 +467,8 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 	uint64_t pivot_offt = (uint64_t)c->last_index[height]->header.last_IN_log_header +
 			      (c->last_index[height]->header.key_log_size % KEY_BLOCK_SIZE);
 
-	//log_info("pivot location at the device within the segment %llu", pivot_offt % SEGMENT_SIZE);
+	// log_info("pivot location at the device within the segment %llu", pivot_offt
+	// % SEGMENT_SIZE);
 	char *pivot_addr = &c->segment_buf[height][(uint64_t)pivot_offt % SEGMENT_SIZE];
 
 	memcpy(pivot_addr, pivot, pivot_size);
@@ -756,7 +766,8 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 	struct db_handle handle = { .db_desc = comp_req->db_desc, .volume_desc = comp_req->volume_desc };
 	struct comp_level_write_cursor *merged_level = NULL;
-	//(struct comp_level_write_cursor *)malloc(sizeof(struct comp_level_write_cursor));
+	//(struct comp_level_write_cursor *)malloc(sizeof(struct
+	//comp_level_write_cursor));
 	if (posix_memalign((void **)&merged_level, SEGMENT_SIZE, sizeof(struct comp_level_write_cursor)) != 0) {
 		log_fatal("Posix memalign failed");
 		perror("Reason: ");
@@ -765,6 +776,10 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 	comp_init_write_cursor(merged_level, &handle, comp_req->dst_level, FD);
 
+	if (handle.db_desc->idx_init) {
+		(*handle.db_desc->idx_init)((uint64_t)handle.db_desc, comp_req->dst_level);
+		log_info("Informed my replicas of DB: %s for remote compaction!", handle.db_desc->db_name);
+	}
 	uint64_t local_spilled_keys = 0;
 
 	if (comp_req->src_level == 0) {
@@ -902,6 +917,11 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	}
 
 	comp_close_write_cursor(merged_level);
+	if (handle.db_desc->destroy_rdma_buf) {
+		(*handle.db_desc->destroy_rdma_buf)((uint64_t)handle.db_desc, comp_req->dst_level);
+		log_info("Destoyed buffer successfully for DB %s!", handle.db_desc->db_name);
+	}
+
 	merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1] =
 		(struct node_header *)(MAPPED + merged_level->root_offt);
 	free(merged_level);
@@ -1171,7 +1191,7 @@ void *compaction(void *_comp_req)
 * intentionally*/
 	log_info("DONE Compaction from level's tree [%u][%u] to level's tree[%u][%u]", comp_req->src_level,
 		 comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);
-
+#if !EXPLICIT_IO
 	/*send index to replicas if needed*/
 	if (comp_req->db_desc->t != NULL) {
 		// log_info("Sending index to my replica group for db %s",
@@ -1187,6 +1207,7 @@ void *compaction(void *_comp_req)
 		(*db_desc->t)(&c);
 		log_info("Done sending to group for db %s", comp_req->db_desc->db_name);
 	}
+#endif
 
 	snapshot(comp_req->volume_desc);
 	db_desc->levels[comp_req->src_level].tree_status[comp_req->src_tree] = NO_SPILLING;
