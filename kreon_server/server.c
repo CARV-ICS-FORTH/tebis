@@ -1,10 +1,10 @@
 /**
-*  kreon server
- * Created by Pilar Gonzalez-Ferez on 28/07/16.
- * Edited by Giorgos Saloustros <gesalous@ics.forth.gr>, Michalis Vardoulakis
-*<mvard@ics.forth.gr>
- * Copyright (c) 2016 Pilar Gonzalez-Ferez <pilar@ics.forth.gr>.
-*
+ *  kreon_server.c
+ * Created 28/07/16.
+ * Authors
+ * Giorgos Saloustros <gesalous@ics.forth.gr>
+ * Michalis Vardoulakis <mvard@ics.forth.gr>
+ *
  **/
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -829,7 +829,7 @@ static void *server_spinning_thread_kernel(void *args)
 	SIMPLE_CONCURRENT_LIST_NODE *prev_node;
 	SIMPLE_CONCURRENT_LIST_NODE *next_node;
 
-	struct sigaction sa = {};
+	struct sigaction sa;
 	struct ds_spinning_thread *spinner = (struct ds_spinning_thread *)args;
 	struct connection_rdma *conn;
 
@@ -1782,6 +1782,22 @@ r_desc->m_state->r_buf[i].segment[j].end);
 	}
 }
 
+static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t dev_offt, int fd)
+{
+	ssize_t total_bytes_written = 0;
+	ssize_t bytes_written = 0;
+	while (total_bytes_written < num_bytes) {
+		bytes_written = pwrite(fd, buf, num_bytes - total_bytes_written, dev_offt + total_bytes_written);
+		if (bytes_written == -1) {
+			log_fatal("Failed to writed segment for leaf nodes reason follows");
+			perror("Reason");
+			exit(EXIT_FAILURE);
+		}
+		total_bytes_written += bytes_written;
+	}
+	return 1;
+}
+
 /*
    * KreonR main processing function of networkrequests.
    * Each network processing request must be resumable. For each message type
@@ -1830,11 +1846,20 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			exit(EXIT_FAILURE);
 		}
 		pthread_mutex_unlock(&r_desc->region_lock);
+#if !RCO_EXPLICIT_IO
 		r_desc->level_cursor[g_req->level_id].state = DI_INIT;
 		r_desc->level_cursor[g_req->level_id].max_offset = g_req->index_offset;
 		log_info("Index offset set at %llu", r_desc->level_cursor[g_req->level_id].max_offset);
+#endif
+		log_info("DB %s Allocating %u and registering with RDMA buffers for remote compaction",
+			 r_desc->region->id, g_req->num_buffers);
 		for (int i = 0; i < g_req->num_buffers; i++) {
-			void *addr = malloc(SEGMENT_SIZE);
+			char *addr = NULL;
+			if (posix_memalign((void **)&addr, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
+				log_fatal("Posix memalign failed");
+				perror("Reason: ");
+				exit(EXIT_FAILURE);
+			}
 			if (r_desc->r_state->index_buffers[g_req->level_id][i] == NULL) {
 				r_desc->r_state->index_buffers[g_req->level_id][i] =
 					rdma_reg_write(task->conn->rdma_cm_id, addr, SEGMENT_SIZE);
@@ -1903,16 +1928,19 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 						  1);
 				assert(0);
 			}
+		uint64_t s = djb2_hash((unsigned char *)r_desc->r_state->index_buffers[f_req->level_id][0]->addr,
+				       SEGMENT_SIZE);
+		assert(s == f_req->seg_hash);
+
+		//log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
+#if RCO_EXPLICIT_IO
+		di_rewrite_index_with_explicit_IO(r_desc->r_state->index_buffers[f_req->level_id][0]->addr, r_desc,
+						  f_req->primary_segment_offt, f_req->level_id);
+#else
 		struct segment_header *seg = seg_get_raw_index_segment(
 			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
 		seg->next_segment = NULL;
-		uint64_t s =
-			djb2_hash((unsigned char *)r_desc->r_state
-					  ->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]
-					  ->addr,
-				  SEGMENT_SIZE);
-		assert(s == f_req->seg_hash);
-		log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
+
 		memcpy((char *)((uint64_t)seg + sizeof(segment_header)),
 		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr +
 			       sizeof(struct segment_header),
@@ -1924,12 +1952,15 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		HASH_ADD_PTR(r_desc->replica_index_map[f_req->level_id], master_seg, e);
 
 		di_rewrite_index(r_desc, f_req->level_id, f_req->tree_id);
+#endif
 		if (f_req->is_last) {
+#if !RCO_EXPLICIT_IO
 			if (r_desc->level_cursor[f_req->level_id].state != DI_COMPLETE) {
 				log_fatal("Failed to rewrite index");
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
+#endif
 			/*translate root*/
 			if (!f_req->root_w && !f_req->root_r) {
 				log_fatal("Both roots can't be NULL");
@@ -1986,6 +2017,14 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// f_req->level_id, f_req->tree_id);
 			}
 			// deregistering buffers
+#if RCO_EXPLICIT_IO
+			free(r_desc->r_state->index_buffers[f_req->level_id][0]->addr);
+			if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][0])) {
+				log_fatal("Failed to deregister rdma buffer");
+				exit(EXIT_FAILURE);
+			}
+			r_desc->r_state->index_buffers[f_req->level_id][0] = NULL;
+#else
 			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
 				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
 				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
@@ -1994,6 +2033,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				}
 				r_desc->r_state->index_buffers[f_req->level_id][i] = NULL;
 			}
+#endif
 			if (f_req->level_id > 1) {
 				log_info("REPLICA: After index transfer freeing  level %d", f_req->level_id - 1);
 				seg_free_level(r_desc->db, f_req->level_id - 1, 0);
@@ -2032,9 +2072,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 				free(current);
 			}
-			// log_info("Snapshotting");
-			// snapshot(r_desc->db->volume_desc);
-			// log_info("Snapshot done!");
+			syncfs(FD);
+			snapshot(r_desc->db->volume_desc);
 		}
 
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -2093,7 +2132,15 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				(get_log->num_buffers * sizeof(struct ru_replica_log_buffer_seg)));
 			r_desc->r_state->num_buffers = get_log->num_buffers;
 			for (int i = 0; i < get_log->num_buffers; i++) {
+#if RCO_EXPLICIT_IO
+				if (posix_memalign(&addr, SEGMENT_SIZE, get_log->buffer_size)) {
+					log_fatal("Failed to allocate aligned RDMA buffer");
+					perror("Reason\n");
+					exit(EXIT_FAILURE);
+				}
+#else
 				addr = malloc(get_log->buffer_size);
+#endif
 				r_desc->r_state->seg[i].segment_size = get_log->buffer_size;
 				r_desc->r_state->seg[i].mr =
 					rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
@@ -2155,7 +2202,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	}
 
 	case FLUSH_COMMAND_REQ: {
-		// log_info("Master orders a flush, obey your master!");
+		//log_info("Master orders a flush, obey your master!");
 		struct msg_flush_cmd_req *flush_req =
 			(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2165,21 +2212,31 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			log_fatal("No state for backup region %s", r_desc->region->id);
 			exit(EXIT_FAILURE);
 		}
+
 		struct segment_header *seg =
 			(struct segment_header *)r_desc->r_state->seg[flush_req->log_buffer_id].mr->addr;
 		seg->segment_id = flush_req->segment_id;
-
 		if (flush_req->log_padding)
 			memset((void *)((uint64_t)seg + (SEGMENT_SIZE - flush_req->log_padding)), 0x00,
 			       flush_req->log_padding);
-
+#if RCO_BUILD_INDEX_AT_REPLICA
+		struct rco_build_index_task t;
+		t.r_desc = r_desc;
+		t.segment = (struct segment_header *)seg;
+		t.log_start = 0; //r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE - sizeof(struct segment_header));
+		t.log_end = SEGMENT_SIZE; //r_desc->db->db_desc->KV_log_size;
+		rco_build_index(&t);
+#else
 		pthread_mutex_lock(&r_desc->db->db_desc->lock_log);
 		/*Now take a segment from the allocator and copy the buffer*/
 		volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
+		//log_info("Last log segment id %llu id to flush %llu", last_log_segment->segment_id,
+		//	 flush_req->segment_id);
 
 		uint64_t diff = flush_req->end_of_log - r_desc->db->db_desc->KV_log_size;
 		int exists = 0;
 		if (last_log_segment->segment_id == flush_req->segment_id) {
+			//log_info("Forced value log flush due to compaction id %llu", last_log_segment->segment_id);
 			if (r_desc->r_state->next_segment_id_to_flush == 0)
 				++r_desc->r_state->next_segment_id_to_flush;
 
@@ -2194,6 +2251,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				  "flush_req id is %llu",
 				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
 			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
+			assert(0);
 			exit(EXIT_FAILURE);
 		}
 
@@ -2203,11 +2261,20 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// diff);
 		if (!exists) {
 			++r_desc->r_state->next_segment_id_to_flush;
+#if RCO_EXPLICIT_IO
 			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
+			seg->next_segment = NULL;
+			seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
+			if (!write_segment_with_explicit_IO((char *)(uint64_t)seg, SEGMENT_SIZE,
+							    (uint64_t)disk_segment - MAPPED, FD)) {
+				log_fatal("Failed to write segment with explicit I/O");
+				exit(EXIT_FAILURE);
+			}
+#else
 			memcpy(disk_segment, seg, SEGMENT_SIZE);
 			disk_segment->next_segment = NULL;
 			disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
-
+#endif
 			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
 				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
 			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
@@ -2234,22 +2301,22 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// log_info("Added mapping for index for log %llu replica %llu",
 				// e->master_seg, e->my_seg);
 			}
-
+#if RCO_EXPLICIT_IO
+			if (!write_segment_with_explicit_IO(
+				    (char *)(uint64_t)seg + sizeof(struct segment_header),
+				    SEGMENT_SIZE - sizeof(struct segment_header),
+				    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header), FD)) {
+				log_fatal("Failed to write segment with explicit I/O");
+				exit(EXIT_FAILURE);
+			}
+#else
 			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
+#endif
 		}
 
 		r_desc->db->db_desc->KV_log_size += diff;
-
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
-#if RCO_BUILD_INDEX_AT_REPLICA
-		struct rco_build_index_task t;
-		t.r_desc = r_desc;
-		t.segment = (struct segment_header *)r_desc->db->db_desc->KV_log_last_segment;
-		t.log_start = r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE - sizeof(struct segment_header));
-		t.log_end = r_desc->db->db_desc->KV_log_size;
-		rco_build_index(&t);
 #endif
-
 		/*time for reply :-)*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   (uint64_t)task->msg->reply);
@@ -2280,105 +2347,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// log_info("Responded to server!");
 		break;
 	}
-#if 0
-	case PUT_OFFT_REQUEST: {
-		if (task->key == NULL) {
-			put_offt_req = (msg_put_offt_req *)task->msg->data;
-			msg_put_key *K = (msg_put_key *)((uint64_t)put_offt_req + sizeof(msg_put_offt_req));
-			msg_put_value *V = (msg_put_value *)((uint64_t)K + sizeof(msg_put_key) + K->key_size);
-			r_desc = krm_get_region(mydesc, K->key, K->key_size);
-			if (r_desc == NULL) {
-				log_fatal("Region not found for key size %u:%s", K->key_size, K->key);
-				exit(EXIT_FAILURE);
-			}
-			task->r_desc = (void *)r_desc;
-			/*inside kreon now*/
-			// log_info("offset %llu key %s", put_offt_req->offset, K->key);
-			uint32_t new_size = put_offt_req->offset + sizeof(msg_put_key) + K->key_size +
-					    sizeof(msg_put_value) + V->value_size;
-			if (new_size <= SEGMENT_SIZE - sizeof(segment_header)) {
-				value = __find_key(r_desc->db, put_offt_req->kv, SEARCH_DIRTY_TREE);
-
-				void *new_value = malloc(SEGMENT_SIZE - sizeof(segment_header)); /*remove this later
-when test passes*/
-				memset(new_value, 0x00, SEGMENT_SIZE - sizeof(segment_header));
-				/*copy key*/
-				memcpy(new_value, put_offt_req->kv, sizeof(msg_put_key) + K->key_size);
-				/*old value, if it exists*/
-				if (value != NULL) {
-					memcpy(new_value + sizeof(msg_put_key) + K->key_size, value,
-					       sizeof(msg_put_value) + *(uint32_t *)value);
-					/*update the value size field if needed*/
-					if ((put_offt_req->offset + V->value_size) > *(uint32_t *)value)
-						*(uint32_t *)(new_value + sizeof(msg_put_key) + K->key_size) =
-							put_offt_req->offset + V->value_size;
-					// log_info("New val size is %u offset %u client value %u old val
-					// %u
-					// kv_size %u",
-					//	 *(uint32_t *)(new_value + sizeof(msg_put_key) +
-					// K->key_size),
-					//	 put_offt_req->offset, V->value_size, *(uint32_t
-					//*)value,
-					// kv_size);
-				} else {
-					*(uint32_t *)(new_value + sizeof(msg_put_key) + K->key_size) =
-						put_offt_req->offset + V->value_size;
-				}
-
-				/*now the value patch*/
-				memcpy(new_value + sizeof(msg_put_key) + K->key_size + sizeof(msg_put_value) +
-					       put_offt_req->offset,
-				       V->value, V->value_size);
-				// log_info("new val key %u val size %u", *(uint32_t *)new_value,
-				//	 *(uint32_t *)(new_value + sizeof(msg_put_key) + K->key_size));
-				task->key = new_value;
-			}
-		}
-
-		insert_kv_pair(mydesc, task);
-		if (task->kreon_operation_status == TASK_COMPLETE) {
-			free(task->key);
-
-			task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-						   (uint64_t)task->msg->reply);
-			/*initialize message*/
-			actual_reply_size = sizeof(msg_header) + sizeof(msg_put_offt_rep) + TU_TAIL_SIZE;
-			if (task->msg->reply_length >= actual_reply_size) {
-				padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-				/*set tail to the proper value*/
-				*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size - (TU_TAIL_SIZE) +
-					      padding) = TU_RDMA_REGULAR_MSG;
-
-				task->reply_msg->pay_len = sizeof(msg_put_offt_rep);
-				task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-				// log_info("msg header %d put_rep %d padding_and_tail %d",
-				// sizeof(msg_header),
-				//	 sizeof(msg_put_rep), task->reply_msg->padding_and_tail);
-
-				task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-				task->reply_msg->next = task->reply_msg->data;
-				task->reply_msg->type = PUT_OFFT_REPLY;
-
-				task->reply_msg->ack_arrived = KR_REP_PENDING;
-				task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-				task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-				task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
-				put_offt_rep = (msg_put_offt_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-				put_offt_rep->status = KREON_SUCCESS;
-			} else {
-				log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32
-					  " FIX XXX TODO XXX\n",
-					  task->msg->reply_length);
-				exit(EXIT_FAILURE);
-			}
-
-			/*piggyback info for use with the client*/
-			task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-			assert(task->reply_msg->request_message_local_addr != NULL);
-		}
-		break;
-	}
-#endif
 	case PUT_REQUEST:
 
 		/* retrieve region handle for the corresponding key, find_region
@@ -2822,7 +2790,7 @@ int main(int argc, char *argv[])
 			int workers_id[MAX_CORES_PER_NUMA];
 			int num_workers;
 			char *token;
-			char *saveptr;
+			char *saveptr = NULL;
 			char *rest = argv[i];
 			// RDMA port of server
 			token = strtok_r(rest, ",", &saveptr);

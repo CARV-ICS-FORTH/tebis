@@ -112,9 +112,27 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req);
 
 static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node);
 
-void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+//void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+//{
+//	db_desc->t = t;
+//	return;
+//}
+
+void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init)
 {
-	db_desc->t = t;
+	db_desc->idx_init = idx_init;
+	return;
+}
+
+void set_destroy_local_rdma_buffer(struct db_descriptor *db_desc, destroy_local_rdma_buffer destroy_rdma_buf)
+{
+	db_desc->destroy_rdma_buf = destroy_rdma_buf;
+	return;
+}
+
+void set_send_index_segment_to_replicas(struct db_descriptor *db_desc, send_index_segment_to_replicas send_idx)
+{
+	db_desc->send_idx = send_idx;
 	return;
 }
 
@@ -710,7 +728,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		allocator_init(volume_desc);
 		add_first(mappedVolumes, volume_desc, key);
 		volume_desc->reference_count++;
-		//soft state about the in use pages of level-0 for each BUFFER_SEGMENT_SIZE
+		//soft state about the in use pages of level-0 for each SEGMENT_SIZE
 		//segment inside the volume
 		volume_desc->segment_utilization_vector_size =
 			((volume_desc->volume_superblock->dev_size_in_blocks -
@@ -865,7 +883,10 @@ finish_init:
 	}
 
 	db_desc->stat = DB_START_COMPACTION_DAEMON;
-	db_desc->t = NULL;
+	db_desc->idx_init = NULL;
+	db_desc->destroy_rdma_buf = NULL;
+	db_desc->send_idx = NULL;
+	//db_desc->t = NULL;
 	db_desc->fl = NULL;
 	db_desc->is_in_replicated_mode = 0;
 	MUTEX_INIT(&db_desc->lock_log, NULL);
@@ -1081,8 +1102,8 @@ void *append_key_value_to_log(log_operation *req)
 
 	MUTEX_LOCK(&handle->db_desc->lock_log);
 	/*append data part in the data log*/
-	if (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE != 0)
-		available_space_in_log = BUFFER_SEGMENT_SIZE - (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE);
+	if (handle->db_desc->KV_log_size % SEGMENT_SIZE != 0)
+		available_space_in_log = SEGMENT_SIZE - (handle->db_desc->KV_log_size % SEGMENT_SIZE);
 	else
 		available_space_in_log = 0;
 
@@ -1098,11 +1119,11 @@ void *append_key_value_to_log(log_operation *req)
 
 		/*pad with zeroes remaining bytes in segment*/
 		addr_inlog = (void *)((uint64_t)handle->db_desc->KV_log_last_segment +
-				      (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
+				      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 		memset(addr_inlog, 0x00, available_space_in_log);
 
 		allocated_space = data_size.kv_size + sizeof(segment_header);
-		allocated_space += BUFFER_SEGMENT_SIZE - (allocated_space % BUFFER_SEGMENT_SIZE);
+		allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
 
 		d_header = seg_get_raw_log_segment(handle->volume_desc);
 		assert(((uint64_t)d_header - MAPPED) % SEGMENT_SIZE == 0);
@@ -1116,7 +1137,7 @@ void *append_key_value_to_log(log_operation *req)
 	}
 
 	addr_inlog = (void *)((uint64_t)handle->db_desc->KV_log_last_segment +
-			      (handle->db_desc->KV_log_size % BUFFER_SEGMENT_SIZE));
+			      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 	req->metadata->log_offset = handle->db_desc->KV_log_size;
 	handle->db_desc->KV_log_size += data_size.kv_size;
 

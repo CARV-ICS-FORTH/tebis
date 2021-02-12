@@ -17,8 +17,6 @@
 #define SUCCESS 4
 #define FAILED 5
 
-#define SEGMENT_SIZE 2097152
-
 #define KREON_OK 10
 
 #define KEY_NOT_FOUND 11
@@ -239,7 +237,12 @@ struct bt_compaction_callback_args {
 	int dst_remote_tree;
 };
 
-typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
+//functions pointers for sending the index to replicas for Tebis
+typedef int (*init_index_transfer)(uint64_t db_id, uint8_t level_id);
+typedef int (*destroy_local_rdma_buffer)(uint64_t db_id, uint8_t level_id);
+typedef int (*send_index_segment_to_replicas)(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg,
+					      uint32_t size, uint8_t level_id, struct node_header *root);
+//typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
 typedef int (*bt_flush_replicated_logs)(void *);
 
 typedef struct db_descriptor {
@@ -254,7 +257,10 @@ typedef struct db_descriptor {
 	pthread_cond_t client_barrier;
 	pthread_mutex_t client_barrier_lock;
 	/*for distributed version*/
-	bt_compaction_callback t;
+	init_index_transfer idx_init;
+	destroy_local_rdma_buffer destroy_rdma_buf;
+	send_index_segment_to_replicas send_idx;
+	//bt_compaction_callback t;
 	bt_flush_replicated_logs fl;
 
 	struct segment_header *KV_log_first_segment;
@@ -287,7 +293,10 @@ typedef struct db_handle {
 	db_descriptor *db_desc;
 } db_handle;
 
-void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t);
+void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init);
+void set_destroy_local_rdma_buffer(struct db_descriptor *db_desc, destroy_local_rdma_buffer destroy_rdma_buf);
+void set_send_index_segment_to_replicas(struct db_descriptor *db_desc, send_index_segment_to_replicas send_idx);
+//void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t);
 void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 void bt_set_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 

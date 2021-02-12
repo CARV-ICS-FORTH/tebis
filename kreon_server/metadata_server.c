@@ -162,11 +162,11 @@ static void krm_iterate_servers_state(struct krm_server_desc *desc)
 
 static void krm_iterate_ld_regions(struct krm_server_desc *desc)
 {
-	int i;
-
+	if (!desc)
+		return;
 	log_info("Leader's regions view");
 
-	for (i = 0; i < (desc->ld_regions->num_regions); i++) {
+	for (int i = 0; i < desc->ld_regions->num_regions; i++) {
 		struct krm_region *r = &desc->ld_regions->regions[i];
 		log_info("Region id %s min key %s max key %s region overall status", r->id, r->min_key, r->max_key,
 			 r->stat);
@@ -635,7 +635,7 @@ void dataserver_health_watcher(zhandle_t *zh, int type, int state, const char *p
 				     sizeof(struct krm_region), -1);
 			assert(rc == ZOK);
 			enum krm_msg_type type = (current->lr_state.role == KRM_PRIMARY) ? KRM_OPEN_REGION_AS_PRIMARY :
-											   KRM_OPEN_REGION_AS_BACKUP;
+												 KRM_OPEN_REGION_AS_BACKUP;
 			// Send open command to new assignee
 			krm_resend_open_command(my_desc, current_region, next_assignee->server_id.kreon_ds_hostname,
 						type);
@@ -769,7 +769,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			log_warn("Epochs mismatch I am at epoch %lu msg refers to epoch %lu", server->name.epoch,
 				 msg->epoch);
 			reply.type = (msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_NACK_OPEN_PRIMARY :
-										 KRM_NACK_OPEN_BACKUP;
+										       KRM_NACK_OPEN_BACKUP;
 			reply.error_code = KRM_BAD_EPOCH;
 			strcpy(reply.sender, server->name.kreon_ds_hostname);
 			reply.region = msg->region;
@@ -805,7 +805,13 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			struct krm_region_desc *t = krm_get_region(server, region->min_key, region->min_key_size);
 			/*set the callback and context for remote compaction*/
 			bt_set_db_in_replicated_mode(t->db);
+#if RCO_EXPLICIT_IO
+			set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
+			set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
+			set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
+#else
 			bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
+#endif
 			bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 			rco_add_db_to_pool(server->compaction_pool, t);
 
@@ -1216,7 +1222,13 @@ void *krm_metadata_server(void *args)
 									   current->lr_state.region->min_key_size);
 				/*set the callback and context for remote compaction*/
 				bt_set_db_in_replicated_mode(t->db);
+#if RCO_EXPLICIT_IO
+				set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
+				set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
+				set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
+#else
 				bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
+#endif
 				bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 				rco_add_db_to_pool(my_desc->compaction_pool, t);
 			}
