@@ -1823,7 +1823,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	r_desc = NULL;
 	task->reply_msg = NULL;
 	// rdma_conn = task->conn;
-	stats_update(task->server_id, task->thread_id);
 
 	switch (task->msg->type) {
 	case REPLICA_INDEX_GET_BUFFER_REQ: {
@@ -2284,20 +2283,26 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			assert(flush_req->master_segment % SEGMENT_SIZE == 0);
 			e->master_seg = flush_req->master_segment;
 			e->my_seg = (uint64_t)disk_segment - MAPPED;
+			pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
 			HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+			pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 			// log_info("Added mapping for index for log %llu replica %llu",
 			// e->master_seg, e->my_seg);
 		} else {
 			// check if we have the mapping
 			struct krm_segment_entry *index_entry;
+			pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
 			HASH_FIND_PTR(r_desc->replica_log_map, &flush_req->master_segment, index_entry);
+			pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 			if (index_entry == NULL) {
 				// add mapping to level's hash table
 				struct krm_segment_entry *e =
 					(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 				e->master_seg = flush_req->master_segment;
 				e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
+				pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
 				HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+				pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 				// log_info("Added mapping for index for log %llu replica %llu",
 				// e->master_seg, e->my_seg);
 			}
@@ -2402,7 +2407,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
 			assert(task->reply_msg->request_message_local_addr != NULL);
 		}
-		return;
+		break;
 
 	case DELETE_REQUEST: {
 		msg_delete_req *del_req = (msg_delete_req *)task->msg->data;
@@ -2675,6 +2680,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	}
 	// free_rdma_received_message(rdma_conn, data_message);
 	// assert(reply_data_message->request_message_local_addr);
+	if (task->kreon_operation_status == TASK_COMPLETE)
+		stats_update(task->server_id, task->thread_id);
 
 	return;
 }

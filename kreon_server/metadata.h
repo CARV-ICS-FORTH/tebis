@@ -276,6 +276,7 @@ struct krm_region_desc {
 	utils_queue_s halted_tasks;
 	struct krm_region *region;
 	/*for replica_role deserializing the index*/
+	pthread_rwlock_t replica_log_map_lock;
 	struct krm_segment_entry *replica_log_map;
 	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 #if RCO_EXPLICIT_IO

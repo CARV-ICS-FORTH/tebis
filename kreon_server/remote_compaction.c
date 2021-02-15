@@ -256,12 +256,13 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	/*check if the previous index segment has replied*/
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 
-#if 0
+	/*#if 0*/
 	struct node_header *n = (struct node_header *)((uint64_t)seg + sizeof(struct segment_header));
 	switch (n->type) {
 	case leafNode:
 	case leafRootNode:
 		log_info("Sending leaf segment to replica for DB:%s", r_desc->db->db_desc->db_name);
+		assert(n->numberOfEntriesInNode > 0 && n->numberOfEntriesInNode <= 200);
 		break;
 	case internalNode:
 	case rootNode:
@@ -271,7 +272,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		log_info("Sending padded Space to replica for DB:%s", r_desc->db->db_desc->db_name);
 		break;
 	}
-#endif
+	/*#endif*/
 
 	pthread_mutex_lock(&r_desc->region_lock);
 	if (r_desc->region->num_of_backup == 0) {
@@ -279,9 +280,10 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		ret = 0;
 		goto exit;
 	}
+	log_info("rpc in use for level id %d is %d", level_id, r_desc->rpc_in_use[0][level_id]);
 	if (r_desc->rpc_in_use[0][level_id]) {
 		rco_wait_flush_reply(&r_desc->rpc[0][level_id]);
-		//log_info("Done! previous message for level %u acked", level_id);
+		log_info("Done! previous message for level %u acked", level_id);
 	}
 	r_desc->rpc_in_use[0][level_id] = 0;
 	struct connection_rdma *r_conn =
@@ -353,7 +355,8 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	r_desc->rpc[0][level_id].request->session_id = (uint64_t)r_desc->region + level_id;
 
 	f_req->seg_hash = s;
-	__send_rdma_message(r_desc->rpc[0][level_id].conn, r_desc->rpc[0][level_id].request, NULL);
+	r_desc->rpc[0][level_id].reply->receive = 0;
+	__send_rdma_message(r_conn, r_desc->rpc[0][level_id].request, NULL);
 	// only for the last wait for the reply with spining
 	if (root) {
 		log_info("This was the last index segment waiting for ack");

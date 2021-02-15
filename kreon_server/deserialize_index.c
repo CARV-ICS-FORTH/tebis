@@ -12,6 +12,7 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 	header->epoch = r_desc->db->volume_desc->mem_catalogue->epoch;
 	//header->v1 = 0;
 	//header->v2 = 0;
+	assert(leaf->header.numberOfEntriesInNode > 0 && leaf->header.numberOfEntriesInNode <= 200);
 	for (uint32_t i = 0; i < header->numberOfEntriesInNode; i++) {
 		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
 		// log_info("offt = %llu leaf pointer[%d] =
@@ -20,7 +21,9 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 		//do the lookup in the hash table, where have I stored the segment?
 		struct krm_segment_entry *entry;
 
+		pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
 		HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, entry);
+		pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 		if (entry == NULL) {
 			log_fatal("Cannot find mapping for primary's segment %llu of db %s", primary_segment_offt,
 				  r_desc->db->db_desc->db_name);
@@ -236,6 +239,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 		struct leaf_node *l_node = (struct leaf_node *)((uint64_t)seg + sizeof(struct segment_header));
 		uint32_t decoded_bytes = sizeof(struct segment_header);
 		while (decoded_bytes < SEGMENT_SIZE) {
+			log_info("Decoding a leaf node");
 			di_rewrite_leaf_node(r_desc, l_node);
 			decoded_bytes += LEAF_NODE_SIZE;
 			l_node = (struct leaf_node *)((uint64_t)l_node + LEAF_NODE_SIZE);
