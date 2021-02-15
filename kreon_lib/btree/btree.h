@@ -11,7 +11,7 @@
 
 #include <pthread.h>
 #include <stdlib.h>
-
+#include <bloom.h>
 #include "stats.h"
 
 #define SUCCESS 4
@@ -204,6 +204,9 @@ typedef struct kv_location {
 } kv_location;
 
 typedef struct level_descriptor {
+#if ENABLE_BLOOM_FILTERS
+	struct bloom bloom_filter[NUM_TREES_PER_LEVEL];
+#endif
 	lock_table guard_of_level;
 	pthread_t compaction_thread[NUM_TREES_PER_LEVEL];
 	lock_table *level_lock_table[MAX_HEIGHT];

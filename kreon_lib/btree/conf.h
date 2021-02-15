@@ -63,6 +63,7 @@
 #define GROWTH_FACTOR 4
 #define L0_SIZE 512000
 #define EXPLICIT_IO 1
+#define ENABLE_BLOOM_FILTERS 0
 #define COMPACTION_UNIT_OF_WORK 131072
 /*Buffering related tunables*/
 #define AGGRESIVE_FREE_POLICY
