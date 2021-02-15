@@ -294,7 +294,7 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 		comp_write_segment(c->segment_buf[i], c->dev_offt[i], sizeof(struct segment_header), SEGMENT_SIZE,
 				   c->fd);
 		if (c->handle->db_desc->send_idx && i <= c->tree_height) {
-			//log_info("Closing cursor for level %u height %u",c->level_id, i);
+			log_info("Closing cursor for level %u height %u", c->level_id, i);
 			if (i != c->tree_height)
 				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
 								(struct segment_header *)c->segment_buf[i],

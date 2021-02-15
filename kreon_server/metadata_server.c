@@ -793,6 +793,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			r_desc->replica_bufs_initialized = 0;
 			r_desc->region_halted = 0;
 			pthread_mutex_init(&r_desc->region_lock, NULL);
+			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 			utils_queue_init(&r_desc->halted_tasks);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
@@ -1198,6 +1199,7 @@ void *krm_metadata_server(void *args)
 				struct krm_region_desc *r_desc =
 					(struct krm_region_desc *)malloc(sizeof(struct krm_region_desc));
 				pthread_mutex_init(&r_desc->region_lock, NULL);
+				pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 				utils_queue_init(&r_desc->halted_tasks);
 				r_desc->region = current->lr_state.region;
 				r_desc->role = current->lr_state.role;
