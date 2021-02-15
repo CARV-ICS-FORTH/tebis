@@ -155,12 +155,16 @@ init_messages : {
 			msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
 			msg->next = msg->data;
 			/*set the tail to the proper value*/
-			if (i == 0) // this is the request
+			if (i == 0) {
+				// this is the request
 				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
 					      sizeof(uint32_t)) = receive_type;
-			else // this is the reply
+				msg->receive = receive_type;
+			} else { // this is the reply
 				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
 					      sizeof(uint32_t)) = 0;
+				msg->receive = 0;
+			}
 		} else {
 			msg->pay_len = 0;
 			msg->padding_and_tail = 0;
@@ -169,7 +173,7 @@ init_messages : {
 		}
 
 		msg->type = msg_type;
-		msg->receive = receive_type;
+
 		msg->local_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 		msg->remote_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
