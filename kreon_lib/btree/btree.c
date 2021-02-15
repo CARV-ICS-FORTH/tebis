@@ -879,6 +879,9 @@ finish_init:
 
 		for (tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
 			db_desc->levels[level_id].tree_status[tree_id] = NO_SPILLING;
+#if ENABLE_BLOOM_FILTERS
+			memset(&db_desc->levels[level_id].bloom_filter[tree_id], 0x00, sizeof(struct bloom));
+#endif
 		}
 	}
 
@@ -1209,7 +1212,27 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 		/* log_info("Level %d is empty with tree_id %d",level_id,tree_id); */
 		return rep;
 	}
-
+#if ENABLE_BLOOM_FILTERS
+	if (level_id > 0) {
+		//log_info("Key is %s", key + 4);
+		char prefix_key[PREFIX_SIZE];
+		int check;
+		if (*(uint32_t *)key < PREFIX_SIZE) {
+			memset(prefix_key, 0x00, PREFIX_SIZE);
+			memcpy(prefix_key, key + sizeof(uint32_t), *(uint32_t *)key);
+			check = bloom_check(&db_desc->levels[level_id].bloom_filter[0], prefix_key, PREFIX_SIZE);
+			//log_info("prefix key is %s ************", prefix_key);
+		} else {
+			check = bloom_check(&db_desc->levels[level_id].bloom_filter[0], key + sizeof(uint32_t),
+					    PREFIX_SIZE);
+		}
+		assert(check != -1);
+		if (0 == check) {
+			//log_info("element %u : %s in not present %d\n", *(uint32_t *)key, key + 4, check);
+			return rep;
+		}
+	}
+#endif
 	if (curr_node->type == leafRootNode) {
 		curr_lock = _find_position(db_desc->levels[level_id].level_lock_table, curr_node);
 		if (RWLOCK_RDLOCK(&curr_lock->rx_lock) != 0)

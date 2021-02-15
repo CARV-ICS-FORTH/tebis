@@ -2107,9 +2107,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
 		assert(task->reply_msg->request_message_local_addr != NULL);
 		task->kreon_operation_status = TASK_COMPLETE;
-
-		// log_info("REPLICA: Successfully flushed index segment id %d",
-		// f_req->seg_id);
+		log_info("REPLICA: Successfully flushed index segment id %d", f_req->seg_id);
 		break;
 	}
 	case GET_LOG_BUFFER_REQ: {

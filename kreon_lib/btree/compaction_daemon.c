@@ -513,7 +513,14 @@ static void comp_append_entry_to_leaf_node(struct comp_level_write_cursor *c, st
 	c->last_leaf->kv_entry[idx].device_offt = kvPrefix->device_offt;
 	c->last_leaf->kv_entry[idx].tombstone = kvPrefix->tombstone;
 	memcpy(c->last_leaf->prefix[idx], kvPrefix->prefix, PREFIX_SIZE);
-
+#if ENABLE_BLOOM_FILTERS
+	// log_info("Inserting into bloom filter");
+	int rc = bloom_add(&c->handle->db_desc->levels[c->level_id].bloom_filter[1], kvPrefix->prefix, PREFIX_SIZE);
+	if (0 != rc) {
+		log_fatal("Failed to ins key in bloom filter");
+		exit(EXIT_FAILURE);
+	}
+#endif
 	++c->handle->db_desc->levels[c->level_id].level_size[1];
 	if (new_leaf) {
 		// log_info("keys are %llu for level %u",
@@ -1080,6 +1087,18 @@ void *compaction(void *_comp_req)
 	}
 
 	if (comp_req->src_level == 0 || dst_root) {
+#if ENABLE_BLOOM_FILTERS
+		/*allocate new bloom filter*/
+		uint64_t capacity = handle.db_desc->levels[comp_req->dst_level].max_level_size;
+		if (bloom_init(&handle.db_desc->levels[comp_req->dst_level].bloom_filter[1], capacity, 0.01)) {
+			log_fatal("Failed to init bloom");
+			exit(EXIT_FAILURE);
+		} else {
+			log_info("Allocated bloom filter for dst level %u capacity in keys %llu", comp_req->dst_level,
+				 capacity);
+		}
+#endif
+
 #if EXPLICIT_IO
 		comp_compact_with_explicit_IO(comp_req, src_root, dst_root);
 #else
@@ -1096,6 +1115,7 @@ void *compaction(void *_comp_req)
 			log_fatal("Failed to acquire guard lock");
 			exit(EXIT_FAILURE);
 		}
+
 		if (dst_root) {
 			/*special care for dst level atomic switch tree 2 to tree 1 of dst*/
 			struct segment_header *curr_segment =
@@ -1123,6 +1143,14 @@ void *compaction(void *_comp_req)
 		ld->last_segment[1] = NULL;
 		ld->offset[0] = ld->offset[1];
 		ld->offset[1] = 0;
+#if ENABLE_BLOOM_FILTERS
+		if (dst_root) {
+			log_info("Freeing previous bloom filter for dst level %u", comp_req->dst_level);
+			bloom_free(&handle.db_desc->levels[comp_req->src_level].bloom_filter[0]);
+		}
+		ld->bloom_filter[0] = ld->bloom_filter[1];
+		memset(&ld->bloom_filter[1], 0x00, sizeof(struct bloom));
+#endif
 
 		if (ld->root_w[1] != NULL)
 			ld->root_r[0] = ld->root_w[1];
@@ -1141,6 +1169,11 @@ void *compaction(void *_comp_req)
 
 		/*free src level*/
 		seg_free_level(&hd, comp_req->src_level, comp_req->src_tree);
+#if ENABLE_BLOOM_FILTERS
+		log_info("Freeing previous bloom filter for src level %u", comp_req->src_level);
+		bloom_free(&handle.db_desc->levels[comp_req->src_level].bloom_filter[0]);
+		memset(&ld->bloom_filter[0], 0x00, sizeof(struct bloom));
+#endif
 		if (comp_req->src_level == 0) {
 			hd.db_desc->L1_index_end_log_offset = comp_req->value_log_offt;
 			hd.db_desc->L1_segment = comp_req->value_log_seg;
@@ -1171,6 +1204,12 @@ void *compaction(void *_comp_req)
 		struct level_descriptor *leveld_dst = &comp_req->db_desc->levels[comp_req->dst_level];
 
 		swap_levels(leveld_src, leveld_dst, comp_req->src_tree, 0);
+#if ENABLE_BLOOM_FILTERS
+		log_info("Swapping also bloom filter");
+		leveld_dst->bloom_filter[0] = leveld_src->bloom_filter[0];
+		memset(&leveld_src->bloom_filter[0], 0x00, sizeof(struct bloom));
+#endif
+
 		if (RWLOCK_UNLOCK(&(comp_req->db_desc->levels[comp_req->src_level].guard_of_level.rx_lock))) {
 			log_fatal("Failed to acquire guard lock");
 			exit(EXIT_FAILURE);
