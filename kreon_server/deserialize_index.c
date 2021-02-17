@@ -12,7 +12,6 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 	header->epoch = r_desc->db->volume_desc->mem_catalogue->epoch;
 	//header->v1 = 0;
 	//header->v2 = 0;
-	assert(leaf->header.numberOfEntriesInNode >= 0 && leaf->header.numberOfEntriesInNode <= 200);
 	for (uint32_t i = 0; i < header->numberOfEntriesInNode; i++) {
 		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
 		// log_info("offt = %llu leaf pointer[%d] =
@@ -50,14 +49,13 @@ static void di_write_segment(struct krm_region_desc *r_desc, char *buffer, uint6
 		raise(SIGINT);
 		exit(EXIT_FAILURE);
 	}
-
 	ssize_t total_bytes_written = sizeof(struct segment_header);
 	ssize_t bytes_written = sizeof(struct segment_header);
 	while (total_bytes_written < SEGMENT_SIZE) {
 		bytes_written = pwrite(fd, &buffer[total_bytes_written], SEGMENT_SIZE - total_bytes_written,
 				       entry->my_seg + total_bytes_written);
 		if (bytes_written == -1) {
-			log_fatal("Failed to writed segment for leaf nodes reason follows");
+			log_fatal("Failed to write segment for leaf nodes reason follows");
 			perror("Reason");
 			assert(0);
 			exit(EXIT_FAILURE);
@@ -212,7 +210,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 static void di_free_index_buffer(struct krm_region_desc *r_desc, uint32_t level_id, uint32_t height)
 {
 	if (r_desc->index_buffer[level_id][height]->allocated)
-		free(r_desc->index_buffer[level_id][height]);
+		free(r_desc->index_buffer[level_id][height]->data);
 	memset(r_desc->index_buffer[level_id][height], 0x00, sizeof(struct di_buffer));
 	free(r_desc->index_buffer[level_id][height]);
 	r_desc->index_buffer[level_id][height] = NULL;
@@ -298,7 +296,14 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 				 r_desc->db->db_desc->db_name, level_id, height);
 		}
 
-		r_desc->index_buffer[level_id][height] = (struct di_buffer *)malloc(sizeof(struct di_buffer));
+		r_desc->index_buffer[level_id][height] = (struct di_buffer *)calloc(1, sizeof(struct di_buffer));
+		//if (posix_memalign((void **)&r_desc->index_buffer[level_id][height], SEGMENT_SIZE,
+		//		   sizeof(struct di_buffer)) != 0) {
+		//	log_fatal("Posix memalign failed");
+		//	perror("Reason: ");
+		//	exit(EXIT_FAILURE);
+		//}
+
 		r_desc->index_buffer[level_id][height]->r_desc = r_desc;
 
 		r_desc->index_buffer[level_id][height]->primary_offt = primary_seg_offt;
@@ -317,9 +322,23 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 			log_warn(
 				"Cannot decode pending indexing segment for DB %s level_id %u height %u, that's ok later",
 				r_desc->db->db_desc->db_name, level_id, height);
-			r_desc->index_buffer[level_id][height]->data = (char *)malloc(SEGMENT_SIZE);
+
+			r_desc->index_buffer[level_id][height]->data = NULL;
+			uint64_t *dst = NULL;
+			if (posix_memalign((void **)&dst, ALIGNMENT, SEGMENT_SIZE) != 0) {
+				log_fatal("Posix memalign failed");
+				perror("Reason: ");
+				exit(EXIT_FAILURE);
+			}
+			//uint64_t *src = (uint64_t*)seg;
+			//uint32_t rounds = SEGMENT_SIZE/sizeof(uint64_t);
+			//for(uint32_t i=rounds-1;i<=0;i--){
+			//	dst[i] = src[i];
+			//}
+			memcpy(dst, seg, SEGMENT_SIZE);
 			r_desc->index_buffer[level_id][height]->allocated = 1;
-			memcpy(r_desc->index_buffer[level_id][height]->data, seg, SEGMENT_SIZE);
+			r_desc->index_buffer[level_id][height]->data = (char *)dst;
+			//raise(SIGINT);
 		} else {
 			//decoding success!
 			di_free_index_buffer(r_desc, level_id, height);
@@ -349,7 +368,8 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 		log_fatal("This type shouldn't be first!");
 		exit(EXIT_FAILURE);
 	default:
-		log_fatal("Unknown type!");
+		log_fatal("Unknown type! %u", *type);
+		assert(0);
 		exit(EXIT_FAILURE);
 	}
 }

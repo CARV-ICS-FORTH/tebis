@@ -107,9 +107,9 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		goto exit;
 	}
 	struct connection_rdma *r_conn =
-		sc_get_conn(db_entry->pool->rco_server, r_desc->region->backups[0].kreon_ds_hostname);
+		sc_get_compaction_conn(db_entry->pool->rco_server, r_desc->region->backups[0].kreon_ds_hostname);
 	char *addr;
-	if (posix_memalign((void **)&addr, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
+	if (posix_memalign((void **)&addr, ALIGNMENT, SEGMENT_SIZE) != 0) {
 		log_fatal("Posix memalign failed");
 		perror("Reason: ");
 		exit(EXIT_FAILURE);
@@ -257,7 +257,11 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	case paddedSpace:
 		log_info("Sending padded Space to replica for DB:%s", r_desc->db->db_desc->db_name);
 		break;
-	}
+	default:
+		log_fatal("This is bullshit");
+		assert(0);
+		exit(EXIT_FAILURE);
+  }
 #endif
 
 	pthread_mutex_lock(&r_desc->region_lock);
@@ -273,7 +277,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	}
 	r_desc->rpc_in_use[0][level_id] = 0;
 	struct connection_rdma *r_conn =
-		sc_get_conn(db_entry->pool->rco_server, r_desc->region->backups[0].kreon_ds_hostname);
+		sc_get_compaction_conn(db_entry->pool->rco_server, r_desc->region->backups[0].kreon_ds_hostname);
 
 	// Sent the segment via RDMA
 	if (size > SEGMENT_SIZE) {
@@ -438,8 +442,8 @@ int rco_flush_last_log_segment(void *handle)
 		(struct sc_msg_pair *)malloc(sizeof(struct sc_msg_pair) * r_desc->region->num_of_backup);
 retry_allocate:
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
-		struct connection_rdma *r_conn =
-			sc_get_conn(db_entry->pool->rco_server, r_desc->region->backups[i].kreon_ds_hostname);
+		struct connection_rdma *r_conn = sc_get_compaction_conn(db_entry->pool->rco_server,
+									r_desc->region->backups[i].kreon_ds_hostname);
 		/*allocate and send command*/
 		uint32_t req_size = sizeof(struct msg_flush_cmd_req) + r_desc->region->min_key_size;
 		uint32_t rep_size = sizeof(struct msg_flush_cmd_rep);
@@ -561,7 +565,8 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	}
 	/*fill connections*/
 	for (uint32_t i = 0; i < t->r_desc->region->num_of_backup; i++)
-		t->conn[i] = sc_get_conn(db_entry->pool->rco_server, t->r_desc->region->backups[i].kreon_ds_hostname);
+		t->conn[i] = sc_get_compaction_conn(db_entry->pool->rco_server,
+						    t->r_desc->region->backups[i].kreon_ds_hostname);
 	rco_add_compaction_task(db_entry->pool, t);
 
 	sem_wait(t->sem);

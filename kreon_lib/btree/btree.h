@@ -226,7 +226,6 @@ typedef struct level_descriptor {
 	/*spilling or not?*/
 	char tree_status[NUM_TREES_PER_LEVEL];
 	uint8_t active_tree;
-	char in_recovery_mode;
 	uint8_t level_id;
 } level_descriptor;
 
@@ -288,6 +287,7 @@ typedef struct db_descriptor {
 	 * acknowledge that they have received the mutation
 	 */
 	char is_in_replicated_mode;
+	uint8_t block_on_L0;
 	enum db_status stat;
 } __attribute__((packed)) __attribute__((aligned)) db_descriptor;
 

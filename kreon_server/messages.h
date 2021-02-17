@@ -11,8 +11,8 @@
 #include "conf.h"
 #define MSG_MAX_REGION_KEY_SIZE 256
 #define MAX_REPLICA_INDEX_BUFFERS 8
-enum message_type {
 
+enum message_type {
 	PUT_REQUEST = 1,
 	PUT_REPLY,
 	PUT_OFFT_REQUEST,

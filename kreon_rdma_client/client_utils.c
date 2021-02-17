@@ -183,6 +183,11 @@ struct cu_region_desc *cu_get_region(char *key, uint32_t key_size)
 	uint64_t lc2, lc1;
 retry:
 	lc2 = client_regions.lc.c2;
+
+#if REGIONS_HASH_BASED
+	uint64_t s = djb2_hash((unsigned char *)key, key_size);
+	region = &cli_regions->r_desc[s % cli_regions->num_regions];
+#else
 	start_idx = 0;
 	end_idx = cli_regions->num_regions - 1;
 	region = NULL;
@@ -203,6 +208,7 @@ retry:
 		} else
 			end_idx = middle - 1;
 	}
+#endif
 	lc1 = client_regions.lc.c1;
 	if (lc1 != lc2)
 		goto retry;

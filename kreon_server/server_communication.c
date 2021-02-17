@@ -14,7 +14,8 @@ struct sc_conn_per_server {
 	struct connection_rdma *conn;
 	UT_hash_handle hh;
 };
-struct sc_conn_per_server *sc_root_cps;
+struct sc_conn_per_server *sc_root_data_cps = NULL;
+struct sc_conn_per_server *sc_root_compaction_cps = NULL;
 static pthread_mutex_t conn_map_lock = PTHREAD_MUTEX_INITIALIZER;
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type)
@@ -221,16 +222,17 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	return;
 }
 
-struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname)
+static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname,
+					   struct sc_conn_per_server **sc_root_cps)
 {
-	struct sc_conn_per_server *cps;
+	struct sc_conn_per_server *cps = NULL;
 	uint64_t key;
 
 	key = djb2_hash((unsigned char *)hostname, strlen(hostname));
-	HASH_FIND_PTR(sc_root_cps, &key, cps);
+	HASH_FIND_PTR(*sc_root_cps, &key, cps);
 	if (cps == NULL) {
 		pthread_mutex_lock(&conn_map_lock);
-		HASH_FIND_PTR(sc_root_cps, &key, cps);
+		HASH_FIND_PTR(*sc_root_cps, &key, cps);
 		if (cps == NULL) {
 			/*ok update server info from zookeeper*/
 			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
@@ -244,10 +246,20 @@ struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostna
 
 			/*init list here*/
 			cps->hash_key = key;
-			HASH_ADD_PTR(sc_root_cps, hash_key, cps);
+			HASH_ADD_PTR(*sc_root_cps, hash_key, cps);
 		}
 		pthread_mutex_unlock(&conn_map_lock);
 	}
 
 	return cps->conn;
+}
+
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname)
+{
+	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
+}
+
+struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname)
+{
+	return sc_get_conn(mydesc, hostname, &sc_root_compaction_cps);
 }

@@ -159,14 +159,20 @@ int prefix_compare(char *l, char *r, size_t prefix_size)
 
 void bt_set_db_in_replicated_mode(db_handle *handle)
 {
-	handle->db_desc->is_in_replicated_mode = 1;
+	uint32_t old_val = handle->db_desc->is_in_replicated_mode;
+	while (1) {
+		if (__sync_bool_compare_and_swap(&handle->db_desc->is_in_replicated_mode, old_val, 1))
+			break;
+		old_val = handle->db_desc->is_in_replicated_mode;
+	}
 	return;
 }
 
 void bt_decrease_level0_writers(db_handle *handle)
 {
 	if (!handle->db_desc->is_in_replicated_mode) {
-		log_fatal("DB %s is not in replicated mode you are not allowed to do that!");
+		log_fatal("DB %s is not in replicated mode you are not allowed to do that!", handle->db_desc->db_name);
+		assert(0);
 		exit(EXIT_FAILURE);
 	}
 	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
@@ -892,6 +898,7 @@ finish_init:
 	//db_desc->t = NULL;
 	db_desc->fl = NULL;
 	db_desc->is_in_replicated_mode = 0;
+	db_desc->block_on_L0 = 1;
 	MUTEX_INIT(&db_desc->lock_log, NULL);
 	MUTEX_INIT(&db_desc->client_barrier_lock, NULL);
 	if (pthread_cond_init(&db_desc->client_barrier, NULL) != 0) {
