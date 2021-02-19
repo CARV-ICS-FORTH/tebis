@@ -744,8 +744,6 @@ void tu_rdma_init_connection(struct connection_rdma *conn)
 	memset(conn, 0, sizeof(struct connection_rdma));
 	/*gesalous staff initialization*/
 	conn->idle_iterations = 0;
-	conn->FLUSH_SEGMENT_requests_sent = 0;
-	conn->FLUSH_SEGMENT_acks_received = 0;
 }
 
 void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts, const int num_hosts,
@@ -1417,7 +1415,7 @@ bool client_rdma_send_message_success(struct rdma_message_context *msg_ctx)
 
 void *poll_cq(void *arg)
 {
-	struct sigaction sa = {};
+	struct sigaction sa;
 	struct channel_rdma *channel;
 	struct connection_rdma *conn;
 	struct ibv_cq *cq;
@@ -1529,25 +1527,26 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			}
 			break;
 		case IBV_WC_RDMA_READ:
-			DPRINT("IBV_WC_RDMA_READ code\n");
+			log_info("IBV_WC_RDMA_READ code");
 			break;
 		case IBV_WC_COMP_SWAP:
-			DPRINT("IBV_WC_COMP_SWAP code\n");
+			log_info("IBV_WC_COMP_SWAP code");
 			break;
 		case IBV_WC_FETCH_ADD:
-			DPRINT("IBV_WC_FETCH_ADD code\n");
+			log_info("IBV_WC_FETCH_ADD code");
 			break;
 		case IBV_WC_BIND_MW:
-			DPRINT("IBV_WC_BIND_MW code\n");
+			log_info("IBV_WC_BIND_MW code");
 			break;
 		case IBV_WC_RECV_RDMA_WITH_IMM:
-			DPRINT("IBV_WC_RECV_RDMA_WITH_IMM code\n");
+			log_info("IBV_WC_RECV_RDMA_WITH_IMM code");
 			break;
 		default:
-			DPRINT("FATAL unknown code\n");
+			log_info("FATAL unknown code");
 			exit(EXIT_FAILURE);
 		}
-	} else { /*error handling*/
+	} else {
+		/*error handling*/
 		log_fatal("conn type is %d %s\n", conn->type, ibv_wc_status_str(wc->status));
 		conn->status = CONNECTION_ERROR;
 		raise(SIGINT);

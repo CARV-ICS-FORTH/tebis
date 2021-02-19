@@ -60,8 +60,7 @@ pthread_mutex_t EUTROPIA_LOCK = PTHREAD_MUTEX_INITIALIZER;
 
 uint64_t MAPPED = 0; /*from this address any node can see the entire volume*/
 int FD;
-
-int32_t FD; /*GLOBAL FD*/
+int FD_explicit_IO;
 static inline void *next_word(volume_descriptor *volume_desc, unsigned char op_code);
 double log2(double x);
 int ffsl(long int i);
@@ -95,12 +94,13 @@ void mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 	if (MAPPED == 0) {
 		log_info("Opening Volume %s", volume_name);
 		/* open the device */
-		FD = open(volume_name, O_RDWR | __O_DIRECT);
+		FD = open(volume_name, O_RDWR);
 		if (FD < 0) {
 			log_fatal("Failed to open %s", volume_name);
 			perror("Reason:\n");
 			exit(EXIT_FAILURE);
 		}
+
 		if (ioctl(FD, BLKGETSIZE64, &device_size) == -1) {
 			/*maybe we have a file?*/
 			device_size = lseek(FD, 0, SEEK_END);
@@ -110,6 +110,16 @@ void mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 				exit(EXIT_FAILURE);
 			}
 		}
+
+		FD_explicit_IO = FD;
+#if 0
+		open(volume_name, O_RDWR);
+		if (FD < 0) {
+			log_fatal("Failed to open %s for explicit IO", volume_name);
+			perror("Reason:\n");
+			exit(EXIT_FAILURE);
+		}
+#endif
 		log_info("creating virtual address space offset %lld size %lld\n", (long long)start,
 			 (long long)device_size);
 		MAPPED = (uint64_t)mmap(NULL, device_size, PROT_READ | PROT_WRITE, MAP_SHARED, FD,

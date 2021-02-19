@@ -76,6 +76,7 @@ enum krm_work_task_status {
 	INIT_LOG_BUFFERS,
 	REPLICATE,
 	WAIT_FOR_REPLICATION_COMPLETION,
+	ALL_REPLICAS_ACKED,
 	SEGMENT_BARRIER,
 	FLUSH_REPLICA_BUFFERS,
 	SEND_FLUSH_COMMANDS,
@@ -427,5 +428,6 @@ void rco_build_index(struct rco_build_index_task *task);
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type);
-struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname);
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname);
+struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname);
 void sc_free_rpc_pair(struct sc_msg_pair *p);

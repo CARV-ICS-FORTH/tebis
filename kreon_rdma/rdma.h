@@ -161,12 +161,13 @@ struct polling_msg {
 };
 
 struct sr_message {
-	enum { MSG_MREND,
-	       MSG_RECEIVED_MREND,
-	       MSG_ACK,
-	       MSG_RECEIVED_ACK,
-	       //MSG_ID_CONN,
-	       //MSG_REQ
+	enum {
+		MSG_MREND,
+		MSG_RECEIVED_MREND,
+		MSG_ACK,
+		MSG_RECEIVED_ACK,
+		//MSG_ID_CONN,
+		//MSG_REQ
 	} type;
 	int32_t nsec;
 	int64_t id_msg;
@@ -241,14 +242,10 @@ typedef struct connection_rdma {
 	sem_t congestion_control; /*used for congestion control during send rdma operation*/
 	volatile uint64_t sleeping_workers;
 	volatile uint64_t offset;
-	//volatile uint64_t pending_received_messages;
-	//volatile uint64_t pending_sent_messages;
-	uint64_t idle_iterations; /*handled only by the spinning thread, shows how many times
-														 this connection was idle. After a threashold it will be downgraded to
-														 IDLE connection list of the channel*/
-	volatile uint64_t FLUSH_SEGMENT_requests_sent;
-	volatile uint64_t FLUSH_SEGMENT_acks_received;
-
+	/*handled only by the spinning thread, shows how many times
+   this connection was idle. After a threashold it will be downgraded to
+	 IDLE connection list of the channel*/
+	uint64_t idle_iterations;
 	uint32_t priority;
 	/*to which worker this connection has been assigned to*/
 	int worker_id;
@@ -263,10 +260,11 @@ typedef struct connection_rdma {
 	struct ibv_cq *cq;
 	struct ibv_cq *cq_recv;
 	struct ibv_comp_channel *comp_channel;
-	struct ibv_mr *peer_mr; // Info of the remote peer: addr y rkey, needed for sending the RRMA messages
-
+	struct ibv_mr *peer_mr;
+	// Info of the remote peer: addr y rkey, needed for sending the RRMA messages
 	volatile void *rendezvous;
-	volatile connection_status status; /*normal or resetting?*/
+	/*normal or resetting?*/
+	volatile connection_status status;
 	memory_region *rdma_memory_regions;
 	memory_region *next_rdma_memory_regions;
 	struct ibv_mr *next_peer_mr;

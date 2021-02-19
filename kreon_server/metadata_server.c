@@ -704,12 +704,12 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 				exit(EXIT_FAILURE);
 			}
 
-			log_info("fetched mail %s for region %s", mail, msg->region.id);
+			//log_info("fetched mail %s for region %s", mail, msg->region.id);
 			pthread_mutex_lock(&s_desc->msg_list_lock);
 			add_last(s_desc->msg_list, msg, NULL);
 			sem_post(&s_desc->wake_up);
 			pthread_mutex_unlock(&s_desc->msg_list_lock);
-			log_info("Deleting %s", mail);
+			//log_info("Deleting %s", mail);
 			rc = zoo_delete(s_desc->zh, mail, -1);
 			if (rc != ZOK) {
 				log_fatal("Failed to delete mail %s", mail);
@@ -775,7 +775,8 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			reply.region = msg->region;
 		} else {
 			struct krm_region_desc *r_desc =
-				(struct krm_region_desc *)malloc(sizeof(struct krm_region_desc));
+				(struct krm_region_desc *)calloc(1, sizeof(struct krm_region_desc));
+
 			struct krm_region *region = (struct krm_region *)malloc(sizeof(struct krm_region));
 			*region = msg->region;
 			r_desc->region = region;
@@ -805,6 +806,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			/*find system ref*/
 			struct krm_region_desc *t = krm_get_region(server, region->min_key, region->min_key_size);
 			/*set the callback and context for remote compaction*/
+			log_info("Setting DB %s in replicated mode", t->db->db_desc->db_name);
 			bt_set_db_in_replicated_mode(t->db);
 #if RCO_EXPLICIT_IO
 			set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
@@ -1197,7 +1199,7 @@ void *krm_metadata_server(void *args)
 			{
 				log_info("Opening db %s", current->lr_state.region->id);
 				struct krm_region_desc *r_desc =
-					(struct krm_region_desc *)malloc(sizeof(struct krm_region_desc));
+					(struct krm_region_desc *)calloc(1, sizeof(struct krm_region_desc));
 				pthread_mutex_init(&r_desc->region_lock, NULL);
 				pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 				utils_queue_init(&r_desc->halted_tasks);
@@ -1223,6 +1225,7 @@ void *krm_metadata_server(void *args)
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,
 									   current->lr_state.region->min_key_size);
 				/*set the callback and context for remote compaction*/
+				log_info("Setting DB %s in replicated mode", t->db->db_desc->db_name);
 				bt_set_db_in_replicated_mode(t->db);
 #if RCO_EXPLICIT_IO
 				set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
@@ -1392,6 +1395,7 @@ retry:
 	}
 	return r_desc;
 }
+
 struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
 {
 	struct krm_region_desc *r_desc = NULL;
@@ -1399,7 +1403,7 @@ struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, 
 	uint64_t lc2, lc1;
 retry:
 	lc2 = desc->ds_regions->lamport_counter_2;
-#ifdef REGIONS_HASH_BASED
+#if REGIONS_HASH_BASED
 	uint64_t s = djb2_hash((unsigned char *)key, key_size);
 	r_desc = desc->ds_regions->r_desc[s % desc->ds_regions->num_ds_regions];
 #else

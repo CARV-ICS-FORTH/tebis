@@ -36,7 +36,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			MUTEX_UNLOCK(&volume_desc->allocator_lock);
 			assert(new_segment);
 		} else {
-			if (posix_memalign((void **)&new_segment, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
+			if (posix_memalign((void **)&new_segment, ALIGNMENT, SEGMENT_SIZE) != 0) {
 				log_info("MEMALIGN FAILED");
 				exit(EXIT_FAILURE);
 			}
@@ -392,4 +392,5 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	//		exit(EXIT_FAILURE);
 	//	}
 	//}
+	return;
 }

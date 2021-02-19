@@ -39,3 +39,4 @@ typedef enum kreon_op_status {
 #define RCO_DISABLE_REMOTE_COMPACTIONS 0
 #define RCO_BUILD_INDEX_AT_REPLICA 0
 #define RCO_EXPLICIT_IO 1
+#define REGIONS_HASH_BASED 0
