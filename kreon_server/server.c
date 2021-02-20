@@ -2092,7 +2092,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 				free(current);
 			}
-			if (fsync(FD_explicit_IO) != 0) {
+			if (fsync(FD) != 0) {
 				log_fatal("Failed to sync file!");
 				perror("Reason:\n");
 				exit(EXIT_FAILURE);
@@ -2288,7 +2288,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			seg->next_segment = NULL;
 			seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
 			if (!write_segment_with_explicit_IO((char *)(uint64_t)seg, SEGMENT_SIZE,
-							    (uint64_t)disk_segment - MAPPED, FD_explicit_IO)) {
+							    (uint64_t)disk_segment - MAPPED, FD)) {
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}
@@ -2330,11 +2330,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// e->master_seg, e->my_seg);
 			}
 #if RCO_EXPLICIT_IO
-			if (!write_segment_with_explicit_IO((char *)(uint64_t)seg + sizeof(struct segment_header),
-							    SEGMENT_SIZE - sizeof(struct segment_header),
-							    ((uint64_t)last_log_segment - MAPPED) +
-								    sizeof(struct segment_header),
-							    FD_explicit_IO)) {
+			if (!write_segment_with_explicit_IO(
+				    (char *)(uint64_t)seg + sizeof(struct segment_header),
+				    SEGMENT_SIZE - sizeof(struct segment_header),
+				    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header), FD)) {
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}

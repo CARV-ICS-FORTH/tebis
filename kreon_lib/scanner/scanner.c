@@ -317,6 +317,7 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
    */
 	node = level_sc->root;
 	read_lock_node(level_sc, node);
+	assert(node->type == rootNode);
 
 	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
 		/*we seek in an empty tree*/
