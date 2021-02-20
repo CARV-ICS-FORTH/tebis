@@ -61,7 +61,6 @@ extern LIST *mappedVolumes;
 /*the global mountpoint of a volume*/
 extern uint64_t MAPPED;
 extern int FD;
-extern int FD_explicit_IO;
 
 typedef struct pr_db_entry {
 	char db_name[MAX_DB_NAME_SIZE];
