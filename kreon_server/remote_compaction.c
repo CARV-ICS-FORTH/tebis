@@ -108,7 +108,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	}
 	struct connection_rdma *r_conn =
 		sc_get_compaction_conn(db_entry->pool->rco_server, r_desc->region->backups[0].kreon_ds_hostname);
-	char *addr;
+	char *addr = NULL;
 	if (posix_memalign((void **)&addr, ALIGNMENT, SEGMENT_SIZE) != 0) {
 		log_fatal("Posix memalign failed");
 		perror("Reason: ");
@@ -144,6 +144,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 	rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
 	rpc_pair.request->request_message_local_addr = rpc_pair.request;
+	rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 	__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 	// Wait for reply header
 	wait_for_value(&rpc_pair.request->receive, TU_RDMA_REGULAR_MSG);
@@ -229,6 +230,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #if RCO_DISABLE_REMOTE_COMPACTIONS
 	return 0;
 #endif
+
 	int ret = 0;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
@@ -239,17 +241,29 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
-	/*check if the previous index segment has replied*/
+
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 
+	pthread_mutex_lock(&r_desc->region_lock);
+
 #if 0
-	struct node_header *n = (struct node_header *)((uint64_t)seg + sizeof(struct segment_header));
+	log_info("Sending index segment for region %s", r_desc->region->id);
+	char *tmp = (char *)seg; //r_desc->local_buffer[level_id]->addr;
+	struct node_header *n = (struct node_header *)((uint64_t)tmp + sizeof(struct segment_header));
 	switch (n->type) {
 	case leafNode:
-	case leafRootNode:
+	case leafRootNode: {
 		log_info("Sending leaf segment to replica for DB:%s", r_desc->db->db_desc->db_name);
-		assert(n->numberOfEntriesInNode > 0 && n->numberOfEntriesInNode <= 200);
+		uint32_t decoded_bytes = 4096;
+		do {
+			assert(n->type == leafNode || n->type == leafRootNode || n->type == paddedSpace);
+			n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
+			//log_info("Decoded now are %u", decoded_bytes);
+			decoded_bytes += LEAF_NODE_SIZE;
+		} while (decoded_bytes < SEGMENT_SIZE);
+		assert(decoded_bytes == SEGMENT_SIZE);
 		break;
+	}
 	case internalNode:
 	case rootNode:
 		log_info("Sending index segment to replica for DB:%s", r_desc->db->db_desc->db_name);
@@ -261,19 +275,18 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		log_fatal("This is bullshit");
 		assert(0);
 		exit(EXIT_FAILURE);
-  }
+	}
 #endif
 
-	pthread_mutex_lock(&r_desc->region_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
+	/*check if the previous index segment has replied*/
 	//log_info("rpc in use for level id %d is %d", level_id, r_desc->rpc_in_use[0][level_id]);
 	if (r_desc->rpc_in_use[0][level_id]) {
 		rco_wait_flush_reply(&r_desc->rpc[0][level_id]);
-		//log_info("Done! previous message for level %u acked", level_id);
 	}
 	r_desc->rpc_in_use[0][level_id] = 0;
 	struct connection_rdma *r_conn =
@@ -349,10 +362,10 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	__send_rdma_message(r_conn, r_desc->rpc[0][level_id].request, NULL);
 	// only for the last wait for the reply with spining
 	if (root) {
-		log_info("This was the last index segment waiting for ack");
+		//log_info("This was the last index segment waiting for ack");
 		rco_wait_flush_reply(&r_desc->rpc[0][level_id]);
 		r_desc->rpc_in_use[0][level_id] = 0;
-		log_info("This was the last index segment waiting for ack DONE");
+		//log_info("This was the last index segment waiting for ack DONE");
 	}
 exit:
 	pthread_mutex_unlock(&r_desc->region_lock);

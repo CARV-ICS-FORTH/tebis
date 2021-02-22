@@ -362,9 +362,10 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	}
 	while (1) {
 		uint64_t next_dev_offt = (uint64_t)curr_segment->next_segment;
-		if (level_id == 0)
+		if (level_id == 0) {
 			free(curr_segment);
-		else
+			//assert(0);
+		} else
 			free_block(handle->volume_desc, curr_segment, SEGMENT_SIZE);
 		space_freed += SEGMENT_SIZE;
 		if (!next_dev_offt)

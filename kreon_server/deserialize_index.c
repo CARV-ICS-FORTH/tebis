@@ -14,8 +14,7 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 	//header->v2 = 0;
 	for (uint32_t i = 0; i < header->numberOfEntriesInNode; i++) {
 		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
-		// log_info("offt = %llu leaf pointer[%d] =
-		// %llu",offt_in_segment,i,leaf->pointer[i]);
+		//log_info("offt = %llu leaf pointer[%d] %llu", offt_in_segment, i, leaf->kv_entry[i].device_offt);
 		uint64_t primary_segment_offt = leaf->kv_entry[i].device_offt - offt_in_segment;
 		//do the lookup in the hash table, where have I stored the segment?
 		struct krm_segment_entry *entry;
@@ -29,7 +28,7 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 			raise(SIGINT);
 			exit(EXIT_FAILURE);
 		}
-		// log_info("Found translated!");
+		//log_info("Found translated! for leaf entry %u", i);
 		leaf->kv_entry[i].device_offt = entry->my_seg + offt_in_segment;
 		// void *s = MAPPED + leaf->pointer[i];
 		// log_info("key is %s", s + 4);
@@ -225,26 +224,30 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 	switch (*type) {
 	case leafNode:
 	case leafRootNode: {
+		struct leaf_node *l_node = (struct leaf_node *)((uint64_t)seg + sizeof(struct segment_header));
 		//Allocate a segment where we will place the segment after its decoding
+
+		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
 		struct segment_header *seg =
 			get_segment_for_explicit_IO(r_desc->db->volume_desc, &r_desc->db->db_desc->levels[level_id], 1);
 		// add mapping to level's hash table
+		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = primary_seg_offt;
 		e->my_seg = (uint64_t)seg - MAPPED;
 		HASH_ADD_PTR(r_desc->replica_index_map[level_id], master_seg, e);
 
-		struct leaf_node *l_node = (struct leaf_node *)((uint64_t)seg + sizeof(struct segment_header));
+		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
 		uint32_t decoded_bytes = sizeof(struct segment_header);
 		while (decoded_bytes < SEGMENT_SIZE) {
-			//log_info("Decoding a leaf node");
-			di_rewrite_leaf_node(r_desc, l_node);
-			decoded_bytes += LEAF_NODE_SIZE;
-			l_node = (struct leaf_node *)((uint64_t)l_node + LEAF_NODE_SIZE);
 			if (l_node->header.type == paddedSpace) {
 				decoded_bytes += (SEGMENT_SIZE - decoded_bytes);
 				break;
 			}
+			//log_info("Decoding a leaf node");
+			di_rewrite_leaf_node(r_desc, l_node);
+			decoded_bytes += LEAF_NODE_SIZE;
+			l_node = (struct leaf_node *)((uint64_t)l_node + LEAF_NODE_SIZE);
 		}
 		assert(decoded_bytes == SEGMENT_SIZE);
 		/*Now write the buffer to storage and add the hash mapping*/

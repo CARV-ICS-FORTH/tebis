@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <unistd.h>
 #include <stdarg.h>
 #include <string.h>
@@ -13,7 +14,7 @@ char *zku_concat_strings(int num, ...)
 	va_list arguments;
 	va_start(arguments, num);
 
-	int total_length = 0;
+	int total_length = 1;
 	int x;
 	for (x = 0; x < num; x++) {
 		tmp_string = va_arg(arguments, const char *);
@@ -22,17 +23,20 @@ char *zku_concat_strings(int num, ...)
 			total_length += strlen(tmp_string);
 		}
 	}
-
 	va_end(arguments);
-
-	char *path = (char *)malloc(total_length * sizeof(char) + 1);
-	path[0] = '\0';
+	char *path = (char *)calloc(1, total_length);
 	va_start(arguments, num);
-
+	int idx = 0;
 	for (x = 0; x < num; x++) {
 		tmp_string = va_arg(arguments, const char *);
 		if (tmp_string != NULL) {
-			strcat(path, tmp_string);
+			memcpy(&path[idx], tmp_string, strlen(tmp_string));
+			//strcat(path, tmp_string);
+			idx += strlen(tmp_string);
+			if (idx >= total_length) {
+				log_fatal("idx = %d total_length %d", idx, total_length);
+				exit(EXIT_FAILURE);
+			}
 		}
 	}
 	va_end(arguments);
