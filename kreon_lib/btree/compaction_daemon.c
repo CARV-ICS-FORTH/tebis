@@ -74,53 +74,49 @@ static uint32_t comp_calc_offt_in_seg(char *buffer_start, char *addr)
 static void comp_write_segment(char *buffer, uint64_t dev_offt, uint32_t buf_offt, uint32_t size, int fd)
 {
 #if 0
-  struct node_header *n = (struct node_header *)&buffer[buf_offt];
-  switch (n->type) {
-  case rootNode:
-  case internalNode: {
-    uint32_t decoded = buf_offt;
-    while (decoded < SEGMENT_SIZE) {
-
-      if (n->type == paddedSpace)
-        break;
-      assert(n->type == rootNode || n->type == internalNode);
-      n = (struct node_header *)((uint64_t)n + INDEX_NODE_SIZE +
-                                 KEY_BLOCK_SIZE);
-      decoded += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
-    }
-    break;
-  }
-  case leafNode:
-  case leafRootNode: {
-    int num_leaves = 0;
+	struct node_header *n = (struct node_header *)&buffer[buf_offt];
+	switch (n->type) {
+	case rootNode:
+	case internalNode: {
+		uint32_t decoded = buf_offt;
+		while (decoded < SEGMENT_SIZE) {
+			if (n->type == paddedSpace)
+				break;
+			assert(n->type == rootNode || n->type == internalNode);
+			n = (struct node_header *)((uint64_t)n + INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
+			decoded += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
+		}
+		break;
+	}
+	case leafNode:
+	case leafRootNode: {
+		int num_leaves = 0;
 		int padded = 0;
-    uint32_t decoded = buf_offt;
-    while (decoded < SEGMENT_SIZE) {
-
-      if (n->type == paddedSpace) {
-        log_warn("Found padded space in leaf segment ok");
+		uint32_t decoded = buf_offt;
+		while (decoded < SEGMENT_SIZE) {
+			if (n->type == paddedSpace) {
+				log_warn("Found padded space in leaf segment ok");
 				padded = 1;
 				break;
-      }
-      if (n->type != leafNode && n->type != leafRootNode) {
-        log_fatal("Corruption expected leaf got %u decoded was %u", n->type,
-                  decoded);
-        assert(0);
-      }
-      ++num_leaves;
-      n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
-      decoded += LEAF_NODE_SIZE;
-    }
-		if(padded)
+			}
+			if (n->type != leafNode && n->type != leafRootNode) {
+				log_fatal("Corruption expected leaf got %u decoded was %u", n->type, decoded);
+				assert(0);
+			}
+			++num_leaves;
+			n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
+			decoded += LEAF_NODE_SIZE;
+		}
+		if (padded)
 			break;
-    assert(num_leaves == 511);
-    break;
-  }
-  case paddedSpace:
-    break;
-  default:
-    assert(0);
-  }
+		assert(num_leaves == 511);
+		break;
+	}
+	case paddedSpace:
+		break;
+	default:
+		assert(0);
+	}
 #endif
 	ssize_t total_bytes_written = buf_offt;
 	ssize_t bytes_written = 0;
@@ -376,7 +372,7 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 		comp_write_segment(c->segment_buf[i], c->dev_offt[i], sizeof(struct segment_header), SEGMENT_SIZE,
 				   c->fd);
 		if (c->handle->db_desc->send_idx && i <= c->tree_height) {
-			log_info("Closing cursor for level %u height %u", c->level_id, i);
+			//log_info("Closing cursor for level %u height %u", c->level_id, i);
 			if (i != c->tree_height)
 				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
 								(struct segment_header *)c->segment_buf[i],
@@ -413,13 +409,18 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 				*(uint32_t *)(&c->segment_buf[0][c->segment_offt[0] % SEGMENT_SIZE]) = paddedSpace;
 				c->segment_offt[0] += remaining_space;
 			}
-			comp_write_segment(c->segment_buf[0], c->dev_offt[0], sizeof(struct segment_header),
-					   SEGMENT_SIZE, c->fd);
+			//if(mprotect(c->segment_buf[0],SEGMENT_SIZE,PROT_READ) != 0){
+			//	log_fatal("Failed to protect");
+			//	exit(EXIT_FAILURE);
+			//}
+
 			if (c->handle->db_desc->send_idx) {
 				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[0],
 								(struct segment_header *)c->segment_buf[0],
 								SEGMENT_SIZE, c->level_id, NULL);
 			}
+			comp_write_segment(c->segment_buf[0], c->dev_offt[0], sizeof(struct segment_header),
+					   SEGMENT_SIZE, c->fd);
 			// uint32_t *type = (uint32_t *)&c->segment_buf[0][4096];
 			// assert(*type == leafNode || *type == leafRootNode);
 			if (fsync(FD) != 0) {
@@ -480,7 +481,7 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 								(struct segment_header *)c->segment_buf[height],
 								SEGMENT_SIZE, c->level_id, NULL);
 			}
-			log_info("Dumped index %d segment buffer", height);
+			//log_info("Dumped index %d segment buffer", height);
 			/*get space from allocator*/
 			struct segment_header *seg = get_segment_for_explicit_IO(
 				c->handle->volume_desc, &c->handle->db_desc->levels[c->level_id], 1);
@@ -1025,6 +1026,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 		(struct node_header *)(MAPPED + merged_level->root_offt);
 	assert(merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1]->type == rootNode);
 	free(merged_level);
+	free(m_heap);
 
 	// assert(local_spilled_keys ==
 	// handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree]

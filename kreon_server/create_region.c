@@ -7,6 +7,9 @@
 int is_connected = 0;
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
+	(void)zkh;
+	(void)path;
+	(void)context;
 	/*
  	* zookeeper_init might not have returned, so we
  	* use zkh instead.
@@ -56,8 +59,7 @@ int main(int argc, char *argv[])
 	char *token = strtok(argv[5], "-");
 	strcpy(region.primary.hostname, token);
 	region.primary.epoch = 0;
-	int i;
-	for (i = 0; i < region.num_of_backup; i++) {
+	for (uint32_t i = 0; i < region.num_of_backup; i++) {
 		strcpy(region.backups[i].kreon_ds_hostname, argv[6 + i]);
 		region.backups[i].kreon_ds_hostname_length = strlen(region.backups[i].kreon_ds_hostname);
 		char *token = strtok(argv[6 + i], "-");
@@ -71,5 +73,6 @@ int main(int argc, char *argv[])
 		log_fatal("failed to create region %s", argv[3]);
 		exit(EXIT_FAILURE);
 	}
+	free(zk_path);
 	return EXIT_SUCCESS;
 }

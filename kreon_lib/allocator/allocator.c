@@ -1,3 +1,17 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #define _LARGEFILE64_SOURCE
 #include <stdio.h>
 #include <semaphore.h>
@@ -28,6 +42,7 @@
 #define _FILE_OFFSET_BITS 64
 //#define USE_MLOCK
 #define __NR_mlock2 284
+#define PAGE_SIZE 4096
 
 LIST *mappedVolumes = NULL;
 int32_t DMAP_ACTIVATED = 1;
@@ -232,7 +247,7 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 		log_fatal("code = %d,  ERROR = %s for device %s\n", errno, strerror(errno), dev_name);
 		exit(EXIT_FAILURE);
 	}
-	log_info("initializing volume %s start %llu size %llu size in 4K blocks %llu", dev_name, (long long)start,
+	log_info("Initializing volume %s start %llu size %llu size in 4K blocks %llu", dev_name, (long long)start,
 		 (long long)size, (long long)dev_size_in_blocks);
 
 	/*check if the device is a fake_blk device, maybe add another ioctl for this
@@ -397,6 +412,7 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	}
 	log_info("Syncing");
 	fsync(fd);
+	free(dev_superblock);
 
 	printf("\n\n############ [%s:%s:%d] ####################\n", __FILE__, __func__, __LINE__);
 	printf("\tDevice size in blocks %llu\n", (LLU)dev_size_in_blocks);
@@ -638,6 +654,7 @@ struct allocator_bitmap_buddies {
 	uint64_t r_epoch;
 	uint64_t r_bitmap[511];
 };
+
 void *allocate(void *_volume_desc, uint64_t num_bytes, int unused, char allocation_code)
 {
 	(void)unused;
@@ -657,15 +674,20 @@ void *allocate(void *_volume_desc, uint64_t num_bytes, int unused, char allocati
 	/*convert number of bytes in corresponding BLKSIZE blocks needed*/
 	int64_t size = num_bytes / DEVICE_BLOCK_SIZE;
 
-	uint64_t *words;
+	uint64_t *words = NULL;
 	/*how many words will i need?*/
-	if (size == 1)
+	if (size == 1) {
 		words = (uint64_t *)malloc(sizeof(uint64_t));
-	else if (size > 1 && size < 64)
+	} else if (size > 1 && size < 64) {
 		words = (uint64_t *)malloc(sizeof(uint64_t) * 2);
-	else
-		words = (uint64_t *)malloc((sizeof(uint64_t) * (size / 64)) + 2);
-
+	} else {
+		uint32_t alloc_size = ((size / 64) * sizeof(uint64_t)) + (2 * sizeof(uint64_t));
+		words = (uint64_t *)malloc(alloc_size);
+	}
+	if (words == NULL) {
+		log_fatal("Malloc failed out of memory");
+		exit(EXIT_FAILURE);
+	}
 	void *word_address; /*current word we are searching*/
 	int32_t i = 0;
 	int32_t shift_bits = 0;
@@ -722,7 +744,8 @@ void *allocate(void *_volume_desc, uint64_t num_bytes, int unused, char allocati
 		if (mask == (mask & *(uint64_t *)word_address)) {
 			if ((size - suffix_size) > WORD_SIZE) {
 				suffix_size += WORD_SIZE;
-				words[idx] = (uint64_t)word_address; /*hit for this word addr, mark it */
+				/*hit for this word addr, mark it */
+				words[idx] = (uint64_t)word_address;
 				idx++;
 #ifdef DEBUG_ALLOCATOR
 				printf("Found %lld first high bits need more %lld \n", (long long int)suffix_size,

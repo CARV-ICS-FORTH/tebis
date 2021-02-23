@@ -661,10 +661,12 @@ void dataserver_health_watcher(zhandle_t *zh, int type, int state, const char *p
 
 void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx)
 {
+	(void)state;
+	(void)path;
 	struct krm_msg *msg;
 	int buffer_len;
 	struct Stat stat;
-	struct String_vector *mails = (struct String_vector *)malloc(sizeof(struct String_vector));
+
 	struct krm_server_desc *s_desc = (struct krm_server_desc *)watcherCtx;
 	char *mail;
 	int rc;
@@ -688,6 +690,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 
 	/*get children with watcher*/
 	if (type == ZOO_CHILD_EVENT) {
+		struct String_vector *mails = (struct String_vector *)calloc(1, sizeof(struct String_vector));
 		rc = zoo_wget_children(zh, s_desc->mail_path, mailbox_watcher, (void *)s_desc, mails);
 		if (rc != ZOK) {
 			log_fatal("failed to get mails from path %s error code ", s_desc->mail_path, zku_op2String(rc));
@@ -717,6 +720,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 			}
 			free(mail);
 		}
+		free(mails);
 	} else {
 		log_fatal("Unhandled type of event type is %d", type);
 		exit(EXIT_FAILURE);
@@ -777,7 +781,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			struct krm_region_desc *r_desc =
 				(struct krm_region_desc *)calloc(1, sizeof(struct krm_region_desc));
 
-			struct krm_region *region = (struct krm_region *)malloc(sizeof(struct krm_region));
+			struct krm_region *region = (struct krm_region *)calloc(1, sizeof(struct krm_region));
 			*region = msg->region;
 			r_desc->region = region;
 			if (msg->type == KRM_OPEN_REGION_AS_PRIMARY) {
@@ -787,9 +791,6 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 				r_desc->role = KRM_BACKUP;
 				r_desc->r_state = NULL;
 			}
-			/*open kreon db*/
-			r_desc->db =
-				db_open(globals_get_mount_point(), 0, globals_get_dev_size(), region->id, CREATE_DB);
 
 			r_desc->replica_bufs_initialized = 0;
 			r_desc->region_halted = 0;
@@ -800,6 +801,9 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			r_desc->replica_log_map = NULL;
 			for (int i = 0; i < MAX_LEVELS; i++)
 				r_desc->replica_index_map[i] = NULL;
+			/*open kreon db*/
+			r_desc->db =
+				db_open(globals_get_mount_point(), 0, globals_get_dev_size(), region->id, CREATE_DB);
 
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
@@ -1367,6 +1371,7 @@ retry:
 	if (r_desc == NULL) {
 		int ret1;
 		int ret2;
+		assert(desc->ds_regions->num_ds_regions > 0);
 		end_idx = desc->ds_regions->num_ds_regions - 1;
 		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
 				   desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id);

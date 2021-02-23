@@ -281,7 +281,7 @@ void globals_init_volume(void)
 		exit(EXIT_FAILURE);
 	}
 	if (strlen(global_vars.dev) >= 5 && strncmp(global_vars.dev, "/dev/", 5) == 0) {
-		log_info("underyling volume is a device %s", global_vars.dev);
+		log_info("Volume is a device %s", global_vars.dev);
 		if (ioctl(fd, BLKGETSIZE64, &size) == -1) {
 			log_fatal("Failed to determine underlying block device size %s", global_vars.dev);
 			perror("ioctl");
@@ -290,17 +290,18 @@ void globals_init_volume(void)
 		log_info("underyling volume is a block device %s of size %ld bytes", global_vars.dev, size);
 		volume_init(global_vars.dev, 0, size, 0);
 	} else {
-		log_info("querying size of file %s", global_vars.dev);
+		log_info("Retrieving file: %s size...", global_vars.dev);
 		size = lseek(fd, 0, SEEK_END);
 		if (size == -1) {
 			log_fatal("failed to determine file size exiting...");
 			perror("ioctl");
 			exit(EXIT_FAILURE);
 		}
-		log_info("underyling volume is a file %s of size %ld bytes", global_vars.dev, size);
+		log_info("Volume is a file %s of size %ld bytes", global_vars.dev, size);
+		close(fd);
 		volume_init(global_vars.dev, 0, size, 1);
 	}
-	close(fd);
+
 	global_vars.volume_size = size;
 	global_vars.is_volume_init = 1;
 
