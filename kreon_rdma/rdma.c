@@ -61,6 +61,7 @@ void on_completion_server(struct rdma_message_context *msg_ctx);
 void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_type, uint32_t message_size,
 		       uint32_t message_payload_size, uint32_t padding)
 {
+	(void)message_size;
 	if (message_payload_size > 0) {
 		msg->pay_len = message_payload_size;
 		msg->padding_and_tail = padding + TU_TAIL_SIZE;
@@ -88,6 +89,9 @@ void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_
 
 msg_header *allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
 {
+	(void)conn;
+	(void)message_payload_size;
+	(void)message_type;
 	log_fatal("dead function");
 	raise(SIGINT);
 	exit(EXIT_FAILURE);
@@ -248,7 +252,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		case SPACE_NOT_READY_YET:
 			if (++i % 10000000 == 0) {
 				for (i = 0; i < c_buf->bitmap_size; i++) {
-					if (c_buf->bitmap[i] != (int)0xFFFFFFFF) {
+					if (c_buf->bitmap[i] != (uint32_t)0xFFFFFFFF) {
 						// if (++k % 100000000 == 0)
 						// DPRINT("bitmap[%d] = 0x%x waiting for reply at
 						// %llu\n",i,conn->send_circular_buf->bitmap[i],
@@ -405,7 +409,7 @@ msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_
 	case SPACE_NOT_READY_YET:
 		if (++i % 10000000 == 0) {
 			for (i = 0; i < c_buf->bitmap_size; i++) {
-				if (c_buf->bitmap[i] != (int)0xFFFFFFFF) {
+				if (c_buf->bitmap[i] != 0xFFFFFFFF) {
 					// if (++k % 100000000 == 0)
 					// DPRINT("bitmap[%d] = 0x%x waiting for reply at
 					// %llu\n",i,conn->send_circular_buf->bitmap[i],
@@ -583,6 +587,7 @@ void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
 
 void free_rdma_received_message(connection_rdma *conn, msg_header *msg)
 {
+	(void)conn;
 	// assert(conn->pending_received_messages > 0);
 	_zero_rendezvous_locations(msg);
 	//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
@@ -590,6 +595,7 @@ void free_rdma_received_message(connection_rdma *conn, msg_header *msg)
 
 void free_rdma_local_message(connection_rdma *conn)
 {
+	(void)conn;
 	// assert(conn->pending_sent_messages > 0);
 	//__sync_fetch_and_sub(&conn->pending_sent_messages, 1);
 	// if (conn->sleeping_workers > 0) {
@@ -598,7 +604,7 @@ void free_rdma_local_message(connection_rdma *conn)
 	return;
 }
 
-/*gesalous, disconnect*/
+/*Disconnect*/
 void disconnect_and_close_connection(connection_rdma *conn)
 {
 	msg_header *disconnect_request = allocate_rdma_message(conn, 0, DISCONNECT);
@@ -607,41 +613,6 @@ void disconnect_and_close_connection(connection_rdma *conn)
 	       "deallocation of resources follows...\n");
 	close_and_free_RDMA_connection(conn->channel, conn);
 	DPRINT("Success\n");
-}
-
-/*Caution not a thread safe function, Kreon handles this*/
-int rdma_kv_entry_to_replica(connection_rdma *conn, msg_header *data_message, uint64_t segment_log_offset, void *source,
-			     uint32_t kv_length, uint32_t client_buffer_key)
-{
-	struct ibv_send_wr wr;
-	struct ibv_sge sge;
-	struct ibv_send_wr *bad_wr = NULL;
-	int ret = 0;
-	assert(data_message != NULL);
-
-	/*prepare the RDMA*/
-	memset(&wr, 0, sizeof(wr));
-	memset(&sge, 0, sizeof(sge));
-	wr.wr_id = 0;
-	wr.opcode = IBV_WR_RDMA_WRITE;
-	wr.sg_list = &sge;
-	wr.num_sge = 1;
-	wr.wr.rdma.rkey = conn->peer_mr->rkey;
-
-	wr.send_flags = IBV_SEND_SIGNALED;
-	wr.wr.rdma.remote_addr = (uint64_t)(conn->peer_mr->addr + (uint64_t)data_message->local_offset +
-					    TU_HEADER_SIZE + 4096 + segment_log_offset);
-	sge.addr = (uint64_t)source;
-	sge.length = kv_length;
-	sge.lkey = client_buffer_key;
-	ret = ibv_post_send(conn->qp, &wr, &bad_wr);
-
-	if (ret != 0) {
-		DPRINT("ERROR rdma failed reason follows--->\n");
-		perror("Reason: \n");
-		exit(EXIT_FAILURE);
-	}
-	return KREON_SUCCESS;
 }
 
 struct ibv_device *ctx_find_dev(const char *ib_devname)
@@ -681,7 +652,7 @@ struct ibv_context *open_ibv_device(char *devname)
 	struct ibv_context **dev_list = rdma_get_devices(&num_devices);
 	struct ibv_context *rdma_dev = NULL;
 	for (int i = 0; i < num_devices; ++i)
-		if (!strncmp(dev_list[i]->device->name, DEFAULT_DEV_IBV, strlen(DEFAULT_DEV_IBV))) {
+		if (!strncmp(dev_list[i]->device->name, devname, strlen(devname))) {
 			rdma_dev = dev_list[i];
 			break;
 		}
@@ -728,10 +699,6 @@ connection_rdma *find_memory_steal_candidate(SIMPLE_CONCURRENT_LIST *connections
 	return ret;
 }
 
-// TODO [mvard] Change ethernet_server_connect to use a free port number and add
-// it to zookeeper so the clients can get that info
-static void __stop_client(connection_rdma *conn);
-
 uint16_t ctx_get_local_lid(struct ibv_context *context, int port, struct ibv_port_attr *attr)
 {
 	if (ibv_query_port(context, port, attr))
@@ -749,6 +716,7 @@ void tu_rdma_init_connection(struct connection_rdma *conn)
 void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts, const int num_hosts,
 					     struct channel_rdma *channel, connection_type type)
 {
+	(void)num_hosts;
 	struct ibv_qp_init_attr qp_init_attr;
 	msg_header *msg;
 	if (!strcmp(hosts[0], "127.0.0.1")) {
@@ -770,7 +738,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	struct rdma_addrinfo hints, *res;
 	char *ip;
 	char *port;
-	int host_copy_size = 1024;
+	unsigned long host_copy_size = 1024;
 	char *host_copy = (char *)malloc(host_copy_size);
 	if (host_copy_size < strlen(hosts[0])) {
 		log_fatal("Potential buffer overflow string len is %d allocated buffer is %d", strlen(hosts[0]),
@@ -1097,6 +1065,7 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 
 void ec_sig_handler(int signo)
 {
+	(void)signo;
 	struct sigaction sa = {};
 
 	sigemptyset(&sa.sa_mask);
@@ -1177,37 +1146,6 @@ uint32_t wait_for_payload_arrival(msg_header *hdr)
 		hdr->next = NULL;
 	}
 	return message_size;
-}
-
-static void __stop_client(connection_rdma *conn)
-{
-	if (conn->status == STOPPED_BY_THE_SERVER) {
-		ERRPRINT("connection is already stopped!\n");
-		return;
-	}
-
-	conn->status = STOPPED_BY_THE_SERVER;
-	DPRINT("SERVER: Sending stop at offset %llu\n", (LLU)conn->control_location);
-	msg_header *msg = (msg_header *)((uint64_t)conn->rdma_memory_regions->local_memory_buffer +
-					 (uint64_t)conn->control_location);
-	msg->pay_len = sizeof(struct ibv_mr);
-	msg->padding_and_tail = 0;
-	msg->data = (char *)(uint64_t)msg + TU_HEADER_SIZE;
-	msg->next = msg->data;
-	msg->type = CLIENT_STOP_NOW;
-	msg->receive = TU_RDMA_REGULAR_MSG;
-	msg->local_offset = (uint64_t)conn->control_location;
-	msg->remote_offset = (uint64_t)conn->control_location;
-	msg->ack_arrived = KR_REP_PENDING;
-	msg->request_message_local_addr = NULL;
-
-	struct ibv_mr *new_mr = (struct ibv_mr *)msg->data;
-	memset(new_mr, 0x00, sizeof(struct ibv_mr));
-	new_mr->addr = conn->next_rdma_memory_regions->remote_memory_region->addr;
-	new_mr->length = conn->next_rdma_memory_regions->remote_memory_region->length;
-	new_mr->rkey = conn->next_rdma_memory_regions->remote_memory_region->rkey;
-	DPRINT("addr = %p, length = %lu KB, rkey = %u\n", new_mr->addr, new_mr->length / 1024, new_mr->rkey);
-	__send_rdma_message(conn, msg, NULL);
 }
 
 void _update_client_rendezvous_location(connection_rdma *conn, int message_size)

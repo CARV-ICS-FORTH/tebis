@@ -319,10 +319,6 @@ void client_rdma_init_message_context(struct rdma_message_context *msg_ctx, stru
 bool client_rdma_send_message_success(struct rdma_message_context *msg_ctx);
 int client_send_rdma_message(struct connection_rdma *conn, struct msg_header *msg);
 
-/*replica specific functions*/
-int rdma_kv_entry_to_replica(connection_rdma *conn, msg_header *data_message, uint64_t segment_log_offset, void *source,
-			     uint32_t kv_length, uint32_t client_buffer_key);
-
 struct connection_rdma *crdma_client_create_connection(struct channel_rdma *channel);
 void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connection_rdma *conn);
 void crdma_generic_free_connection(struct connection_rdma **ardma_conn);

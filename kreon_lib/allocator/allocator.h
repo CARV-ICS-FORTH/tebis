@@ -1,5 +1,20 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #pragma once
-
+#define _LARGEFILE64_SOURCE
+#include <sys/types.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -18,10 +33,8 @@
 #include "../../utilities/list.h"
 #include "../../utilities/spin_loop.h"
 #include "../btree/conf.h"
-
-#define off64_t unsigned long long
+#define MAGIC_NUMBER 2036000000
 #define FREE_BLOCK 124
-#define DELETE_KEY 100
 
 typedef enum volume_state { VOLUME_IS_OPEN = 0x00, VOLUME_IS_CLOSING = 0x01, VOLUME_IS_CLOSED = 0x02 } volume_state;
 
@@ -47,8 +60,6 @@ typedef enum volume_state { VOLUME_IS_OPEN = 0x00, VOLUME_IS_CLOSING = 0x01, VOL
 #define NEW_COMMIT_LOG_INFO 0x1A
 #define NEW_LEVEL_0_TREE 0x10 /* used for level-0 tree allocations */
 #define NEW_LEVEL_1_TREE 0x20 /* used for level-1 tree allocations */
-#define NEW_REPLICA_FOREST_TREE 0x30 /* used for level-1 tree allocations */
-#define SPACE_FOR_FOREST_TREE 0x30 /* used for level-1 tree allocations */
 #define EXTEND_BUFFER 0x0D /* same as above */
 #define REORGANIZATION 0x02
 #define DELETE_LOG_EXPANSION 0xA3
@@ -124,7 +135,8 @@ typedef struct superblock {
 	int64_t dev_size_in_blocks;
 	int64_t dev_addressed_in_blocks;
 	int64_t unmapped_blocks;
-	char pad[4056];
+	int64_t magic_number;
+	char pad[4048];
 } superblock;
 
 typedef struct volume_descriptor {
@@ -186,11 +198,6 @@ typedef struct volume_descriptor {
 	volatile char snap_preemption;
 } volume_descriptor;
 
-typedef struct key_deletion_request {
-	uint64_t epoch;
-	void *deleted_kv_addr;
-} key_deletion_request;
-
 /*
  * @dev_name The device name
  * @start The beginning offset in bytes
@@ -199,6 +206,7 @@ typedef struct key_deletion_request {
  *
  * @return >= 0 in case of success. < 0 otherwise.
  */
+
 int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolume);
 
 void destoy_db_list_node(NODE *node);

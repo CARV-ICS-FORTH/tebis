@@ -23,8 +23,6 @@
 
 #define MAX_COUNTER_VERSIONS 4
 
-#define PREFIX_SIZE 12
-
 #define MAX_HEIGHT 9
 
 /* types used for the keys
