@@ -1,3 +1,6 @@
+#define _LARGEFILE64_SOURCE
+#include <sys/types.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -19,7 +22,7 @@ struct globals {
 	char *RDMA_IP_filter;
 	char *dev;
 	char *mount_point;
-	uint64_t volume_size;
+	off64_t volume_size;
 	struct channel_rdma *channel;
 	int connections_per_server;
 	int job_scheduling_max_queue_depth;
@@ -165,14 +168,14 @@ void globals_set_dev(char *dev)
 		log_info("%s is a block device of size %llu", dev, global_vars.volume_size);
 
 	} else {
-		int64_t end_of_file;
-		end_of_file = lseek(FD, 0, SEEK_END);
+		off64_t end_of_file;
+		end_of_file = lseek64(FD, 0, SEEK_END);
 		if (end_of_file == -1) {
 			log_fatal("failed to determine file's %s size exiting...", dev);
 			perror("ioctl");
 			exit(EXIT_FAILURE);
 		}
-		global_vars.volume_size = (uint64_t)end_of_file;
+		global_vars.volume_size = end_of_file;
 		log_info("%s is a file of size %llu", dev, global_vars.volume_size);
 		global_vars.mount_point = strdup(dev);
 	}
@@ -274,7 +277,7 @@ void globals_init_volume(void)
 		goto exit;
 	}
 
-	int64_t size;
+	off64_t size;
 	int fd = open(global_vars.dev, O_RDWR);
 	if (fd == -1) {
 		perror("open");
@@ -291,7 +294,7 @@ void globals_init_volume(void)
 		volume_init(global_vars.dev, 0, size, 0);
 	} else {
 		log_info("Retrieving file: %s size...", global_vars.dev);
-		size = lseek(fd, 0, SEEK_END);
+		size = lseek64(fd, 0, SEEK_END);
 		if (size == -1) {
 			log_fatal("failed to determine file size exiting...");
 			perror("ioctl");

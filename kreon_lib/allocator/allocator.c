@@ -13,32 +13,36 @@
 // limitations under the License.
 
 #define _LARGEFILE64_SOURCE
+#include <sys/types.h>
+#include <unistd.h>
 #include <stdio.h>
-#include <semaphore.h>
 #include <time.h>
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
-#include <sys/types.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/time.h>
-#include <string.h>
 #include <stdarg.h>
 #include <fcntl.h>
-#include <ctype.h>
 #include <string.h>
-#include <math.h>
-#include <execinfo.h>
-#include <stdbool.h>
 #include <pthread.h>
+#include <inttypes.h>
+#include <linux/fs.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <log.h>
 #include "dmap-ioctl.h"
-#include "../../utilities/macros.h"
 #include "allocator.h"
+#include "../btree/btree.h"
 #include "../btree/conf.h"
 #include "../btree/segment_allocator.h"
-#include <log.h>
+#include "../utilities/list.h"
 
+//#define USE_MLOCK
+#define __NR_mlock2 284
+
+#define ALLOW_RAW_VOLUMES 0
+#define MIN_VOLUME_SIZE (16 * 1024 * 1024 * 1024L)
 #define _FILE_OFFSET_BITS 64
 //#define USE_MLOCK
 #define __NR_mlock2 284
@@ -69,109 +73,13 @@ unsigned long long scan_prefix_miss;
 
 uint64_t highest_bit_mask = 0x8000000000000000;
 extern db_handle *open_dbs;
-pthread_mutex_t EUTROPIA_LOCK = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t VOLUME_LOCK = PTHREAD_MUTEX_INITIALIZER;
 // volatile uint64_t snapshot_v1;
 // volatile uint64_t snapshot_v2;
 
 uint64_t MAPPED = 0; /*from this address any node can see the entire volume*/
 int FD;
 static inline void *next_word(volume_descriptor *volume_desc, unsigned char op_code);
-double log2(double x);
-int ffsl(long int i);
-
-static void check(int test, const char *message, ...)
-{
-	if (test) {
-		va_list args;
-		va_start(args, message);
-		vfprintf(stderr, message, args);
-		va_end(args);
-		fprintf(stderr, "container\n");
-		exit(EXIT_FAILURE);
-	}
-}
-
-static void add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry);
-static void mount_volume(char *volume_name, int64_t start, int64_t size); /*Called once from a region server*/
-void clean_log_entries(void *volume_desc);
-void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t length, char free, uint64_t *bit_idx);
-
-int32_t lread(int32_t fd, off64_t offset, int whence, void *ptr, size_t size);
-int32_t lwrite(int32_t fd, off64_t offset, int whence, void *ptr, ssize_t size);
-
-void mount_volume(char *volume_name, int64_t start, int64_t unused_size)
-{
-	(void)unused_size;
-	int64_t device_size;
-	MUTEX_LOCK(&EUTROPIA_LOCK);
-
-	if (MAPPED == 0) {
-		log_info("Opening Volume %s", volume_name);
-		/* open the device */
-		FD = open(volume_name, O_RDWR);
-		if (FD < 0) {
-			log_fatal("Failed to open %s", volume_name);
-			perror("Reason:\n");
-			exit(EXIT_FAILURE);
-		}
-
-		if (ioctl(FD, BLKGETSIZE64, &device_size) == -1) {
-			/*maybe we have a file?*/
-			device_size = lseek(FD, 0, SEEK_END);
-			if (device_size == -1) {
-				log_fatal("failed to determine volume size exiting...");
-				perror("ioctl");
-				exit(EXIT_FAILURE);
-			}
-		}
-
-		log_info("creating virtual address space offset %lld size %lld\n", (long long)start,
-			 (long long)device_size);
-		MAPPED = (uint64_t)mmap(NULL, device_size, PROT_READ | PROT_WRITE, MAP_SHARED, FD,
-					start); /*mmap the device*/
-		check(MAPPED == (uint64_t)MAP_FAILED, "mmap %s failed: %s", volume_name, strerror(errno));
-		madvise((void *)MAPPED, device_size, MADV_RANDOM);
-
-		if (MAPPED % sysconf(_SC_PAGE_SIZE) == 0)
-			log_info("address space aligned properly address space starts at %llu\n", (LLU)MAPPED);
-		else {
-			log_fatal("FATAL error Mapped address not aligned correctly mapped: %llu", (LLU)MAPPED);
-			exit(EXIT_FAILURE);
-		}
-	}
-	MUTEX_UNLOCK(&EUTROPIA_LOCK);
-}
-
-/*
- * Input: File descriptor, offset, relative position from where it has to be
- * read (SEEK_SET/SEEK_CUR/SEEK_END)
- *    pointer to databuffer, size of data to be read
- * Output: -1 on failure of lseek64/read
- *     number of bytes read on success.
- * Note: This reads absolute offsets in the disk.
- */
-int32_t lread(int32_t fd, off64_t offset, int whence, void *ptr, size_t size)
-{
-	if (size % 4096 != 0) {
-		printf("FATAL read request size %d not a multiple of 4k, harmful\n", (int32_t)size);
-		exit(-1);
-	}
-	if (offset % 4096 != 0) {
-		printf("FATAL read-seek request size %lld not a multiple of 4k, harmful\n", (long long)offset);
-		exit(-1);
-	}
-	if (lseek64(fd, (off64_t)offset, whence) == -1) {
-		fprintf(stderr, "lseek: fd:%d, offset:%llu, whence:%d, size:%lu\n", fd, offset, whence, size);
-		perror("lread");
-		return -1;
-	}
-	if (read(fd, ptr, size) == -1) {
-		fprintf(stderr, "lread-!: fd:%d, offset:%llu, whence:%d, size:%lu\n", fd, offset, whence, size);
-		perror("lread");
-		return -1;
-	}
-	return 1;
-}
 
 /*
  * Input: File descriptor, offset, relative position to where it has to be
@@ -181,13 +89,13 @@ int32_t lread(int32_t fd, off64_t offset, int whence, void *ptr, size_t size)
  *     number of bytes written on success.
  * Note: This writes absolute offsets in the disk.
  */
-int32_t lwrite(int32_t fd, off64_t offset, int whence, void *ptr, ssize_t size)
+static int32_t lwrite(int32_t fd, off64_t offset, int whence, void *ptr, ssize_t size)
 {
 	ssize_t total_bytes_written = 0;
 	ssize_t bytes_written = 0;
 	// log_info("Bytes to write %lld",size);
-	if (lseek64(fd, (off64_t)offset, whence) == -1) {
-		printf("lwrite: fd:%d, offset:%llu, whence:%d, size:%lu\n", fd, offset, whence, size);
+	if (lseek64(fd, offset, whence) == -1) {
+		printf("lwrite: fd:%d, offset:%ld, whence:%d, size:%lu\n", fd, offset, whence, size);
 		perror("lwrite");
 		exit(EXIT_FAILURE);
 	}
@@ -203,6 +111,86 @@ int32_t lwrite(int32_t fd, off64_t offset, int whence, void *ptr, ssize_t size)
 	}
 	// log_info("Writing done!");
 	return 1;
+}
+
+static void check(int test, const char *message, ...)
+{
+	if (test) {
+		va_list args;
+		va_start(args, message);
+		vfprintf(stderr, message, args);
+		va_end(args);
+		fprintf(stderr, "container\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void add_log_entry(volume_descriptor *volume_desc, void *address, uint32_t length, char type_of_entry);
+static off64_t mount_volume(char *volume_name, int64_t start, int64_t size); /*Called once from a region server*/
+void clean_log_entries(void *volume_desc);
+void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t length, char free, uint64_t *bit_idx);
+
+off64_t mount_volume(char *volume_name, int64_t start, int64_t unused_size)
+{
+	(void)unused_size;
+	off64_t device_size;
+
+	MUTEX_LOCK(&VOLUME_LOCK);
+
+#if !ALLOW_RAW_VOLUMES
+	if (strlen(volume_name) >= 5 && strncmp(volume_name, "/dev/", 5) == 0) {
+		log_fatal("Volume is a raw device %s current version does not support it!", volume_name);
+		exit(EXIT_FAILURE);
+	}
+#endif
+
+	if (MAPPED == 0) {
+		log_info("Opening Volume %s", volume_name);
+		/* open the device */
+		FD = open(volume_name, O_RDWR);
+		if (FD < 0) {
+			log_fatal("Failed to open %s", volume_name);
+			perror("Reason:\n");
+			exit(EXIT_FAILURE);
+		}
+
+		if (ioctl(FD, BLKGETSIZE64, &device_size) == -1) {
+			/*maybe we have a file?*/
+			device_size = lseek64(FD, 0, SEEK_END);
+			if (device_size == -1) {
+				log_fatal("failed to determine volume size exiting...");
+				perror("ioctl");
+				exit(EXIT_FAILURE);
+			}
+		}
+
+		if (device_size < MIN_VOLUME_SIZE) {
+			log_fatal("Sorry minimum supported volume size is %lld GB",
+				  MIN_VOLUME_SIZE / (1024 * 1024 * 1024));
+			exit(EXIT_FAILURE);
+		}
+
+		log_info("Creating virtual address space offset %lld size %ld\n", (long long)start, device_size);
+		MAPPED = (uint64_t)mmap(NULL, device_size, PROT_READ | PROT_WRITE, MAP_SHARED, FD,
+					start); /*mmap the device*/
+		check(MAPPED == (uint64_t)MAP_FAILED, "mmap %s failed: %s", volume_name, strerror(errno));
+		madvise((void *)MAPPED, device_size, MADV_RANDOM);
+
+		if (MAPPED % sysconf(_SC_PAGE_SIZE) == 0)
+			log_info("address space aligned properly address space starts at %llu\n", (LLU)MAPPED);
+		else {
+			log_fatal("FATAL error Mapped address not aligned correctly mapped: %llu", (LLU)MAPPED);
+			exit(EXIT_FAILURE);
+		}
+	}
+	struct superblock *b = (struct superblock *)MAPPED;
+	if (b->magic_number != MAGIC_NUMBER) {
+		log_fatal("This volume %s does not seem to contain a valid instance. Issue mkfs command and retry",
+			  volume_name);
+		exit(EXIT_FAILURE);
+	}
+	MUTEX_UNLOCK(&VOLUME_LOCK);
+	return device_size;
 }
 
 /**
@@ -226,6 +214,17 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	int fd = 0;
 	int ret;
 	struct fake_blk_page_range frang;
+
+#if !ALLOW_RAW_VOLUMES
+	if (strlen(dev_name) >= 5 && strncmp(dev_name, "/dev/", 5) == 0) {
+		log_fatal("Volume is a raw device %s current version does not support it!", dev_name);
+		exit(EXIT_FAILURE);
+	}
+#endif
+	if (size < MIN_VOLUME_SIZE) {
+		log_fatal("Sorry minimum supported volume size is %lld GB", MIN_VOLUME_SIZE / (1024 * 1024 * 1024));
+		exit(EXIT_FAILURE);
+	}
 
 	if (sizeof(pr_db_group) != 4096) {
 		log_fatal("pr_db_group size %lu not 4KB system,(db_entry size %lu) cannot "
@@ -311,7 +310,7 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	memset(buffer + sizeof(int64_t), 0xFF, DEVICE_BLOCK_SIZE - sizeof(int64_t));
 
 	for (i = 0; i < bitmap_size_in_blocks; i++) {
-		if (lwrite(fd, (off64_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
+		if (lwrite(fd, (off_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
 			log_fatal("code = %d,  ERROR = %s\n", errno, strerror(errno));
 			printf("Writing at offset %llu\n", (LLU)offset);
 			return -1;
@@ -342,14 +341,14 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 
 	/*write it now*/
 	offset = start + 4096 + (FREE_LOG_SIZE * 4096);
-	if (lwrite(fd, (off64_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
+	if (lwrite(fd, (off_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
 		fprintf(stderr, "Function = %s, code = %d,  ERROR = %s\n", __func__, errno, strerror(errno));
 		return -1;
 	}
 
 	/*mark also it's buddy block */
 	offset += 4096;
-	if (lwrite(fd, (off64_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
+	if (lwrite(fd, (off_t)offset, SEEK_SET, buffer, (size_t)DEVICE_BLOCK_SIZE) == -1) {
 		fprintf(stderr, "Function = %s, code = %d,  ERROR = %s\n", __func__, errno, strerror(errno));
 	}
 
@@ -358,7 +357,7 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	memset(buffer, 0x00, DEVICE_BLOCK_SIZE);
 
 	for (i = 0; i < FREE_LOG_SIZE; i++) {
-		if (lwrite(fd, (off64_t)offset, SEEK_SET, buffer, DEVICE_BLOCK_SIZE) == -1) {
+		if (lwrite(fd, (off_t)offset, SEEK_SET, buffer, DEVICE_BLOCK_SIZE) == -1) {
 			fprintf(stderr, "Function = %s, code = %d,  ERROR = %s\n", __func__, errno, strerror(errno));
 			return -1;
 		}
@@ -386,14 +385,14 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	/*zero metadata of system segment*/
 	char *zeroes = malloc(sizeof(segment_header));
 	memset(zeroes, 0x00, sizeof(segment_header));
-	if (lwrite(fd, (off64_t)offset, SEEK_SET, zeroes, sizeof(segment_header)) == -1) {
+	if (lwrite(fd, (off_t)offset, SEEK_SET, zeroes, sizeof(segment_header)) == -1) {
 		log_fatal("code = %d,  ERROR = %s\n", errno, strerror(errno));
 		return -1;
 	}
 	free(zeroes);
 	offset += sizeof(segment_header);
 	log_info("Writing system catalogue at offset %llu\n", (LLU)offset);
-	if (lwrite(fd, (off64_t)offset, SEEK_SET, &sys_catalogue, (size_t)(sizeof(pr_system_catalogue))) == -1) {
+	if (lwrite(fd, (off_t)offset, SEEK_SET, &sys_catalogue, (size_t)(sizeof(pr_system_catalogue))) == -1) {
 		log_fatal("code = %d,  ERROR = %s\n", errno, strerror(errno));
 		return -1;
 	}
@@ -405,8 +404,9 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 	dev_superblock->dev_addressed_in_blocks = dev_addressed_in_blocks;
 	dev_superblock->unmapped_blocks = unmapped_blocks;
 	dev_superblock->system_catalogue = (pr_system_catalogue *)(offset);
+	dev_superblock->magic_number = MAGIC_NUMBER;
 
-	if (lwrite(fd, (off64_t)start, SEEK_SET, dev_superblock, sizeof(superblock)) == -1) {
+	if (lwrite(fd, (off_t)start, SEEK_SET, dev_superblock, sizeof(superblock)) == -1) {
 		log_fatal("code = %d,  ERROR = %s\n", errno, strerror(errno));
 		return -1;
 	}
@@ -961,7 +961,11 @@ void allocator_init(volume_descriptor *volume_desc)
 	int fake_blk = 0;
 	int ret;
 
-	mount_volume(volume_desc->volume_name, 0, 0 /* unused */); /*if not mounted */
+	off64_t volume_size = -1;
+	/*if not mounted */
+	mount_volume(volume_desc->volume_name, 0, 0 /* unused */);
+	if (volume_size > 0)
+		volume_desc->size = volume_size;
 
 	ret = ioctl(FD, FAKE_BLK_IOC_TEST_CAP);
 	if (ret == 0) {
@@ -1025,23 +1029,6 @@ void allocator_init(volume_descriptor *volume_desc)
 	printf("######### </Volume state> ###################\n");
 
 	//#endif
-	/*XXX TODO XXX remove later*
-printf("[%s:%s:%d] Heating Up write page faults\n",__FILE__,__func__,__LINE__);
-uint64_t * heat_addr = (uint64_t *)volume_desc->bitmap_end;
-uint64_t a;
-int j;
-//100GB in pages
-for (j = 0; j < 26214400; ++j) {
-//a = *heat_addr;
-//if(a == 0xFEB00000DDEEFFCC){
-//	printf("[%s:%s:%d] found pattern\n",__FILE__,__func__,__LINE__);
-//}
-*heat_addr=1;
-if(j%100000==0)
-printf("[%s:%s:%d] %d\n",__FILE__,__func__,__LINE__,j);
-heat_addr+=512;
-}
-*/
 	i = volume_desc->volume_superblock->bitmap_size_in_blocks / 2;
 	offset = 0;
 	volume_desc->allocator_size = i / 4;
@@ -1440,12 +1427,12 @@ void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t le
 
 #ifdef MARK_BLOCK
 	if (left_bitmap < volume_desc->bitmap_start || left_bitmap > volume_desc->bitmap_end) {
-		printf("FATALLLLLLLLLLLLL address! %llu\n", bitmap_byte_address);
-		exit(-1);
+		printf("FATAL wrong address! %llu\n", bitmap_byte_address);
+		exit(EXIT_FAILURE);
 	}
 	if (right_bitmap < volume_desc->bitmap_start || right_bitmap > volume_desc->bitmap_end) {
-		printf("FATALLLLLLLLLLLLL address! %llu\n", bitmap_byte_address);
-		exit(-1);
+		printf("FATAL wrong address! %llu\n", bitmap_byte_address);
+		exit(EXIT_FAILURE);
 	}
 #endif
 

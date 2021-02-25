@@ -653,8 +653,9 @@ static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
  * @param   db_name
  * @return  db_handle
  **/
-db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG)
+db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_name, char CREATE_FLAG)
 {
+	(void)size2;
 	db_handle *handle;
 	volume_descriptor *volume_desc;
 	db_descriptor *db_desc;
@@ -664,8 +665,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 	int digits;
 	uint8_t level_id, tree_id;
 
-	fprintf(stderr, "\n%s[%s:%s:%d](\"%s\", %" PRIu64 ", %" PRIu64 ", %s);%s\n", "\033[0;32m", __FILE__, __func__,
-		__LINE__, volumeName, start, size, db_name, "\033[0m");
+	fprintf(stderr, "\n%s[%s:%s:%d](\"%s\", %" PRIu64 ", %s);%s\n", "\033[0;32m", __FILE__, __func__, __LINE__,
+		volumeName, start, db_name, "\033[0m");
 
 	MUTEX_LOCK(&init_lock);
 
@@ -726,11 +727,11 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_nam
 		strcpy(volume_desc->volume_id, key);
 		volume_desc->open_databases = init_list(&destoy_db_list_node);
 		volume_desc->offset = start;
-		volume_desc->size = size;
 		/*allocator lock*/
 		MUTEX_INIT(&(volume_desc->allocator_lock), NULL);
 		/*free operations log*/
 		MUTEX_INIT(&(volume_desc->FREE_LOG_LOCK), NULL);
+		//this call will fill volume's size
 		allocator_init(volume_desc);
 		add_first(mappedVolumes, volume_desc, key);
 		volume_desc->reference_count++;
