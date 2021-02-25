@@ -505,7 +505,6 @@ static void bt_recover_L0(struct db_handle *hd)
 	uint64_t log_offset = hd->db_desc->L1_index_end_log_offset;
 	log_info("L1 index ends at offset %llu value log is at %llu", hd->db_desc->L1_index_end_log_offset,
 		 hd->db_desc->KV_log_size);
-	int foo = 0;
 	while (log_offset < hd->db_desc->KV_log_size) {
 		struct kv_prefix p;
 		struct bt_insert_req ins_req;
@@ -527,15 +526,14 @@ static void bt_recover_L0(struct db_handle *hd)
 		} else
 			ins_req.metadata.is_tombstone = 0;
 
-		if (*(uint32_t *)cursor < PREFIX_SIZE)
+		if (*(uint32_t *)cursor < PREFIX_SIZE) {
 			memset(p.prefix, 0x00, PREFIX_SIZE);
-		if (!foo) {
-			log_info("Recovering key %u:%s log offset at %llu end of log %llu", *(uint32_t *)cursor,
-				 cursor + 4, log_offset, hd->db_desc->KV_log_size);
-			foo = 1;
-		}
-		//assert(*(uint32_t *)cursor > 0 && *(uint32_t *)cursor < 50);
-		memcpy(p.prefix, cursor + sizeof(uint32_t), PREFIX_SIZE);
+			memcpy(p.prefix, cursor + sizeof(uint32_t), *(uint32_t *)cursor);
+		} else
+			memcpy(p.prefix, cursor + sizeof(uint32_t), PREFIX_SIZE);
+
+		//log_info("Recovering key %u:%s log offset at %llu end of log %llu", *(uint32_t *)cursor, cursor + 4,
+		//	 log_offset, hd->db_desc->KV_log_size);
 		p.device_offt = (uint64_t)cursor - MAPPED;
 		p.tombstone = 0;
 		ins_req.key_value_buf = &p;
