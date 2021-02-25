@@ -1,8 +1,17 @@
-/** @file btree.h
- *  @brief
- *  @author Giorgos Saloustros (gesalous@ics.forth.gr)
- *
- */
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #pragma once
 #include <semaphore.h>
 #include "conf.h"
@@ -367,14 +376,14 @@ typedef struct ancestors {
 	int size;
 } ancestors;
 
-typedef struct delete_request {
-	bt_mutate_req metadata;
-	ancestors *ancs; /* This field is redundant and should be removed */
-	index_node *parent;
-	leaf_node *self;
-	uint64_t offset; /*offset in my parent*/
-	void *key_buf;
-} delete_request;
+//typedef struct delete_request {
+//	bt_mutate_req metadata;
+//	ancestors *ancs; /* This field is redundant and should be removed */
+//	index_node *parent;
+//	leaf_node *self;
+//	uint64_t offset; /*offset in my parent*/
+//	void *key_buf;
+//} delete_request;
 
 /* In case more operations are tracked in the log in the future such as
   transactions
@@ -390,10 +399,10 @@ typedef enum { insertOp, deleteOp, unknownOp } request_type;
 typedef struct log_operation {
 	bt_mutate_req *metadata;
 	request_type optype_tolog;
-	union {
-		bt_insert_req *ins_req;
-		delete_request *del_req;
-	};
+	//union {
+	bt_insert_req *ins_req;
+	//delete_request *del_req;
+	//};
 } log_operation;
 
 typedef struct bt_split_result {

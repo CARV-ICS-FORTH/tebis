@@ -72,16 +72,21 @@ extern unsigned long long ins_prefix_miss_l1;
 extern unsigned long long ins_hack_hit;
 extern unsigned long long ins_hack_miss;
 
-uint64_t countgoto = 0;
 pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
-pthread_spinlock_t log_buffer_lock;
 /*number of locks per level*/
 uint32_t size_per_height[MAX_HEIGHT] = { 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32 };
 
 static uint8_t _writers_join_as_readers(bt_insert_req *ins_req);
 static uint8_t _concurrent_insert(bt_insert_req *ins_req);
 
-void assert_index_node(node_header *node);
+//void assert_index_node(node_header *node);
+#define BT_DELETE_MARKER_ID 0xFFFFFFFF
+struct bt_delete_marker {
+	uint32_t marker_id;
+	uint32_t key_size;
+	char key[];
+};
+
 static inline void move_leaf_data(leaf_node *leaf, int32_t middle)
 {
 	char *src_addr, *dst_addr;
@@ -143,7 +148,6 @@ void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flu
 }
 
 void bt_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
-int __update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf);
 bt_split_result split_leaf(bt_insert_req *req, leaf_node *node);
 
 static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key);
@@ -513,7 +517,16 @@ static void bt_recover_L0(struct db_handle *hd)
 		ins_req.metadata.gc_request = 0;
 		ins_req.metadata.recovery_request = 1;
 		ins_req.metadata.special_split = 0;
-		ins_req.metadata.is_tombstone = 0;
+
+		if (*(uint32_t *)cursor == BT_DELETE_MARKER_ID) {
+			cursor += sizeof(uint32_t);
+			log_offset += sizeof(uint32_t);
+			ins_req.metadata.is_tombstone = 1;
+			//log_info("Recovering a delete for DB: %s key is %u:%s", hd->db_desc->db_name,
+			//	 *(uint32_t *)cursor, cursor + 4);
+		} else
+			ins_req.metadata.is_tombstone = 0;
+
 		if (*(uint32_t *)cursor < PREFIX_SIZE)
 			memset(p.prefix, 0x00, PREFIX_SIZE);
 		if (!foo) {
@@ -1082,9 +1095,10 @@ void extract_keyvalue_size(log_operation *req, metadata_tologop *data_size)
 		data_size->kv_size = req->metadata->kv_size;
 		break;
 	case deleteOp:
-		data_size->key_len = *(uint32_t *)req->del_req->key_buf;
+		data_size->key_len = *(uint32_t *)req->ins_req->key_value_buf;
 		data_size->value_len = 0;
-		data_size->kv_size = data_size->key_len + (sizeof(uint32_t) * 2);
+		data_size->kv_size = data_size->key_len + sizeof(struct bt_delete_marker) + sizeof(uint32_t);
+		//log_info("data size is %lu key len %lu",data_size->kv_size,data_size->key_len);
 		break;
 	default:
 		log_fatal("Trying to append unknown operation in log! ");
@@ -1100,11 +1114,17 @@ void write_keyvalue_inlog(log_operation *req, metadata_tologop *data_size, char 
 		       sizeof(data_size->key_len) + data_size->key_len + sizeof(data_size->value_len) +
 			       data_size->value_len);
 		break;
-	case deleteOp:
-		memcpy(addr_inlog, req->del_req->key_buf, sizeof(data_size->key_len) + data_size->key_len);
-		addr_inlog += (sizeof(data_size->key_len) + data_size->key_len);
-		memcpy(addr_inlog, &data_size->value_len, sizeof(data_size->value_len));
+	case deleteOp: {
+		struct bt_delete_marker dm = { .marker_id = BT_DELETE_MARKER_ID, .key_size = data_size->key_len };
+		memcpy(addr_inlog, &dm, sizeof(struct bt_delete_marker));
+		addr_inlog += sizeof(struct bt_delete_marker);
+		memcpy(addr_inlog, req->ins_req->key_value_buf + (sizeof(uint32_t)), data_size->key_len);
+		addr_inlog += data_size->key_len;
+		*(uint32_t *)addr_inlog = 0;
+		//addr_inlog += (sizeof(data_size->key_len) + data_size->key_len);
+		//memcpy(addr_inlog, &data_size->value_len, sizeof(data_size->value_len));
 		break;
+	}
 	default:
 		log_fatal("Trying to append unknown operation in log! ");
 		exit(EXIT_FAILURE);
@@ -1165,7 +1185,16 @@ void *append_key_value_to_log(log_operation *req)
 	MUTEX_UNLOCK(&handle->db_desc->lock_log);
 
 	write_keyvalue_inlog(req, &data_size, addr_inlog);
-
+	switch (req->optype_tolog) {
+	case insertOp:
+		break;
+	case deleteOp:
+		addr_inlog += sizeof(uint32_t);
+		break;
+	default:
+		log_fatal("Unknown operation!");
+		exit(EXIT_FAILURE);
+	}
 	return addr_inlog;
 }
 
@@ -1768,6 +1797,10 @@ static int bt_insert_kv_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 		log_operation append_op = { .metadata = &ins_req->metadata,
 					    .optype_tolog = insertOp,
 					    .ins_req = ins_req };
+
+		if (ins_req->metadata.is_tombstone)
+			append_op.optype_tolog = deleteOp;
+
 		key_addr = append_key_value_to_log(&append_op);
 	} else if (!ins_req->metadata.append_to_log && ins_req->metadata.key_format == KV_PREFIX)
 		key_addr = ins_req->key_value_buf;
