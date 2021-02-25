@@ -60,6 +60,7 @@
 #define LLU long long unsigned
 
 #define SEGMENT_SIZE (2 * 1024 * 1024)
+#define MAX_SUPPORTED_KV_SIZE (SEGMENT_SIZE - sizeof(struct segment_header))
 #define GROWTH_FACTOR 4
 #define L0_SIZE 512000
 #define EXPLICIT_IO 1

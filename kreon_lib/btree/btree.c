@@ -1009,16 +1009,24 @@ enum optype { insert_op, delete_op };
 uint8_t bt_insert(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size, enum optype type)
 {
 	bt_insert_req ins_req;
-	char __tmp[KV_MAX_SIZE];
-	char *key_buf = __tmp;
+	char tmp[KV_MAX_SIZE];
+
 	uint32_t kv_size;
-
 	kv_size = sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size + sizeof(uint64_t);
-
-	if (kv_size > KV_MAX_SIZE) {
-		log_fatal("Key buffer overflow");
-		exit(EXIT_FAILURE);
+	if (kv_size > MAX_SUPPORTED_KV_SIZE) {
+		log_warn("Key value size %lu exceeds max supported size of %lu", kv_size, MAX_SUPPORTED_KV_SIZE);
+		return FAILED;
 	}
+	char *key_buf = NULL;
+	char malloced = 0;
+	if (kv_size > KV_MAX_SIZE) {
+		key_buf = (char *)malloc(kv_size);
+		malloced = 1;
+	} else {
+		key_buf = tmp;
+		malloced = 0;
+	}
+
 	/*prepare the request*/
 	*(uint32_t *)key_buf = key_size;
 	memcpy((void *)(uint64_t)key_buf + sizeof(uint32_t), key, key_size);
@@ -1044,8 +1052,10 @@ uint8_t bt_insert(db_handle *handle, void *key, void *value, uint32_t key_size, 
 		ins_req.metadata.is_tombstone = 1;
 		break;
 	}
-
-	return _insert_key_value(&ins_req);
+	uint8_t ret = _insert_key_value(&ins_req);
+	if (malloced)
+		free(key_buf);
+	return ret;
 }
 
 uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size)
