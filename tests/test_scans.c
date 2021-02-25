@@ -9,8 +9,8 @@
 #include "../kreon_lib/scanner/min_max_heap.h"
 #define KEY_PREFIX "userakias_computerakias"
 #define KV_SIZE 1024
-#define VOLUME_NAME "/usr/local/gesalous/mounts/kreon.dat"
-#define NUM_KEYS 10000000
+#define VOLUME_NAME "/mnt/gesalous/kreon.dat"
+#define NUM_KEYS 1000000
 #define SCAN_SIZE 16
 #define BASE 100000000
 #define NUM_OF_ROUNDS 1
@@ -174,6 +174,9 @@ void *scan_tester(void *args)
 			}
 		}
 
+		db_close(my_args->handle);
+		my_args->handle = db_open(VOLUME_NAME, 0, 0, "scan_test", CREATE_DB);
+
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 		log_info("Deleting done now looking up");
 		for (i = local_base; i < local_base + my_args->num_keys; i++) {
@@ -192,6 +195,10 @@ void *scan_tester(void *args)
 				log_info("Success up to key %s", k->key_buf);
 		}
 		log_info("Delete test successful!");
+
+		db_close(my_args->handle);
+		my_args->handle = db_open(VOLUME_NAME, 0, 0, "scan_test", CREATE_DB);
+
 		log_info("Finally testing that scans ignore deleted KV pairs");
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 		for (i = local_base; i < local_base + my_args->num_keys; i += 2) {
