@@ -137,7 +137,7 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 	}
 
 	if (getNext(sc) == END_OF_DATABASE) {
-		log_warn("Reached end of database");
+		//log_warn("Reached end of database");
 		memset(&sc->key_value, 0x00, sizeof(struct sc_full_kv));
 	}
 	return;

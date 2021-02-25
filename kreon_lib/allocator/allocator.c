@@ -963,7 +963,7 @@ void allocator_init(volume_descriptor *volume_desc)
 
 	off64_t volume_size = -1;
 	/*if not mounted */
-	mount_volume(volume_desc->volume_name, 0, 0 /* unused */);
+	volume_size = mount_volume(volume_desc->volume_name, 0, 0 /* unused */);
 	if (volume_size > 0)
 		volume_desc->size = volume_size;
 
