@@ -702,9 +702,9 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 				  sizeof(node_header));
 			exit(EXIT_FAILURE);
 		}
-		log_info("index order set to: %d leaf order is set to %d sizeof "
-			 "node_header = %lu",
-			 index_order, leaf_order, sizeof(node_header));
+		//log_info("index order set to: %d leaf order is set to %d sizeof "
+		//	 "node_header = %lu",
+		//	 index_order, leaf_order, sizeof(node_header));
 	}
 	//Is requested volume already mapped?, construct key which will be
 	//volumeName|start
@@ -717,22 +717,21 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 	if (digits == 0)
 		digits = 1;
 
-	key = malloc(strlen(volumeName) + digits + 1);
+	key = calloc(1, strlen(volumeName) + digits + 1);
 	strcpy(key, volumeName);
 	sprintf(key + strlen(volumeName), "%llu", (LLU)start);
 	key[strlen(volumeName) + digits] = '\0';
-	log_info("Searching volume %s", key);
 	volume_desc = (volume_descriptor *)find_element(mappedVolumes, key);
 
 	if (volume_desc == NULL) {
-		volume_desc = malloc(sizeof(volume_descriptor));
+		volume_desc = calloc(1, sizeof(volume_descriptor));
 		volume_desc->state = VOLUME_IS_OPEN;
 		volume_desc->snap_preemption = SNAP_INTERRUPT_DISABLE;
 		volume_desc->last_snapshot = get_timestamp();
 		volume_desc->last_commit = get_timestamp();
 		volume_desc->last_sync = get_timestamp();
 
-		volume_desc->volume_name = malloc(strlen(volumeName) + 1);
+		volume_desc->volume_name = calloc(1, strlen(volumeName) + 1);
 		strcpy(volume_desc->volume_name, volumeName);
 		volume_desc->volume_id = malloc(strlen(key) + 1);
 		strcpy(volume_desc->volume_id, key);
@@ -765,7 +764,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 		log_info("Open volume %s successfully", volume_desc->volume_name);
 		bt_reclaim_volume_space(volume_desc);
 	} else {
-		log_info("Volume already mapped");
+		//log_info("Volume already mapped");
 		volume_desc->reference_count++;
 	}
 	/*Before searching the actual volume's catalogue take a look at the current
@@ -818,9 +817,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 							// and store it in the open_db's list
 							log_info("DB: %s found at index [%d,%d]", db_entry->db_name, i,
 								 j);
-							handle = malloc(sizeof(db_handle));
-							memset(handle, 0x00, sizeof(db_handle));
-							db_desc = malloc(sizeof(db_descriptor));
+							handle = calloc(1, sizeof(db_handle));
+							db_desc = calloc(1, sizeof(db_descriptor));
 
 							handle->volume_desc = volume_desc;
 							handle->db_desc = db_desc;
@@ -865,9 +863,8 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 		//			   (uint64_t)DB_ENTRY_SIZE + (uint64_t)(empty_index *
 		// DB_ENTRY_SIZE));
 		// db_entry->replica_forest = NULL;
-		handle = malloc(sizeof(db_handle));
-		memset(handle, 0x00, sizeof(db_handle));
-		db_desc = (db_descriptor *)malloc(sizeof(db_descriptor));
+		handle = calloc(1, sizeof(db_handle));
+		db_desc = (db_descriptor *)calloc(1, sizeof(db_descriptor));
 		handle->db_desc = db_desc;
 		handle->volume_desc = volume_desc;
 		if (CREATE_FLAG == CREATE_DB)
@@ -954,6 +951,7 @@ char db_close(db_handle *handle)
 	--handle->db_desc->ref_count;
 
 	if (handle->db_desc->ref_count > 0) {
+		log_info("More guys here");
 		goto finish;
 		snapshot(handle->volume_desc);
 	}
@@ -999,8 +997,14 @@ char db_close(db_handle *handle)
 		log_fatal("Could not find db: %s", handle->db_desc->db_name);
 		exit(EXIT_FAILURE);
 	}
-	for (int i = 0; i < MAX_LEVELS; i++)
+
+	for (int i = 0; i < MAX_LEVELS; i++) {
+		if (pthread_rwlock_destroy(&handle->db_desc->levels[i].guard_of_level.rx_lock)) {
+			log_fatal("Failed to destroy guard of level lock");
+			exit(EXIT_FAILURE);
+		}
 		destroy_level_locktable(handle->db_desc, i);
+	}
 	//memset(handle->db_desc, 0x00, sizeof(struct db_descriptor));
 	if (pthread_cond_destroy(&handle->db_desc->client_barrier) != 0) {
 		log_fatal("Failed to destroy condition variable");
