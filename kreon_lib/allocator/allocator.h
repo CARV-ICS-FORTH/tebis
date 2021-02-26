@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
-#define _LARGEFILE64_SOURCE
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>

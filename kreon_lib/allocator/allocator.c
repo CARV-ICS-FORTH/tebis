@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #define _LARGEFILE64_SOURCE
+#define _GNU_SOURCE
+#include <pthread.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -25,11 +27,11 @@
 #include <stdarg.h>
 #include <fcntl.h>
 #include <string.h>
-#include <pthread.h>
 #include <inttypes.h>
 #include <linux/fs.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <math.h>
 #include <log.h>
 #include "dmap-ioctl.h"
 #include "allocator.h"
@@ -952,9 +954,7 @@ void allocator_init(volume_descriptor *volume_desc)
 {
 	uint64_t i;
 	void *addr;
-	/*epochs of the two "buddies"*/
-	int64_t epoch_l, epoch_r;
-	int32_t offset = 0;
+
 	int32_t inc = 2 * DEVICE_BLOCK_SIZE;
 	uint64_t page_offset = 0;
 	struct fake_blk_page_bitmap *fake_ioc = NULL;
@@ -999,8 +999,8 @@ void allocator_init(volume_descriptor *volume_desc)
 	volume_desc->dev_catalogue =
 		(pr_system_catalogue *)(MAPPED + (uint64_t)(volume_desc->volume_superblock->system_catalogue));
 
-	/*create a temporary location in memory for soft_superindex and release it at
-* the end of allocator_init*/
+	//create a temporary location in memory for soft_superindex and release it at
+	//the end of allocator_init
 	if (posix_memalign((void *)&(volume_desc->mem_catalogue), DEVICE_BLOCK_SIZE, sizeof(pr_system_catalogue)) !=
 	    0) {
 		perror("memalign failed\n");
@@ -1030,45 +1030,49 @@ void allocator_init(volume_descriptor *volume_desc)
 
 	//#endif
 	i = volume_desc->volume_superblock->bitmap_size_in_blocks / 2;
-	offset = 0;
-	volume_desc->allocator_size = i / 4;
+
+	volume_desc->allocator_size = (i / 4);
+	if (i % 4 != 0)
+		++volume_desc->allocator_size;
 
 	if (volume_desc->allocator_size % 8 != 0) {
 		volume_desc->allocator_size += (8 - (volume_desc->allocator_size % 8));
 		log_info("Adjusting bitmap pairs state vector to %d", volume_desc->allocator_size);
 	}
-	volume_desc->allocator_state = (unsigned char *)malloc(volume_desc->allocator_size);
-	volume_desc->sync_signal = (unsigned char *)malloc(volume_desc->allocator_size);
-	memset(volume_desc->allocator_state, 0x00, volume_desc->allocator_size);
-	memset(volume_desc->sync_signal, 0x00, volume_desc->allocator_size);
+	log_info("Allocator state is %u", volume_desc->allocator_size);
+	volume_desc->allocator_state = (unsigned char *)calloc(1, volume_desc->allocator_size);
+	volume_desc->sync_signal = (unsigned char *)calloc(1, volume_desc->allocator_size);
 
 	fake_ioc = malloc(sizeof(struct fake_blk_page_bitmap));
 
 	uint64_t data_offset = (uint64_t)volume_desc->bitmap_end;
+
+	int offset = 0;
 	/*iterate over metadata blocks to fill the cache state */
 	for (i = (uint64_t)volume_desc->bitmap_start, page_offset = 0; i < (uint64_t)volume_desc->bitmap_end;
 	     i += inc, page_offset += 4088) {
+		uint64_t epoch_l, epoch_r;
 		addr = (void *)i;
-		epoch_l = *(int64_t *)addr;
+		epoch_l = *(uint64_t *)addr;
 		addr = (void *)i + DEVICE_BLOCK_SIZE;
-		epoch_r = *(int64_t *)addr;
+		epoch_r = *(uint64_t *)addr;
 #ifdef DEBUG_ALLOCATOR
 		log_info("epoch left is %llu epoch right is %llu", (LLU)epoch_l, (LLU)epoch_r);
 #endif
 		int32_t winner = 0;
 		if (epoch_l > volume_desc->dev_catalogue->epoch && epoch_r > volume_desc->dev_catalogue->epoch) {
 			log_fatal("Corruption detected both bitmap pairs epoch larger than "
-				  "superblock epoch\n");
-			log_fatal("epoch left is %llu epoch right is %llu dev superindex %llu\n", (LLU)epoch_l,
+				  "superblock epoch");
+			log_fatal("epoch left is %llu epoch right is %llu dev superindex %llu", (LLU)epoch_l,
 				  (LLU)epoch_r, (LLU)volume_desc->dev_catalogue->epoch);
 			exit(EXIT_FAILURE);
 		}
-		/*to be eligible for winner left has to be smaller or equal to persistent
-epoch*/
+		//to be eligible for winner left has to be smaller or equal to persistent
+		//epoch
 		else if ((epoch_l >= epoch_r) && (epoch_l <= volume_desc->dev_catalogue->epoch))
 			winner = 0; /*left wins */
-		/*to be eligible for winner right has to be smaller or equal to persistent
-* epoch*/
+		//to be eligible for winner right has to be smaller or equal to persistent
+		//epoch
 		else if ((epoch_r >= epoch_l) && (epoch_r <= volume_desc->dev_catalogue->epoch))
 			winner = 1; /*right wins */
 		/*ok we now are sure one of them is smaller then dev superindex, who is it*/
@@ -1076,6 +1080,7 @@ epoch*/
 			winner = 0;
 		else
 			winner = 1;
+
 		if (fake_blk) {
 			fake_ioc->offset = ((uint64_t)(data_offset) - (uint64_t)MAPPED) / 4096;
 			data_offset += ((4088 * 8) * 4096);
@@ -1094,16 +1099,19 @@ epoch*/
 				exit(EXIT_FAILURE);
 			}
 		}
+
 		if (winner == 0) {
 			/*aka 01 read from left write to right */
-			*(volume_desc->allocator_state + (offset / 4)) += 1 << ((offset % 4) * 2);
+			//*(volume_desc->allocator_state + (offset / 4)) += 1 << ((offset % 4) * 2);
+			volume_desc->allocator_state[offset / 4] += (1 << ((offset % 4) * 2));
 #ifdef DEBUG_ALLOCATOR
 			printf("left wins: offset %d, position %d, bit %d , added number %d\n", offset, offset / 4,
 			       offset % 4, 1 << (((offset % 4) * 2) + 1));
 #endif
 		} else {
 			/*aka 10 read from right write to left */
-			*(volume_desc->allocator_state + (offset / 4)) += 1 << (((offset % 4) * 2) + 1);
+			//*(volume_desc->allocator_state + (offset / 4)) += 1 << (((offset % 4) * 2) + 1);
+			volume_desc->allocator_state[offset / 4] += (1 << (((offset % 4) * 2) + 1));
 #ifdef DEBUG_ALLOCATOR
 			printf("right wins: offset %d, position %d, bit %d , added number %d\n", offset, offset / 4,
 			       offset % 4, 1 << ((offset % 4) * 2));
@@ -1254,6 +1262,7 @@ void clean_log_entries(void *v_desc)
 	int32_t rc;
 	struct timespec ts;
 	volume_descriptor *volume_desc = (volume_descriptor *)v_desc;
+	pthread_setname_np(pthread_self(), "cleanerd");
 
 	/*Are we operating with filter block device or not?...Let's discover with an
 * ioctl*/

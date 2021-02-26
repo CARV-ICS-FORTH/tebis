@@ -1,3 +1,16 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include <assert.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -137,6 +150,7 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 	}
 
 	if (getNext(sc) == END_OF_DATABASE) {
+		sc->key_value.kv = NULL;
 		//log_warn("Reached end of database");
 		memset(&sc->key_value, 0x00, sizeof(struct sc_full_kv));
 	}
@@ -317,7 +331,7 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
    */
 	node = level_sc->root;
 	read_lock_node(level_sc, node);
-	assert(node->type == rootNode);
+	//assert(node->type == rootNode);
 
 	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
 		/*we seek in an empty tree*/
@@ -540,20 +554,13 @@ int32_t getNext(scannerHandle *sc)
 				continue;
 			}
 			return KREON_OK;
-		} else
+		} else {
+			sc->key_value.kv = NULL;
 			return END_OF_DATABASE;
+		}
 	}
 }
 
-/**
- * 05/01/2015 11:01 : Returns a serialized buffer in the following form:
- * Key_len|key|value_length|value
- * update: 25/10/2016 14:21: for tucana_2 related scans buffer returned will
- * in the following form:
- * prefix(8 bytes)|hash(4 bytes)|address_to_data(8 bytes)
- * update: 09/03/2017 14:15: for SPILL_BUFFER_SCANNER only we ll return codes
- * when a leaf search is exhausted
- **/
 int32_t _get_next_KV(level_scanner *sc)
 {
 	stackElementT stack_top;
@@ -644,6 +651,7 @@ int32_t _get_next_KV(level_scanner *sc)
 				} else {
 					log_fatal("Corrupted node");
 					assert(0);
+					exit(EXIT_FAILURE);
 				}
 			} else {
 				// log_debug("Advancing, %s idx = %d entries %d",
@@ -1279,15 +1287,21 @@ int get_next(struct Kreoniterator *it)
 				next_nd.active_tree = nd.active_tree;
 				next_nd.type = nd.type;
 				next_nd.key_value = it->sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree].key_value;
-				//printf("%s\n", next_nd.KV + sizeof(uint32_t));
 				sh_insert_heap_node(&it->sc->heap, &next_nd);
+			} else {
+				log_info("END of DB");
+				assert(0);
 			}
+
 			if (nd.duplicate == 1) {
 				continue;
 			}
 			return KREON_OK;
-		} else
+		} else {
+			log_info("END of DB");
+			assert(0);
 			return END_OF_DATABASE;
+		}
 	}
 }
 
