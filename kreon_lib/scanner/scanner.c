@@ -166,12 +166,9 @@ void init_dirty_scanner(struct scannerHandle *sc, struct db_handle *handle, void
 
 scannerHandle *initScanner(scannerHandle *sc, db_handle *handle, void *start_key, char seek_flag)
 {
-	if (sc == NULL) { // this is for mongodb
-		sc = malloc(sizeof(scannerHandle));
-		sc->malloced = 1;
-		snapshot(handle->volume_desc);
-	} else {
-		sc->malloced = 0;
+	if (sc == NULL) {
+		log_fatal("NULL scannerHandle");
+		exit(EXIT_FAILURE);
 	}
 	init_generic_scanner(sc, handle, start_key, seek_flag, 0);
 	return sc;
@@ -247,8 +244,7 @@ void closeScanner(scannerHandle *sc)
 		// for (int i = 0; i < MAX_LEVELS; i++)
 		RWLOCK_UNLOCK(&sc->db->db_desc->levels[0].guard_of_level.rx_lock);
 	}
-	if (sc->malloced)
-		free(sc);
+	return;
 }
 
 void close_dirty_scanner(scannerHandle *sc)
@@ -413,7 +409,7 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 		if (s_key_size >= PREFIX_SIZE)
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
 		else {
-			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			s_key_size = *(uint32_t *)start_key_buf;
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
 			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
 		}
@@ -917,7 +913,7 @@ int32_t SeekFirst(level_scanner *level_sc, void *start_key_buf)
 		if (s_key_size >= PREFIX_SIZE)
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
 		else {
-			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			s_key_size = *(uint32_t *)start_key_buf;
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
 			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
 		}
@@ -1051,7 +1047,7 @@ int32_t SeekLast(level_scanner *level_sc, void *start_key_buf)
 		if (s_key_size >= PREFIX_SIZE)
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
 		else {
-			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			s_key_size = *(uint32_t *)start_key_buf;
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
 			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
 		}
@@ -1448,7 +1444,7 @@ int32_t SeekKey(level_scanner *level_sc, void *start_key_buf)
 		if (s_key_size >= PREFIX_SIZE)
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), PREFIX_SIZE);
 		else {
-			uint32_t s_key_size = *(uint32_t *)start_key_buf;
+			s_key_size = *(uint32_t *)start_key_buf;
 			memcpy(key_buf_prefix, (void *)((uint64_t)start_key_buf + sizeof(int32_t)), s_key_size);
 			memset(key_buf_prefix + s_key_size, 0x00, PREFIX_SIZE - s_key_size);
 		}

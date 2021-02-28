@@ -220,7 +220,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 			/*finally larger key wins*/
 			if (key1f->key_size < key2f->key_size)
 				return -1;
-			else if (key2f->key_size > key1f->key_size)
+			else if (key1f->key_size > key2f->key_size)
 				return 1;
 			else
 				/*equal*/
@@ -253,7 +253,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 				/*finally larger key wins*/
 				if (key1f->key_size < key2f->key_size)
 					return -1;
-				else if (key2f->key_size > key1f->key_size)
+				else if (key1f->key_size > key2f->key_size)
 					return 1;
 				else
 					/*equal*/
@@ -288,7 +288,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 				/*finally larger key wins*/
 				if (key1f->key_size < key2f->key_size)
 					return -1;
-				else if (key2f->key_size > key1f->key_size)
+				else if (key1f->key_size > key2f->key_size)
 					return 1;
 				else
 					/*equal*/
@@ -322,7 +322,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 		/*finally larger key wins*/
 		if (key1f->key_size < key2f->key_size)
 			return -1;
-		else if (key2f->key_size > key1f->key_size)
+		else if (key1f->key_size > key2f->key_size)
 			return 1;
 		else
 			/*equal*/
