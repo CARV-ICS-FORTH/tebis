@@ -39,7 +39,6 @@ typedef struct scannerHandle {
 	struct sc_full_kv key_value;
 	db_handle *db;
 	int32_t type; /*to be removed also*/
-	int32_t malloced;
 } scannerHandle;
 
 struct Kreoniterator {
