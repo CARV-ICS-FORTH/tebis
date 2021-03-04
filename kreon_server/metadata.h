@@ -50,7 +50,7 @@ enum krm_server_state {
 enum krm_server_role { KRM_LEADER, KRM_DATASERVER };
 
 enum krm_region_role { KRM_PRIMARY, KRM_BACKUP };
-enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH };
+enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH, KRM_HALTED };
 
 enum krm_msg_type {
 	KRM_OPEN_REGION_AS_PRIMARY = 1,
@@ -67,13 +67,12 @@ enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REG
 
 enum krm_work_task_status {
 	/*overall_status*/
-	TASK_START = 1,
+	TASK_START = 0,
 	TASK_COMPLETE,
-	TASK_RESUME,
 	/*mutation operations related*/
 	GET_RSTATE,
-	INS_TO_KREON,
 	INIT_LOG_BUFFERS,
+	INS_TO_KREON,
 	REPLICATE,
 	WAIT_FOR_REPLICATION_COMPLETION,
 	ALL_REPLICAS_ACKED,
@@ -81,8 +80,9 @@ enum krm_work_task_status {
 	FLUSH_REPLICA_BUFFERS,
 	SEND_FLUSH_COMMANDS,
 	WAIT_FOR_FLUSH_REPLIES,
-	REGION_HALTED,
-	TASK_SUSPENDED
+	TASK_GET_KEY,
+	TASK_MULTIGET,
+	TASK_DELETE_KEY
 };
 
 /*server to server communication related staff*/
@@ -119,7 +119,7 @@ struct krm_work_task {
 	int thread_id;
 	int error_code;
 	int pool_id;
-	int suspended;
+	//int suspended;
 	int seg_id_to_flush;
 	enum krm_work_task_type pool_type;
 	enum krm_work_task_status kreon_operation_status;
@@ -272,9 +272,11 @@ struct di_cursor {
 };
 #endif
 
+enum krm_replica_buf_status { KRM_BUFS_UNINITIALIZED = 0, KRM_BUFS_INITIALIZING, KRM_BUFS_READY };
 struct krm_region_desc {
-	pthread_mutex_t region_lock;
-	utils_queue_s halted_tasks;
+	pthread_mutex_t region_mgmnt_lock;
+	pthread_rwlock_t kreon_lock;
+
 	struct krm_region *region;
 	/*for replica_role deserializing the index*/
 	pthread_rwlock_t replica_log_map_lock;
@@ -300,9 +302,8 @@ struct krm_region_desc {
 		struct ru_master_state *m_state;
 		struct ru_replica_state *r_state;
 	};
-	uint64_t pending_replication_operations;
-	int replica_bufs_initialized;
-	int region_halted;
+	uint64_t pending_region_tasks;
+	enum krm_replica_buf_status replica_buf_status;
 	enum krm_region_status status;
 };
 
@@ -373,8 +374,8 @@ struct krm_msg {
 
 void *krm_metadata_server(void *args);
 struct krm_region_desc *krm_get_region(struct krm_server_desc *server_desc, char *key, uint32_t key_size);
-struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
-						   uint32_t region_id_size);
+//struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
+//						   uint32_t region_id_size);
 int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
 struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc);

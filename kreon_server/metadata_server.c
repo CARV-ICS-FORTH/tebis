@@ -102,6 +102,7 @@ static void krm_free_msg(NODE *node)
 	return;
 }
 
+#if 0
 static void krm_free_regions_per_server_entry(NODE *node)
 {
 	struct krm_region *region = (struct krm_region *)node->data;
@@ -109,6 +110,7 @@ static void krm_free_regions_per_server_entry(NODE *node)
 	free(node);
 	return;
 }
+#endif
 
 static uint8_t krm_check_ld_regions_sorted(struct krm_leader_regions *ld_regions)
 {
@@ -467,6 +469,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
  */
 void zk_main_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
+	(void)zkh;
 	struct krm_server_desc *my_desc = (struct krm_server_desc *)context;
 	/*
 * zookeeper_init might not have returned, so we
@@ -492,6 +495,8 @@ void zk_main_watcher(zhandle_t *zkh, int type, int state, const char *path, void
 
 void leader_health_watcher(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx)
 {
+	(void)zh;
+	(void)state;
 	struct krm_server_desc *my_desc = (struct krm_server_desc *)watcherCtx;
 	struct Stat stat;
 	int rc;
@@ -547,6 +552,7 @@ static char is_backup_of_region(struct krm_region *region, struct krm_server_nam
 
 void dataserver_health_watcher(zhandle_t *zh, int type, int state, const char *path, void *watcherCtx)
 {
+	(void)state;
 	struct Stat stat;
 	struct krm_server_desc *my_desc = (struct krm_server_desc *)watcherCtx;
 	int rc;
@@ -792,11 +798,15 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 				r_desc->r_state = NULL;
 			}
 
-			r_desc->replica_bufs_initialized = 0;
-			r_desc->region_halted = 0;
-			pthread_mutex_init(&r_desc->region_lock, NULL);
+			r_desc->replica_buf_status = KRM_BUFS_UNINITIALIZED;
+			pthread_mutex_init(&r_desc->region_mgmnt_lock, NULL);
+			r_desc->pending_region_tasks = 0;
+			if (pthread_rwlock_init(&r_desc->kreon_lock, NULL) != 0) {
+				log_fatal("Failed to init region read write lock");
+				exit(EXIT_FAILURE);
+			}
+
 			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
-			utils_queue_init(&r_desc->halted_tasks);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
 			for (int i = 0; i < MAX_LEVELS; i++)
@@ -1201,16 +1211,20 @@ void *krm_metadata_server(void *args)
 
 			HASH_ITER(hh, ds_map->region_map, current, tmp)
 			{
-				log_info("Opening db %s", current->lr_state.region->id);
+				log_info("Opening DB %s", current->lr_state.region->id);
 				struct krm_region_desc *r_desc =
 					(struct krm_region_desc *)calloc(1, sizeof(struct krm_region_desc));
-				pthread_mutex_init(&r_desc->region_lock, NULL);
+
+				pthread_mutex_init(&r_desc->region_mgmnt_lock, NULL);
+				if (pthread_rwlock_init(&r_desc->kreon_lock, NULL) != 0) {
+					log_fatal("Failed to init region read write lock");
+					exit(EXIT_FAILURE);
+				}
+
 				pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
-				utils_queue_init(&r_desc->halted_tasks);
 				r_desc->region = current->lr_state.region;
 				r_desc->role = current->lr_state.role;
-				r_desc->replica_bufs_initialized = 0;
-				r_desc->region_halted = 0;
+				r_desc->replica_buf_status = KRM_BUFS_UNINITIALIZED;
 				r_desc->m_state = NULL;
 				r_desc->r_state = NULL;
 
@@ -1333,6 +1347,7 @@ void *krm_metadata_server(void *args)
 	return NULL;
 }
 
+#if 0
 struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
 						   uint32_t region_id_size)
 {
@@ -1400,14 +1415,15 @@ retry:
 	}
 	return r_desc;
 }
+#endif
 
-struct krm_region_desc *krm_get_region(struct krm_server_desc *desc, char *key, uint32_t key_size)
+struct krm_region_desc *krm_get_region(struct krm_server_desc *server_desc, char *key, uint32_t key_size)
 {
 	struct krm_region_desc *r_desc = NULL;
 
 	uint64_t lc2, lc1;
 retry:
-	lc2 = desc->ds_regions->lamport_counter_2;
+	lc2 = server_desc->ds_regions->lamport_counter_2;
 #if REGIONS_HASH_BASED
 	uint64_t s = djb2_hash((unsigned char *)key, key_size);
 	r_desc = desc->ds_regions->r_desc[s % desc->ds_regions->num_ds_regions];
@@ -1417,21 +1433,21 @@ retry:
 	int middle;
 	int ret;
 	start_idx = 0;
-	end_idx = desc->ds_regions->num_ds_regions - 1;
+	end_idx = server_desc->ds_regions->num_ds_regions - 1;
 	r_desc = NULL;
 	/*log_info("start %d end %d", start_idx, end_idx);*/
 	while (start_idx <= end_idx) {
 		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
-				  desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
+		ret = zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->min_key_size,
+				  server_desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
 
 		if (ret < 0 || ret == 0) {
 			/*log_info("got 0 checking with max key %s",
 * desc->ds_regions->r_desc[middle].region->max_key);*/
 			start_idx = middle + 1;
-			if (zku_key_cmp(desc->ds_regions->r_desc[middle]->region->max_key_size,
-					desc->ds_regions->r_desc[middle]->region->max_key, key_size, key) > 0) {
-				r_desc = desc->ds_regions->r_desc[middle];
+			if (zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->max_key_size,
+					server_desc->ds_regions->r_desc[middle]->region->max_key, key_size, key) > 0) {
+				r_desc = server_desc->ds_regions->r_desc[middle];
 				break;
 			}
 		} else
@@ -1441,24 +1457,24 @@ retry:
 	if (r_desc == NULL) {
 		int ret1;
 		int ret2;
-		end_idx = desc->ds_regions->num_ds_regions - 1;
-		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
-				   desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key);
-		ret2 = zku_key_cmp(key_size, key, desc->ds_regions->r_desc[end_idx]->region->max_key_size,
-				   desc->ds_regions->r_desc[end_idx]->region->max_key);
+		end_idx = server_desc->ds_regions->num_ds_regions - 1;
+		ret1 = zku_key_cmp(server_desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+				   server_desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key);
+		ret2 = zku_key_cmp(key_size, key, server_desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+				   server_desc->ds_regions->r_desc[end_idx]->region->max_key);
 		log_info("region_min_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx]->region->min_key_size,
-			 desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key, end_idx);
+			 server_desc->ds_regions->r_desc[end_idx]->region->min_key_size,
+			 server_desc->ds_regions->r_desc[end_idx]->region->min_key, key_size, key, end_idx);
 
 		log_info("region_max_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx]->region->max_key_size,
-			 desc->ds_regions->r_desc[end_idx]->region->max_key, key_size, key, end_idx);
+			 server_desc->ds_regions->r_desc[end_idx]->region->max_key_size,
+			 server_desc->ds_regions->r_desc[end_idx]->region->max_key, key_size, key, end_idx);
 		if (ret1 >= 0 && ret2 < 0)
-			r_desc = desc->ds_regions->r_desc[end_idx];
+			r_desc = server_desc->ds_regions->r_desc[end_idx];
 	}
 #endif
 
-	lc1 = desc->ds_regions->lamport_counter_2;
+	lc1 = server_desc->ds_regions->lamport_counter_2;
 
 	if (lc1 != lc2)
 		goto retry;

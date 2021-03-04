@@ -693,7 +693,7 @@ void *compaction_daemon(void *args)
 				/*mark them as spilling L1*/
 				level_1->tree_status[L1_tree] = SPILLING_IN_PROGRESS;
 				/*start a compaction*/
-				comp_req = (struct compaction_request *)malloc(sizeof(struct compaction_request));
+				comp_req = (struct compaction_request *)calloc(1, sizeof(struct compaction_request));
 				comp_req->db_desc = handle->db_desc;
 				comp_req->volume_desc = handle->volume_desc;
 				comp_req->src_level = 0;
