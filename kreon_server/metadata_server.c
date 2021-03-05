@@ -1088,7 +1088,7 @@ void *krm_metadata_server(void *args)
 			int i;
 			/*leader gets all team info*/
 			struct String_vector *dataservers =
-				(struct String_vector *)malloc(sizeof(struct String_vector));
+				(struct String_vector *)calloc(1, sizeof(struct String_vector));
 			zk_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_SERVERS_PATH);
 			rc = zoo_get_children(my_desc->zh, zk_path, 0, dataservers);
 			if (rc != ZOK) {
@@ -1137,14 +1137,15 @@ void *krm_metadata_server(void *args)
 				free(zk_alive_dataserver_path);
 			}
 			free(zk_path);
+			free(dataservers);
 
 			my_desc->state = KRM_BUILD_REGION_TABLE;
 			// krm_iterate_servers_state(&my_desc);
 			break;
 		}
 		case KRM_BUILD_REGION_TABLE: {
-			my_desc->ld_regions = (struct krm_leader_regions *)malloc(sizeof(struct krm_leader_regions));
-			struct String_vector *regions = (struct String_vector *)malloc(sizeof(struct String_vector));
+			my_desc->ld_regions = (struct krm_leader_regions *)calloc(1, sizeof(struct krm_leader_regions));
+			struct String_vector *regions = (struct String_vector *)calloc(1, sizeof(struct String_vector));
 			struct Stat stat;
 			char *region_path;
 			int buffer_len;
@@ -1176,6 +1177,7 @@ void *krm_metadata_server(void *args)
 				free(region_path);
 			}
 			free(zk_path);
+			free(regions);
 
 			krm_iterate_ld_regions(my_desc);
 			krm_check_ld_regions_sorted(my_desc->ld_regions);
@@ -1335,6 +1337,7 @@ void *krm_metadata_server(void *args)
 					 krm_msg_type_tostring(((struct krm_msg *)node->data)->type));
 				my_desc->state = KRM_PROCESSING_MSG;
 				krm_process_msg(my_desc, (struct krm_msg *)node->data);
+				free(node->data);
 				destroy_node(node);
 				my_desc->state = KRM_WAITING_FOR_MSG;
 			}

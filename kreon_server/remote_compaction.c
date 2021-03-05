@@ -1075,6 +1075,7 @@ void rco_build_index(struct rco_build_index_task *task)
 	uint64_t log_offt = task->log_start;
 	key = (struct rco_key *)((uint64_t)curr_segment + sizeof(struct segment_header));
 
+	uint32_t remaining = SEGMENT_SIZE - sizeof(struct segment_header);
 	while (1) {
 		db_desc->dirty = 0x01;
 		struct bt_insert_req ins_req;
@@ -1114,9 +1115,11 @@ void rco_build_index(struct rco_build_index_task *task)
 		}
 		//log_info("Adding index entry for key %u:%s offset %llu log end %llu",
 		//key->size, key->key, log_offt, task->log_end);
+		remaining -= (sizeof(struct rco_key) + key->size);
 		_insert_key_value(&ins_req);
 		value = (struct rco_value *)((uint64_t)key + sizeof(struct rco_key) + key->size);
 		assert(value->size < 1200);
+		remaining -= (sizeof(struct rco_value) + value->size);
 		log_offt += (sizeof(struct rco_key) + key->size + sizeof(struct rco_value) + value->size);
 		key = (struct rco_key *)((uint64_t)key + sizeof(struct rco_key) + key->size + sizeof(struct rco_value) +
 					 value->size);
@@ -1124,15 +1127,10 @@ void rco_build_index(struct rco_build_index_task *task)
 			//log_info("log_offt exceeded ok!");
 			break;
 		}
-		if (key->size == 0) {
-			//if (curr_segment->next_segment == 0) {
-			//	log_info("Done that was the last segment!");
-			//	break;
-			//}
-			//log_info("Proceeding to next");
-			//curr_segment = (struct segment_header *)(MAPPED + curr_segment->next_segment);
+		if (remaining >= sizeof(struct rco_key) && key->size == 0) {
 			break;
-		}
+		} else
+			break;
 	}
 	//log_info("Done parsing segment");
 #if !RCO_EXPLICIT_IO
