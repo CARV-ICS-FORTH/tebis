@@ -100,7 +100,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 
 	// Create an rdma local buffer
 	struct krm_region_desc *r_desc = db_entry->r_desc;
-	pthread_mutex_lock(&r_desc->region_lock);
+	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
@@ -163,7 +163,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	memset(&rpc_pair, 0x00, sizeof(struct sc_msg_pair));
 
 exit:
-	pthread_mutex_unlock(&r_desc->region_lock);
+	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
 }
 
@@ -184,7 +184,7 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 	pthread_mutex_unlock(&db_map_lock);
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
-	pthread_mutex_lock(&r_desc->region_lock);
+	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
@@ -199,7 +199,7 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 	r_desc->local_buffer[level_id] = NULL;
 	ret = 1;
 exit:
-	pthread_mutex_unlock(&r_desc->region_lock);
+	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
 }
 
@@ -244,7 +244,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 
-	pthread_mutex_lock(&r_desc->region_lock);
+	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 
 #if 0
 	log_info("Sending index segment for region %s", r_desc->region->id);
@@ -368,7 +368,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		//log_info("This was the last index segment waiting for ack DONE");
 	}
 exit:
-	pthread_mutex_unlock(&r_desc->region_lock);
+	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
 }
 
@@ -390,11 +390,26 @@ int rco_flush_last_log_segment(void *handle)
 	pthread_mutex_unlock(&db_map_lock);
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
-	assert(strcmp(r_desc->region->id, hd->db_desc->db_name) == 0);
 	if (r_desc->region->num_of_backup == 0) {
 		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		return 1;
 	}
+
+	log_info("Setting status of region %s to KRM_HALTED", r_desc->region->id);
+
+	pthread_rwlock_wrlock(&r_desc->kreon_lock);
+	if (r_desc->status == KRM_HALTED) {
+		log_fatal("Region already halted?");
+		exit(EXIT_FAILURE);
+	} else {
+		r_desc->status = KRM_HALTED;
+		pthread_rwlock_unlock(&r_desc->kreon_lock);
+		log_info("Successfully set region %s in KRM_HALTED state", r_desc->region->id);
+		log_info("Waiting for pending tasks %lld to finish", r_desc->pending_region_tasks);
+		spin_loop((int64_t *)&r_desc->pending_region_tasks, 0);
+		log_info("Ok all pending tasks finished for region %s", r_desc->pending_region_tasks);
+	}
+
 	/*Acquire guard lock and wait writers to finish*/
 	int ret = RWLOCK_WRLOCK(&(hd->db_desc->levels[0].guard_of_level.rx_lock));
 	if (ret) {
@@ -419,11 +434,7 @@ int rco_flush_last_log_segment(void *handle)
 		assert(0);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Waiting all local ops to finish...");
 	spin_loop(&(hd->db_desc->levels[0].active_writers), 0);
-	log_info("local ops DONE waiting pending replica operations...");
-	spin_loop(&(hd->db_desc->pending_replica_operations), 0);
-	log_info("pending replica operations DONE");
 	/*Now check what is the rdma's buffer id which corresponds to the last
 * segment*/
 	uint64_t lc1 = 0;
@@ -519,6 +530,10 @@ retry_allocate:
 		log_fatal("Failed to release guard lock");
 		exit(EXIT_FAILURE);
 	}
+
+	pthread_rwlock_wrlock(&r_desc->kreon_lock);
+	r_desc->status = KRM_OPEN;
+	pthread_rwlock_unlock(&r_desc->kreon_lock);
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 		sc_free_rpc_pair(&p[i]);
 	}
@@ -1060,6 +1075,7 @@ void rco_build_index(struct rco_build_index_task *task)
 	uint64_t log_offt = task->log_start;
 	key = (struct rco_key *)((uint64_t)curr_segment + sizeof(struct segment_header));
 
+	uint32_t remaining = SEGMENT_SIZE - sizeof(struct segment_header);
 	while (1) {
 		db_desc->dirty = 0x01;
 		struct bt_insert_req ins_req;
@@ -1099,9 +1115,11 @@ void rco_build_index(struct rco_build_index_task *task)
 		}
 		//log_info("Adding index entry for key %u:%s offset %llu log end %llu",
 		//key->size, key->key, log_offt, task->log_end);
+		remaining -= (sizeof(struct rco_key) + key->size);
 		_insert_key_value(&ins_req);
 		value = (struct rco_value *)((uint64_t)key + sizeof(struct rco_key) + key->size);
 		assert(value->size < 1200);
+		remaining -= (sizeof(struct rco_value) + value->size);
 		log_offt += (sizeof(struct rco_key) + key->size + sizeof(struct rco_value) + value->size);
 		key = (struct rco_key *)((uint64_t)key + sizeof(struct rco_key) + key->size + sizeof(struct rco_value) +
 					 value->size);
@@ -1109,15 +1127,10 @@ void rco_build_index(struct rco_build_index_task *task)
 			//log_info("log_offt exceeded ok!");
 			break;
 		}
-		if (key->size == 0) {
-			//if (curr_segment->next_segment == 0) {
-			//	log_info("Done that was the last segment!");
-			//	break;
-			//}
-			//log_info("Proceeding to next");
-			//curr_segment = (struct segment_header *)(MAPPED + curr_segment->next_segment);
+		if (remaining >= sizeof(struct rco_key) && key->size == 0) {
 			break;
-		}
+		} else
+			break;
 	}
 	//log_info("Done parsing segment");
 #if !RCO_EXPLICIT_IO

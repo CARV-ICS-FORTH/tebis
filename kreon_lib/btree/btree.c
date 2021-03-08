@@ -172,6 +172,7 @@ void bt_set_db_in_replicated_mode(db_handle *handle)
 	return;
 }
 
+#if 0
 void bt_decrease_level0_writers(db_handle *handle)
 {
 	if (!handle->db_desc->is_in_replicated_mode) {
@@ -181,6 +182,7 @@ void bt_decrease_level0_writers(db_handle *handle)
 	}
 	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
 }
+#endif
 
 /**
  * @param   index_key: address of the index_key
@@ -888,7 +890,7 @@ finish_init:
 		MUTEX_INIT(&db_desc->levels[level_id].level_allocation_lock, NULL);
 		init_level_locktable(db_desc, level_id);
 		db_desc->levels[level_id].active_writers = 0;
-		db_desc->pending_replica_operations = 0;
+		//db_desc->pending_replica_operations = 0;
 		/*check again which tree should be active*/
 		db_desc->levels[level_id].active_tree = 0;
 
@@ -907,7 +909,7 @@ finish_init:
 	//db_desc->t = NULL;
 	db_desc->fl = NULL;
 	db_desc->is_in_replicated_mode = 0;
-	db_desc->block_on_L0 = 1;
+	db_desc->pending_barrier_op = 0;
 	MUTEX_INIT(&db_desc->lock_log, NULL);
 	MUTEX_INIT(&db_desc->client_barrier_lock, NULL);
 	if (pthread_cond_init(&db_desc->client_barrier, NULL) != 0) {
@@ -1139,7 +1141,7 @@ void *append_key_value_to_log(log_operation *req)
 	void *addr_inlog; /*address at the device*/
 	metadata_tologop data_size;
 	uint32_t available_space_in_log;
-	uint32_t allocated_space;
+
 	db_handle *handle = req->metadata->handle;
 	extract_keyvalue_size(req, &data_size);
 
@@ -1165,8 +1167,9 @@ void *append_key_value_to_log(log_operation *req)
 				      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 		memset(addr_inlog, 0x00, available_space_in_log);
 
-		allocated_space = data_size.kv_size + sizeof(segment_header);
-		allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
+		//uint32_t allocated_space;
+		//allocated_space = data_size.kv_size + sizeof(segment_header);
+		//allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
 
 		d_header = seg_get_raw_log_segment(handle->volume_desc);
 		assert(((uint64_t)d_header - MAPPED) % SEGMENT_SIZE == 0);
@@ -2221,9 +2224,9 @@ release_and_retry:
 		//retry = 0;
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		}
+		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		//}
 	}
 
 	retry = 1;
@@ -2241,9 +2244,9 @@ release_and_retry:
 	upper_level_nodes[size++] = guard_of_level;
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
-	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-	}
+	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+	//	__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	//}
 
 	mem_catalogue = ins_req->metadata.handle->volume_desc->mem_catalogue;
 
@@ -2514,18 +2517,18 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
-	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-	}
+	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+	//	__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	//}
 	upper_level_nodes[size++] = guard_of_level;
 
 	if (db_desc->levels[level_id].root_w[ins_req->metadata.tree_id] == NULL ||
 	    db_desc->levels[level_id].root_w[ins_req->metadata.tree_id]->type == leafRootNode) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		}
+		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		//}
 		return FAILURE;
 	}
 
@@ -2547,19 +2550,19 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 			/*failed needs split*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
-			if (ins_req->metadata.level_id == 0 &&
-			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-			}
+			//if (ins_req->metadata.level_id == 0 &&
+			//    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			//}
 			return FAILURE;
 		} else if (son->epoch <= volume_desc->dev_catalogue->epoch) {
 			/*failed needs COW*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
-			if (ins_req->metadata.level_id == 0 &&
-			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-			}
+			//if (ins_req->metadata.level_id == 0 &&
+			//    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			//}
 			return FAILURE;
 		}
 
@@ -2593,9 +2596,9 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	if (son->numberOfEntriesInNode >= (uint32_t)leaf_order || son->epoch <= volume_desc->dev_catalogue->epoch) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		}
+		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		//}
 		return FAILURE;
 	}
 	/*Succesfully reached a bin (bottom internal node)*/

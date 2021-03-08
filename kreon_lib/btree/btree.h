@@ -257,8 +257,7 @@ typedef int (*bt_flush_replicated_logs)(void *);
 typedef struct db_descriptor {
 	char db_name[MAX_DB_NAME_SIZE];
 	level_descriptor levels[MAX_LEVELS];
-	/*for distributed version*/
-	int64_t pending_replica_operations;
+	//int64_t pending_replica_operations;
 	pthread_mutex_t lock_log;
 	// compaction daemon staff
 	pthread_t compaction_daemon;
@@ -294,7 +293,7 @@ typedef struct db_descriptor {
 	 * acknowledge that they have received the mutation
 	 */
 	char is_in_replicated_mode;
-	uint8_t block_on_L0;
+	uint8_t pending_barrier_op;
 	enum db_status stat;
 } __attribute__((packed)) __attribute__((aligned)) db_descriptor;
 
@@ -434,7 +433,7 @@ typedef struct split_data {
 } split_data;
 
 void bt_set_db_in_replicated_mode(db_handle *handle);
-void bt_decrease_level0_writers(db_handle *handle);
+//void bt_decrease_level0_writers(db_handle *handle);
 
 uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size);
 uint8_t _insert_key_value(bt_insert_req *ins_req);

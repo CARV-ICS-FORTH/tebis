@@ -136,7 +136,7 @@ void mark_block(volume_descriptor *volume_desc, void *block_address, uint32_t le
 off64_t mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 {
 	(void)unused_size;
-	off64_t device_size;
+	off64_t device_size = 0;
 
 	MUTEX_LOCK(&VOLUME_LOCK);
 
@@ -182,7 +182,7 @@ off64_t mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 		if (MAPPED % sysconf(_SC_PAGE_SIZE) == 0)
 			log_info("address space aligned properly address space starts at %llu\n", (LLU)MAPPED);
 		else {
-			log_fatal("FATAL error Mapped address not aligned correctly mapped: %llu", (LLU)MAPPED);
+			log_fatal("Mapped address not aligned correctly mapped: %llu", (LLU)MAPPED);
 			exit(EXIT_FAILURE);
 		}
 	}
