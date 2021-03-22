@@ -55,7 +55,8 @@ class EutropiaDB : public YCSBDB {
 		  dbs()
 	{
 		//const char *pathname = "/dev/dmap/dmap1";
-		const char *pathname = "/tmp/ramdisk/kreon.dat";
+		std::string dev = props.GetProperty("dev");
+		const char *pathname = dev.c_str();
 		int64_t size;
 
 		int fd = open(pathname, O_RDONLY);

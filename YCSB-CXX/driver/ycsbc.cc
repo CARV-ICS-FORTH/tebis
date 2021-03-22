@@ -442,6 +442,14 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 			}
 			props.SetProperty(ycsbc::CoreWorkload::INSERT_START_PROPERTY, argv[argindex]);
 			argindex++;
+		} else if (strcmp(argv[argindex], "-dev") == 0) {
+			argindex++;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+			props.SetProperty("dev", argv[argindex]);
+			argindex++;
 		} else if (strcmp(argv[argindex], "-clientProcesses") == 0) {
 			argindex++;
 			if (argindex >= argc) {
