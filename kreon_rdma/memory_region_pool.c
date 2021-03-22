@@ -9,6 +9,7 @@
 #include <rdma/rdma_verbs.h>
 #include <stdlib.h>
 #include <numa.h>
+#include <stdarg.h>
 
 #include "memory_region_pool.h"
 #include "../utilities/list.h"

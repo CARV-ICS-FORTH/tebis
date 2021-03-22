@@ -172,7 +172,7 @@ static void comp_get_next_key(struct comp_level_read_cursor *c)
 		switch (c->state) {
 		case COMP_CUR_CHECK_OFFT: {
 			if (c->offset >= c->handle->db_desc->levels[c->level_id].offset[c->tree_id]) {
-				log_info("Done read level %u", c->level_id);
+				/*log_info("Done read level %u", c->level_id);*/
 				c->end_of_level = 1;
 				assert(c->offset == c->handle->db_desc->levels[c->level_id].offset[c->tree_id]);
 				return;
@@ -352,7 +352,7 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 		if (i <= c->tree_height) {
 			if (i == 0 && c->segment_offt[i] % SEGMENT_SIZE != 0) {
 				type = (uint32_t *)((uint64_t)c->last_leaf + LEAF_NODE_SIZE);
-				log_info("Marking padded space for %u segment offt %llu", i, c->segment_offt[0]);
+				/*log_info("Marking padded space for %u segment offt %llu", i, c->segment_offt[0]);*/
 				*type = paddedSpace;
 			} else if (i > 0 && c->segment_offt[i] % SEGMENT_SIZE != 0) {
 				type = (uint32_t *)((uint64_t)(c->last_index[i]) + INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
@@ -889,13 +889,13 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 		assert(!l_dst->end_of_level);
 	}
 
-	log_info("Src [%u][%u] size = %llu", comp_req->src_level, comp_req->src_tree,
-		 handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree]);
-	if (dst_root)
-		log_info("Dst [%u][%u] size = %llu", comp_req->dst_level, 0,
-			 handle.db_desc->levels[comp_req->dst_level].level_size[0]);
-	else
-		log_info("Empty dst [%u][%u]", comp_req->dst_level, 0);
+	/*log_info("Src [%u][%u] size = %llu", comp_req->src_level, comp_req->src_tree,*/
+	/*handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree]);*/
+	/*if (dst_root)*/
+	/*log_info("Dst [%u][%u] size = %llu", comp_req->dst_level, 0,*/
+	/*handle.db_desc->levels[comp_req->dst_level].level_size[0]);*/
+	/*else*/
+	/*log_info("Empty dst [%u][%u]", comp_req->dst_level, 0);*/
 
 	struct sh_min_heap *m_heap = (struct sh_min_heap *)malloc(sizeof(struct sh_min_heap));
 	sh_init_heap(m_heap, comp_req->src_level);
@@ -1124,9 +1124,9 @@ void *compaction(void *_comp_req)
 	struct db_descriptor *db_desc;
 
 	pthread_setname_np(pthread_self(), "comp_thread");
-	log_info("starting compaction from level's tree [%u][%u] to level's "
-		 "tree[%u][%u]",
-		 comp_req->src_level, comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);
+	/*log_info("starting compaction from level's tree [%u][%u] to level's "*/
+	/*"tree[%u][%u]",*/
+	/*comp_req->src_level, comp_req->src_tree, comp_req->dst_level, comp_req->dst_tree);*/
 	/*Initialize a scan object*/
 	db_desc = comp_req->db_desc;
 
@@ -1156,7 +1156,7 @@ void *compaction(void *_comp_req)
 	else if (handle.db_desc->levels[comp_req->dst_level].root_r[0] != NULL)
 		dst_root = handle.db_desc->levels[comp_req->dst_level].root_r[0];
 	else {
-		log_info("Empty destination level %d ", comp_req->dst_level);
+		/*log_info("Empty destination level %d ", comp_req->dst_level);*/
 		dst_root = NULL;
 	}
 
@@ -1208,7 +1208,7 @@ void *compaction(void *_comp_req)
 				 comp_req->db_desc->db_name, comp_req->src_level);
 		}
 		/*do the switch for the destination level*/
-		log_info("Switching tree[%u][%u] to tree[%u][%u]", comp_req->dst_level, 1, comp_req->dst_level, 0);
+		/*log_info("Switching tree[%u][%u] to tree[%u][%u]", comp_req->dst_level, 1, comp_req->dst_level, 0);*/
 		struct level_descriptor *ld = &comp_req->db_desc->levels[comp_req->dst_level];
 
 		ld->first_segment[0] = ld->first_segment[1];
@@ -1262,7 +1262,7 @@ void *compaction(void *_comp_req)
 			log_fatal("Failed to acquire guard lock");
 			exit(EXIT_FAILURE);
 		}
-		log_info("After compaction tree[%d][%d] size is %llu", comp_req->dst_level, 0, ld->level_size[0]);
+		/*log_info("After compaction tree[%d][%d] size is %llu", comp_req->dst_level, 0, ld->level_size[0]);*/
 
 	} else {
 		if (RWLOCK_WRLOCK(&(comp_req->db_desc->levels[comp_req->src_level].guard_of_level.rx_lock))) {

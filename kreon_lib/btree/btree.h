@@ -233,6 +233,8 @@ typedef struct level_descriptor {
 	char tree_status[NUM_TREES_PER_LEVEL];
 	uint8_t active_tree;
 	uint8_t level_id;
+
+	int segments_allocated[NUM_TREES_PER_LEVEL];
 } level_descriptor;
 
 struct bt_compaction_callback_args {

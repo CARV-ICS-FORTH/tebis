@@ -72,6 +72,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			level_desc->last_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id]->segment_id = segment_id + 1;
 			level_desc->offset[tree_id] += (available_space + sizeof(segment_header));
+			level_desc->segments_allocated[tree_id]++;
 		} else {
 			//log_info("Adding first index segmet for [%u]",tree_id);
 			/*special case for the first segment for this level*/
@@ -81,6 +82,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			level_desc->last_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id]->segment_id = 0;
 			level_desc->offset[tree_id] = sizeof(segment_header);
+			level_desc->segments_allocated[tree_id]++;
 		}
 		offset_in_segment = level_desc->offset[tree_id] % SEGMENT_SIZE;
 	}
@@ -371,7 +373,7 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 {
 	segment_header *curr_segment;
 	uint64_t space_freed = 0;
-	log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);
+	/*log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);*/
 
 	curr_segment = handle->db_desc->levels[level_id].first_segment[tree_id];
 	//if (level_id == 0) {
@@ -384,11 +386,13 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 		return;
 		//goto finish;
 	}
+	int freed_segments = 0;
 	while (1) {
 		uint64_t next_dev_offt = (uint64_t)curr_segment->next_segment;
-		if (level_id == 0)
+		if (level_id == 0) {
+			++freed_segments;
 			free(curr_segment);
-		else
+		} else
 			free_block(handle->volume_desc, curr_segment, SEGMENT_SIZE);
 		space_freed += SEGMENT_SIZE;
 		if (!next_dev_offt)
@@ -398,6 +402,7 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	}
 	log_info("Freed space %llu MB from db:%s level tree [%u][%u]", space_freed / (1024 * 1024),
 		 handle->db_desc->db_name, level_id, tree_id);
+	assert(handle->db_desc->levels[level_id].segments_allocated[tree_id] == freed_segments);
 	/*buffered tree out*/
 	handle->db_desc->levels[level_id].level_size[tree_id] = 0;
 	handle->db_desc->levels[level_id].first_segment[tree_id] = NULL;
@@ -405,6 +410,7 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	handle->db_desc->levels[level_id].offset[tree_id] = 0;
 	handle->db_desc->levels[level_id].root_r[tree_id] = NULL;
 	handle->db_desc->levels[level_id].root_w[tree_id] = NULL;
+	handle->db_desc->levels[level_id].segments_allocated[tree_id] = 0;
 	//finish:
 	//if (level_id == 0) {
 	//	if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {

@@ -177,7 +177,7 @@ void snapshot(volume_descriptor *volume_desc)
 	pr_db_entry *db_entry;
 	int32_t dirty = 0;
 
-	log_info("Trigerring Snapshot");
+	/*log_info("Trigerring Snapshot");*/
 	volume_desc->snap_preemption = SNAP_INTERRUPT_ENABLE;
 
 	stop_readers_writers(volume_desc);

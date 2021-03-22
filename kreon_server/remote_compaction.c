@@ -279,7 +279,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #endif
 
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		/*log_info("Nothing to do for non-replicated region %s", r_desc->region->id);*/
 		ret = 0;
 		goto exit;
 	}

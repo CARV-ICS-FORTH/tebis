@@ -863,6 +863,10 @@ finish_init:
 		db_desc->pending_replica_operations = 0;
 		/*check again which tree should be active*/
 		db_desc->levels[level_id].active_tree = 0;
+		db_desc->levels[level_id].segments_allocated[0] = 0;
+		db_desc->levels[level_id].segments_allocated[1] = 0;
+		db_desc->levels[level_id].segments_allocated[2] = 0;
+		db_desc->levels[level_id].segments_allocated[3] = 0;
 
 		for (tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
 			db_desc->levels[level_id].tree_status[tree_id] = NO_SPILLING;
@@ -2689,8 +2693,8 @@ release_and_retry:
 		} else {
 			/*we are allocating a new tree*/
 
-			log_info("Allocating new active tree %d for level id %d epoch is at %llu",
-				 ins_req->metadata.tree_id, level_id, (LLU)mem_catalogue->epoch);
+			/*log_info("Allocating new active tree %d for level id %d epoch is at %llu",*/
+			/*ins_req->metadata.tree_id, level_id, (LLU)mem_catalogue->epoch);*/
 
 			leaf_node *t =
 				seg_get_leaf_node(ins_req->metadata.handle->volume_desc, &db_desc->levels[level_id],

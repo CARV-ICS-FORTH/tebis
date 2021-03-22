@@ -165,6 +165,7 @@ class EutropiaDB : public YCSBDB {
 	int Read(int id, const std::string &table, const std::string &key, const std::vector<std::string> *fields,
 		 std::vector<KVPair> &result)
 	{
+		return __read(id, table, key, fields, result);
 		if (fields) {
 			return __read(id, table, key, fields, result);
 		} else {
@@ -267,6 +268,7 @@ class EutropiaDB : public YCSBDB {
 
 	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
 	{
+		return Insert(id, table, key, values);
 		if (field_count > 1) { // this results in read-modify-write. Maybe we should use merge operator here
 			std::hash<std::string> hash_fn;
 			uint32_t db_id = hash_fn(key) % db_num;

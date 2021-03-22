@@ -29,6 +29,7 @@
 #include "timer.h"
 #include "client.h"
 #include "core_workload.h"
+#define COMPUTE_TAIL
 #ifdef COMPUTE_TAIL
 #include "Measurements.hpp"
 #endif
@@ -203,8 +204,8 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::cout << "Executed " << sum << " operations." << std::endl;
 
 #ifdef COMPUTE_TAIL
-	tail->printStatistics();
-	delete tail;
+	tail->printStatistics(ofil);
+	//delete tail;
 	tail = nullptr;
 #endif
 }
@@ -323,6 +324,7 @@ int main(const int argc, const char *argv[])
 		tmp = start_stats + results_directory + slash + a;
 		system(tmp.c_str());
 		system("date");
+#else
 		time_t t;
 		struct tm *timeinfo;
 		struct timeval start_time;
