@@ -73,7 +73,7 @@ typedef struct prefix_table {
 } prefix_table;
 
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
-#define DS_POOL_NUM 1 //4
+#define DS_POOL_NUM 1 // 4
 
 struct ds_task_buffer_pool {
 	pthread_mutex_t tbp_lock;
@@ -143,8 +143,6 @@ static void handle_task(struct krm_server_desc *my_server, struct krm_work_task 
 static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 static void ds_put_client_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task);
-/*inserts to Kreon and implements the replication logic*/
-void insert_kv_pair(struct krm_server_desc *my_server, struct krm_work_task *task);
 
 static void crdma_server_create_connection_inuse(struct connection_rdma *conn, struct channel_rdma *channel,
 						 connection_type type)
@@ -508,8 +506,9 @@ void *worker_thread_kernel(void *args)
 			break;
 
 		default:
-			//send it to spinning thread
-			//log_info("Putting task %p away to be resumed pool id %d pool type %d", job, job->pool_id, job->pool_type);
+			// send it to spinning thread
+			// log_info("Putting task %p away to be resumed pool id %d pool type %d",
+			// job, job->pool_id, job->pool_type);
 			ds_put_resume_task(&root_server->numa_servers[worker->root_server_id]->spinner, job);
 		}
 		job = NULL;
@@ -824,7 +823,7 @@ static void *server_spinning_thread_kernel(void *args)
 	uint32_t message_size;
 	volatile uint32_t recv;
 
-	int spinning_thread_id = spinner->spinner_id;
+	int spinning_thread_id; // = spinner->spinner_id;
 	int spinning_list_type;
 	int rc;
 
@@ -1324,8 +1323,9 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					}
 				}
 			}
-			//log_info("Checking log buffer replies num of replicas are %d", r_desc->region->num_of_backup);
-			//check replies
+			// log_info("Checking log buffer replies num of replicas are %d",
+			// r_desc->region->num_of_backup);
+			// check replies
 			uint32_t ready_buffers = 0;
 			for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_REQUESTED) {
@@ -1373,7 +1373,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_OK)
 					++ready_buffers;
 			}
-			//log_info("Ready buffers %d log buffer replies num of replicas are %d", ready_buffers,
+			// log_info("Ready buffers %d log buffer replies num of replicas are %d",
+			// ready_buffers,
 			//	 r_desc->region->num_of_backup);
 
 			if (ready_buffers == r_desc->region->num_of_backup) {
@@ -1381,7 +1382,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++)
 					r_desc->m_state->r_buf[i].stat = RU_BUFFER_UNINITIALIZED;
 
-				//log_info("Remote buffers ready initialize remote segments with current state");
+				// log_info("Remote buffers ready initialize remote segments with
+				// current state");
 
 				// 1.prepare the context for the poller to later free the staff
 				// needed
@@ -1443,7 +1445,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				task->kreon_operation_status = INS_TO_KREON;
 				return 1;
 			} else {
-				//log_info("Not all replicas ready waiting status %d", task->kreon_operation_status);
+				// log_info("Not all replicas ready waiting status %d",
+				// task->kreon_operation_status);
 				return 0;
 			}
 
@@ -1472,7 +1475,8 @@ static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task 
 		case TASK_MULTIGET:
 		case TASK_DELETE_KEY:
 		case INS_TO_KREON:
-			//log_info("Do not enter Kreon task status is %d region status = %d",task->kreon_operation_status,r_desc->status);
+			// log_info("Do not enter Kreon task status is %d region status =
+			// %d",task->kreon_operation_status,r_desc->status);
 			ret = 0;
 			break;
 		case REPLICATE:
@@ -1522,7 +1526,8 @@ static void krm_leave_kreon(struct krm_region_desc *r_desc)
 	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
 	return;
 }
-void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
+
+static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 {
 	//############## fsm state logic follows ###################
 	while (1) {
@@ -1616,13 +1621,13 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 		}
 		case SEGMENT_BARRIER: {
 			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
-				/*find appropriate seg buffer to rdma the mutation*/
 				uint32_t remaining =
 					task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
 				remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
 				if (remaining > 0) {
-					// log_info("Sorry segment not ready bytes remaining to replicate
-					// %lu", remaining);
+					//log_info("Sorry segment not ready bytes remaining to replicate %llu "
+					//	 "task %p seg if %u",
+					//	 remaining, task, task->seg_id_to_flush);
 					return;
 				}
 			}
@@ -1715,6 +1720,7 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 
 			for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 				++r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].lc2;
+
 				r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].end +=
 					(RU_REPLICA_NUM_SEGMENTS * SEGMENT_SIZE);
 				r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].start +=
@@ -1798,7 +1804,8 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 		}
 		case WAIT_FOR_REPLICATION_COMPLETION: {
 #if 1
-			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; i++) {
+			uint32_t i = 0;
+			for (i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; i++) {
 				if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
 					task->last_replica_to_ack = i;
 					return;
@@ -1810,12 +1817,20 @@ void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
 						  ibv_wc_status_str(task->msg_ctx[i].wc.status));
 					exit(EXIT_FAILURE);
 				}
+
 				/*count bytes replicated for this segment*/
+				assert(task->kv_size < 1200);
 				__sync_fetch_and_add(task->replicated_bytes[i], task->kv_size);
+				//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
+				//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
+				//	 *task->replicated_bytes[i], i, task->kv_size,
+				//	 task->ins_req.metadata.segment_full_event);
+				assert(i == 0);
+				assert(*task->replicated_bytes[i] <= SEGMENT_SIZE);
 			}
 			task->kreon_operation_status = ALL_REPLICAS_ACKED;
 #endif
-			return;
+			break;
 		}
 		case ALL_REPLICAS_ACKED:
 			task->kreon_operation_status = TASK_COMPLETE;
@@ -1860,7 +1875,6 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	struct krm_region_desc *r_desc;
-	void *value;
 	scannerHandle *sc;
 	msg_multi_get_req *multi_get;
 	msg_get_req *get_req;
@@ -2273,7 +2287,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		t.r_desc = r_desc;
 		t.segment = (struct segment_header *)seg;
 		t.log_start = 0; // r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE -
-			// sizeof(struct segment_header));
+		// sizeof(struct segment_header));
 		t.log_end = SEGMENT_SIZE; // r_desc->db->db_desc->KV_log_size;
 		rco_build_index(&t);
 #else
@@ -2481,7 +2495,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		task->r_desc = r_desc;
 		task->kreon_operation_status = TASK_DELETE_KEY;
 		if (!krm_enter_kreon(r_desc, task)) {
-			//later...
+			// later...
 			return;
 		}
 
@@ -2510,8 +2524,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
 		task->kreon_operation_status = TASK_COMPLETE;
-
-		if (delete_key(r_desc->db, del_req->key, del_req->key_size) == SUCCESS) {
+		// caution delete key needs KV_FORMAT!
+		if (delete_key(r_desc->db, &del_req->key_size) == SUCCESS) {
 			del_rep->status = KREON_SUCCESS;
 			// log_info("Deleted key %s successfully", del_req->key);
 		} else {
@@ -2521,8 +2535,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		break;
 	}
 
-	case GET_REQUEST:
-		value = NULL;
+	case GET_REQUEST: {
+		struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
+		int level_id;
 		/*kreon phase*/
 		get_req = (msg_get_req *)task->msg->data;
 		r_desc = krm_get_region(mydesc, get_req->key, get_req->key_size);
@@ -2535,16 +2550,16 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		task->kreon_operation_status = TASK_GET_KEY;
 		task->r_desc = r_desc;
 		if (!krm_enter_kreon(r_desc, task)) {
-			//later...
+			// later...
 			return;
 		}
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   (uint64_t)task->msg->reply);
 		get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-		value = __find_key(r_desc->db, &get_req->key_size);
+		uint64_t kv_offt = find_kv_offt(r_desc->db, &get_req->key_size, &level_id);
 		krm_leave_kreon(r_desc);
 
-		if (value == NULL) {
+		if (kv_offt == 0) {
 			// log_warn("key not found key %s : length %u", get_req->key,
 			// get_req->key_size);
 
@@ -2556,23 +2571,29 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 
 		} else {
 			get_rep->key_found = 1;
-			if (get_req->offset > *(uint32_t *)value) {
+			// tranlate now
+			if (level_id)
+				L.addr = bt_get_real_address(kv_offt);
+			else
+				L = bt_get_kv_log_address(r_desc->db->db_desc, kv_offt);
+			char *value_p = L.addr + *(uint32_t *)L.addr + sizeof(uint32_t);
+			if (get_req->offset > *(uint32_t *)value_p) {
 				get_rep->offset_too_large = 1;
 				get_rep->value_size = 0;
-				get_rep->bytes_remaining = *(uint32_t *)value;
+				get_rep->bytes_remaining = *(uint32_t *)value_p;
 				goto exit;
 			} else
 				get_rep->offset_too_large = 0;
 			if (!get_req->fetch_value) {
-				get_rep->bytes_remaining = *(uint32_t *)value - get_req->offset;
+				get_rep->bytes_remaining = *(uint32_t *)value_p - get_req->offset;
 				get_rep->value_size = 0;
 				goto exit;
 			}
-			uint32_t value_bytes_remaining = *(uint32_t *)value - get_req->offset;
+			uint32_t value_bytes_remaining = *(uint32_t *)value_p - get_req->offset;
 			uint32_t bytes_to_read;
 			if (get_req->bytes_to_read <= value_bytes_remaining) {
 				bytes_to_read = get_req->bytes_to_read;
-				get_rep->bytes_remaining = *(uint32_t *)value - (get_req->offset + bytes_to_read);
+				get_rep->bytes_remaining = *(uint32_t *)value_p - (get_req->offset + bytes_to_read);
 			} else {
 				bytes_to_read = value_bytes_remaining;
 				get_rep->bytes_remaining = 0;
@@ -2580,10 +2601,12 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			get_rep->value_size = bytes_to_read;
 			// log_info("Client wants to read %u will read
 			// %u",get_req->bytes_to_read,bytes_to_read);
-			memcpy(get_rep->value, value + sizeof(uint32_t) + get_req->offset, bytes_to_read);
+			memcpy(get_rep->value, value_p + sizeof(uint32_t) + get_req->offset, bytes_to_read);
 		}
 
 	exit:
+		if (L.in_tail)
+			bt_done_with_value_log_address(r_desc->db->db_desc, &L);
 		/*piggyback info for use with the client*/
 		/*finally fix the header*/
 		task->reply_msg->type = GET_REPLY;
@@ -2602,7 +2625,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
 		task->kreon_operation_status = TASK_COMPLETE;
 		break;
-
+	}
 	case MULTI_GET_REQUEST: {
 		msg_value zero_value;
 		zero_value.size = 0;
@@ -2617,14 +2640,15 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		task->kreon_operation_status = TASK_MULTIGET;
 		task->r_desc = r_desc;
 		if (!krm_enter_kreon(r_desc, task)) {
-			//later...
+			// later...
 			return;
 		}
 		/*create an internal scanner object*/
 		sc = (scannerHandle *)malloc(sizeof(scannerHandle));
 
 		if (multi_get->seek_mode != FETCH_FIRST) {
-			// log_info("seeking at key %s", multi_get->seek_key);
+			// log_info("seeking at key %u:%s",
+			// multi_get->seek_key_size,multi_get->seek_key);
 			init_dirty_scanner(sc, r_desc->db, &multi_get->seek_key_size, multi_get->seek_mode);
 		} else {
 			// log_info("seeking at key first key of region");
@@ -2645,33 +2669,46 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		buf->pos = 0;
 		buf->num_entries = 0;
 		if (isValid(sc)) {
-			msg_key *key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
+			void *kv_pointer = get_kv_pointer(sc);
+			// msg_key *key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
+			msg_key *key = kv_pointer;
 			struct msg_value *value = NULL;
 
 			if (multi_get->fetch_keys_only)
 				value = (msg_value *)&zero_value;
 			else
-				value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
+				// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
+				value = (struct msg_value *)(kv_pointer + key->size + sizeof(struct msg_key));
+			int rc = msg_push_to_multiget_buf(key, value, buf);
+			done_with_kv_pointer(sc);
 
-			if (msg_push_to_multiget_buf(key, value, buf) == KREON_SUCCESS) {
+			if (rc == KREON_SUCCESS) {
 				while (buf->num_entries <= multi_get->max_num_entries) {
 					if (getNext(sc) == END_OF_DATABASE) {
 						buf->end_of_region = 1;
 						break;
 					}
-					key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
+					// key = (struct msg_key *)(getKeyPtr(sc) - sizeof(uint32_t));
+					kv_pointer = get_kv_pointer(sc);
+					key = kv_pointer;
 					if (multi_get->fetch_keys_only)
 						value = (msg_value *)&zero_value;
 					else
-						value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
+						// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
+						value = (struct msg_value *)(kv_pointer + key->size +
+									     sizeof(struct msg_key));
 
-					if (msg_push_to_multiget_buf(key, value, buf) == KREON_FAILURE) {
+					rc = msg_push_to_multiget_buf(key, value, buf);
+					done_with_kv_pointer(sc);
+					if (rc == KREON_FAILURE) {
 						break;
 					}
 				}
 			}
-		} else
+		} else {
+			// log_info("Scanner not valid");
 			buf->end_of_region = 1;
+		}
 
 		closeScanner(sc);
 		free(sc);

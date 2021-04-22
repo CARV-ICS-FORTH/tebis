@@ -74,49 +74,53 @@ static uint32_t comp_calc_offt_in_seg(char *buffer_start, char *addr)
 static void comp_write_segment(char *buffer, uint64_t dev_offt, uint32_t buf_offt, uint32_t size, int fd)
 {
 #if 0
-	struct node_header *n = (struct node_header *)&buffer[buf_offt];
-	switch (n->type) {
-	case rootNode:
-	case internalNode: {
-		uint32_t decoded = buf_offt;
-		while (decoded < SEGMENT_SIZE) {
-			if (n->type == paddedSpace)
-				break;
-			assert(n->type == rootNode || n->type == internalNode);
-			n = (struct node_header *)((uint64_t)n + INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
-			decoded += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
-		}
-		break;
-	}
-	case leafNode:
-	case leafRootNode: {
-		int num_leaves = 0;
+  struct node_header *n = (struct node_header *)&buffer[buf_offt];
+  switch (n->type) {
+  case rootNode:
+  case internalNode: {
+    uint32_t decoded = buf_offt;
+    while (decoded < SEGMENT_SIZE) {
+
+      if (n->type == paddedSpace)
+        break;
+      assert(n->type == rootNode || n->type == internalNode);
+      n = (struct node_header *)((uint64_t)n + INDEX_NODE_SIZE +
+                                 KEY_BLOCK_SIZE);
+      decoded += (INDEX_NODE_SIZE + KEY_BLOCK_SIZE);
+    }
+    break;
+  }
+  case leafNode:
+  case leafRootNode: {
+    int num_leaves = 0;
 		int padded = 0;
-		uint32_t decoded = buf_offt;
-		while (decoded < SEGMENT_SIZE) {
-			if (n->type == paddedSpace) {
-				log_warn("Found padded space in leaf segment ok");
+    uint32_t decoded = buf_offt;
+    while (decoded < SEGMENT_SIZE) {
+
+      if (n->type == paddedSpace) {
+        log_warn("Found padded space in leaf segment ok");
 				padded = 1;
 				break;
-			}
-			if (n->type != leafNode && n->type != leafRootNode) {
-				log_fatal("Corruption expected leaf got %u decoded was %u", n->type, decoded);
-				assert(0);
-			}
-			++num_leaves;
-			n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
-			decoded += LEAF_NODE_SIZE;
-		}
-		if (padded)
+      }
+      if (n->type != leafNode && n->type != leafRootNode) {
+        log_fatal("Corruption expected leaf got %u decoded was %u", n->type,
+                  decoded);
+        assert(0);
+      }
+      ++num_leaves;
+      n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
+      decoded += LEAF_NODE_SIZE;
+    }
+		if(padded)
 			break;
-		assert(num_leaves == 511);
-		break;
-	}
-	case paddedSpace:
-		break;
-	default:
-		assert(0);
-	}
+    assert(num_leaves == 511);
+    break;
+  }
+  case paddedSpace:
+    break;
+  default:
+    assert(0);
+  }
 #endif
 	ssize_t total_bytes_written = buf_offt;
 	ssize_t bytes_written = 0;
@@ -130,10 +134,12 @@ static void comp_write_segment(char *buffer, uint64_t dev_offt, uint32_t buf_off
 		}
 		total_bytes_written += bytes_written;
 	}
+#if 0
 	if (fsync(fd)) {
 		log_fatal("Failed to sync file");
 		exit(EXIT_FAILURE);
 	}
+#endif
 	return;
 }
 
@@ -191,13 +197,13 @@ static void comp_get_next_key(struct comp_level_read_cursor *c)
 					c->state = COMP_CUR_CHECK_OFFT;
 					goto fsm_entry;
 				} else
-					c->curr_segment =
-						(segment_header *)(MAPPED + (uint64_t)c->curr_segment->next_segment);
+					c->curr_segment = (segment_header *)bt_get_real_address(
+						(uint64_t)c->curr_segment->next_segment);
 			}
 
 			//log_info("Fetching next segment id %llu", c->curr_segment->segment_id);
 			/*read the segment*/
-			off_t dev_offt = (uint64_t)c->curr_segment - MAPPED;
+			off_t dev_offt = bt_get_absolute_address(c->curr_segment);
 			ssize_t bytes_read = sizeof(struct segment_header);
 			ssize_t bytes = 0;
 			while (bytes_read < SEGMENT_SIZE) {
@@ -298,7 +304,7 @@ static void comp_init_write_cursor(struct comp_level_write_cursor *c, struct db_
 		struct segment_header *seg = get_segment_for_explicit_IO(c->handle->volume_desc,
 									 &c->handle->db_desc->levels[c->level_id], 1);
 
-		c->dev_offt[i] = (uint64_t)seg - MAPPED;
+		c->dev_offt[i] = bt_get_absolute_address(seg);
 		// log_info("Got dev_offt[%d] = %llu", i, c->dev_offt[i]);
 		c->segment_offt[i] = sizeof(struct segment_header);
 		if (i == 0) {
@@ -371,24 +377,14 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 
 		comp_write_segment(c->segment_buf[i], c->dev_offt[i], sizeof(struct segment_header), SEGMENT_SIZE,
 				   c->fd);
-		if (c->handle->db_desc->send_idx && i <= c->tree_height) {
-			//log_info("Closing cursor for level %u height %u", c->level_id, i);
-			if (i != c->tree_height)
-				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
-								(struct segment_header *)c->segment_buf[i],
-								SEGMENT_SIZE, c->level_id, NULL);
-			else
-				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
-								(struct segment_header *)c->segment_buf[i],
-								SEGMENT_SIZE, c->level_id,
-								(struct node_header *)(MAPPED + c->root_offt));
-		}
 		// log_info("Dumped buffer %u at dev_offt %llu",i,c->dev_offt[i]);
 	}
+#if 0
 	if (fsync(c->fd)) {
 		log_fatal("Failed to sync file");
 		exit(EXIT_FAILURE);
 	}
+#endif
 
 	return;
 }
@@ -409,25 +405,17 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 				*(uint32_t *)(&c->segment_buf[0][c->segment_offt[0] % SEGMENT_SIZE]) = paddedSpace;
 				c->segment_offt[0] += remaining_space;
 			}
-			//if(mprotect(c->segment_buf[0],SEGMENT_SIZE,PROT_READ) != 0){
-			//	log_fatal("Failed to protect");
-			//	exit(EXIT_FAILURE);
-			//}
-
-			if (c->handle->db_desc->send_idx) {
-				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[0],
-								(struct segment_header *)c->segment_buf[0],
-								SEGMENT_SIZE, c->level_id, NULL);
-			}
 			comp_write_segment(c->segment_buf[0], c->dev_offt[0], sizeof(struct segment_header),
 					   SEGMENT_SIZE, c->fd);
 			// uint32_t *type = (uint32_t *)&c->segment_buf[0][4096];
 			// assert(*type == leafNode || *type == leafRootNode);
+#if 0
 			if (fsync(FD) != 0) {
 				log_fatal("Failed to sync file!");
 				perror("Reason:\n");
 				exit(EXIT_FAILURE);
 			}
+#endif
 			// type = (uint32_t *)(MAPPED + c->dev_offt[0] + 4096);
 			// assert(*type == leafNode || *type == leafRootNode);
 			// type = (uint32_t
@@ -441,7 +429,7 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 			/*get space from allocator*/
 			struct segment_header *seg = get_segment_for_explicit_IO(
 				c->handle->volume_desc, &c->handle->db_desc->levels[c->level_id], 1);
-			c->dev_offt[0] = (uint64_t)seg - MAPPED;
+			c->dev_offt[0] = bt_get_absolute_address(seg);
 			c->segment_offt[0] += sizeof(struct segment_header);
 		}
 		c->last_leaf = (struct leaf_node *)(&c->segment_buf[0][(c->segment_offt[0] % SEGMENT_SIZE)]);
@@ -476,17 +464,12 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 			comp_write_segment(c->segment_buf[height], c->dev_offt[height], sizeof(struct segment_header),
 					   SEGMENT_SIZE, c->fd);
 
-			if (c->handle->db_desc->send_idx) {
-				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[height],
-								(struct segment_header *)c->segment_buf[height],
-								SEGMENT_SIZE, c->level_id, NULL);
-			}
 			//log_info("Dumped index %d segment buffer", height);
 			/*get space from allocator*/
 			struct segment_header *seg = get_segment_for_explicit_IO(
 				c->handle->volume_desc, &c->handle->db_desc->levels[c->level_id], 1);
 			c->segment_offt[height] += sizeof(struct segment_header);
-			c->dev_offt[height] = (uint64_t)seg - MAPPED;
+			c->dev_offt[height] = bt_get_absolute_address(seg);
 		}
 		c->last_index[height] =
 			(struct index_node *)&c->segment_buf[height][c->segment_offt[height] % SEGMENT_SIZE];
@@ -626,7 +609,7 @@ static void comp_append_entry_to_leaf_node(struct comp_level_write_cursor *c, st
 		// log_info("keys are %llu for level %u",
 		// c->handle->db_desc->levels[c->level_id].level_size[1],
 		//	 c->level_id);
-		char *buf = (char *)MAPPED + kvPrefix->device_offt;
+		char *buf = (char *)bt_get_real_address(kvPrefix->device_offt);
 		//log_info("Pivot is %u:%s", *(uint32_t *)buf, buf + 4);
 		comp_append_pivot_to_index(c, left_leaf_offt, right_leaf_offt, buf, 1);
 	}
@@ -683,17 +666,12 @@ void *compaction_daemon(void *args)
 			int L1_tree = 0;
 			if (level_1->tree_status[L1_tree] == NO_SPILLING &&
 			    level_1->level_size[L1_tree] < level_1->max_level_size) {
-				/*for Tebis*/
-				if (handle->db_desc->is_in_replicated_mode && handle->db_desc->fl != NULL) {
-					(*handle->db_desc->fl)((void *)handle);
-				}
-
 				/*mark them as spilling L0*/
 				level_0->tree_status[L0_tree] = SPILLING_IN_PROGRESS;
 				/*mark them as spilling L1*/
 				level_1->tree_status[L1_tree] = SPILLING_IN_PROGRESS;
 				/*start a compaction*/
-				comp_req = (struct compaction_request *)calloc(1, sizeof(struct compaction_request));
+				comp_req = (struct compaction_request *)malloc(sizeof(struct compaction_request));
 				comp_req->db_desc = handle->db_desc;
 				comp_req->volume_desc = handle->volume_desc;
 				comp_req->src_level = 0;
@@ -707,6 +685,8 @@ void *compaction_daemon(void *args)
 				}
 
 				spin_loop(&(db_desc->levels[0].active_writers), 0);
+				bt_flush_log_tail_chunk(handle);
+
 				comp_req->value_log_seg = db_desc->KV_log_last_segment;
 				comp_req->value_log_offt = db_desc->KV_log_size;
 
@@ -781,8 +761,8 @@ void *compaction_daemon(void *args)
 
 		// rest of levels
 		for (int level_id = 1; level_id < MAX_LEVELS - 1; ++level_id) {
-			struct level_descriptor *level_1 = &handle->db_desc->levels[level_id];
-			struct level_descriptor *level_2 = &handle->db_desc->levels[level_id + 1];
+			struct level_descriptor *l1 = &handle->db_desc->levels[level_id];
+			struct level_descriptor *l2 = &handle->db_desc->levels[level_id + 1];
 			uint8_t tree_1 = 0; // level_1->active_tree;
 			uint8_t tree_2 = 0; // level_2->active_tree;
 
@@ -792,14 +772,13 @@ void *compaction_daemon(void *args)
 			//+ 1, tree_2,
 			//	 level_2->level_size[tree_2]);
 			// log_info("level status = %u", level_1->tree_status[tree_1]);
-			if (level_1->tree_status[tree_1] == NO_SPILLING &&
-			    level_1->level_size[tree_1] >= level_1->max_level_size) {
+			if (l1->tree_status[tree_1] == NO_SPILLING && l1->level_size[tree_1] >= l1->max_level_size) {
 				// log_info("Level %u is F U L L", level_id);
 				// src ready is destination ok?
-				if (level_2->tree_status[tree_2] == NO_SPILLING &&
-				    level_2->level_size[tree_2] < level_2->max_level_size) {
-					level_1->tree_status[tree_1] = SPILLING_IN_PROGRESS;
-					level_2->tree_status[tree_2] = SPILLING_IN_PROGRESS;
+				if (l2->tree_status[tree_2] == NO_SPILLING &&
+				    l2->level_size[tree_2] < l2->max_level_size) {
+					l1->tree_status[tree_1] = SPILLING_IN_PROGRESS;
+					l2->tree_status[tree_2] = SPILLING_IN_PROGRESS;
 					/*start a compaction*/
 					struct compaction_request *comp_req_p =
 						(struct compaction_request *)malloc(sizeof(struct compaction_request));
@@ -883,10 +862,6 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 	comp_init_write_cursor(merged_level, &handle, comp_req->dst_level, FD);
 
-	if (handle.db_desc->idx_init) {
-		(*handle.db_desc->idx_init)((uint64_t)handle.db_desc, comp_req->dst_level);
-		log_info("Informed my replicas of DB: %s for remote compaction!", handle.db_desc->db_name);
-	}
 	uint64_t local_spilled_keys = 0;
 
 	if (comp_req->src_level == 0) {
@@ -940,6 +915,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	nd_src.level_id = comp_req->src_level;
 	nd_src.active_tree = comp_req->src_tree;
 	nd_src.type = KV_PREFIX;
+	nd_src.db_desc = comp_req->db_desc;
 	sh_insert_heap_node(m_heap, &nd_src);
 
 	if (dst_root) {
@@ -947,6 +923,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 		nd_dst.level_id = comp_req->dst_level;
 		nd_dst.active_tree = comp_req->dst_tree;
 		nd_dst.type = KV_PREFIX;
+		nd_dst.db_desc = comp_req->db_desc;
 		sh_insert_heap_node(m_heap, &nd_dst);
 	}
 	int32_t num_of_keys = COMPACTION_UNIT_OF_WORK;
@@ -984,6 +961,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 						// log_info("Refilling from L0");
 						nd_min.kv_prefix = level_src->kv_prefix;
 						nd_min.level_id = comp_req->src_level;
+						nd_min.db_desc = comp_req->db_desc;
 						sh_insert_heap_node(m_heap, &nd_min);
 					}
 				} else {
@@ -991,6 +969,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 					if (!l_src->end_of_level) {
 						nd_min.kv_prefix = l_src->kvPrefix;
 						nd_min.level_id = comp_req->src_level;
+						nd_min.db_desc = comp_req->db_desc;
 						sh_insert_heap_node(m_heap, &nd_min);
 					}
 				}
@@ -999,6 +978,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 				if (!l_dst->end_of_level) {
 					nd_min.kv_prefix = l_dst->kvPrefix;
 					nd_min.level_id = comp_req->dst_level;
+					nd_min.db_desc = comp_req->db_desc;
 					sh_insert_heap_node(m_heap, &nd_min);
 				}
 			}
@@ -1015,18 +995,13 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	if (dst_root) {
 		free(l_dst);
 	}
-
+	free(m_heap);
 	comp_close_write_cursor(merged_level);
-	if (handle.db_desc->destroy_rdma_buf) {
-		(*handle.db_desc->destroy_rdma_buf)((uint64_t)handle.db_desc, comp_req->dst_level);
-		log_info("Destoyed buffer successfully for DB %s!", handle.db_desc->db_name);
-	}
 
 	merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1] =
-		(struct node_header *)(MAPPED + merged_level->root_offt);
+		(struct node_header *)bt_get_real_address(merged_level->root_offt);
 	assert(merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1]->type == rootNode);
 	free(merged_level);
-	free(m_heap);
 
 	// assert(local_spilled_keys ==
 	// handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree]
@@ -1066,12 +1041,14 @@ static void comp_compact_with_mmap_IO(struct compaction_request *comp_req, struc
 	nd_src.level_id = comp_req->src_level;
 	nd_src.active_tree = comp_req->src_tree;
 	nd_src.type = KV_PREFIX;
+	nd_src.db_desc = comp_req->db_desc;
 	sh_insert_heap_node(m_heap, &nd_src);
 	if (dst_root) {
 		nd_dst.kv_prefix = level_dst->kv_prefix;
 		nd_dst.level_id = comp_req->dst_level;
 		nd_dst.active_tree = comp_req->dst_tree;
 		nd_dst.type = KV_PREFIX;
+		nd_dst.db_desc = comp_req->db_desc;
 		sh_insert_heap_node(m_heap, &nd_dst);
 	}
 	uint64_t local_spilled_keys = 0;
@@ -1120,6 +1097,7 @@ static void comp_compact_with_mmap_IO(struct compaction_request *comp_req, struc
 			int rc = _get_next_KV(curr_scanner);
 			if (rc != END_OF_DATABASE) {
 				nd_min.kv_prefix = curr_scanner->kv_prefix;
+				nd_min.db_desc = curr_scanner->handle->db_desc;
 				sh_insert_heap_node(m_heap, &nd_min);
 			}
 			++local_spilled_keys;
@@ -1129,6 +1107,7 @@ static void comp_compact_with_mmap_IO(struct compaction_request *comp_req, struc
 	_close_spill_buffer_scanner(level_src, src_root);
 	if (dst_root)
 		_close_spill_buffer_scanner(level_dst, dst_root);
+	free(m_heap);
 
 	// assert(local_spilled_keys ==
 	// handle.db_desc->levels[comp_req->src_level].level_size[comp_req->src_tree]
@@ -1223,7 +1202,7 @@ void *compaction(void *_comp_req)
 				space_freed += SEGMENT_SIZE;
 				if (curr_segment->next_segment == NULL)
 					break;
-				curr_segment = MAPPED + curr_segment->next_segment;
+				curr_segment = bt_get_real_address((uint64_t)curr_segment->next_segment);
 			}
 			log_info("Freed space %llu MB from db:%s level %u", space_freed / (1024 * 1024),
 				 comp_req->db_desc->db_name, comp_req->src_level);

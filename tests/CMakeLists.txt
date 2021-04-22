@@ -27,12 +27,6 @@ target_link_libraries(test_scans kreon)
 add_executable(test_dirty_scans test_dirty_scans.c)
 target_link_libraries(test_dirty_scans kreon)
 
-add_executable(test_deletes test_deletes.c)
-target_link_libraries(test_deletes kreon)
-
-add_executable(test_spills test_spills.c)
-target_link_libraries(test_spills kreon)
-
 add_executable(test_circular_buffer test_circular_buffer.c
                                     ../utilities/circular_buffer.c)
 target_link_libraries(test_circular_buffer log)

@@ -10,7 +10,7 @@ build_gcc:
     - mkdir -p build;cd build
     - cmake .. -DCMAKE_BUILD_TYPE=Debug
     - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;make test_spills;make test_deletes;
+    - make ycsb-edb;make test_scans;
 
 build_clang:
   stage: build
@@ -18,7 +18,7 @@ build_clang:
     - mkdir -p build;cd build
     - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
     - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;make test_spills;make test_deletes;
+    - make ycsb-edb;make test_scans;
 
 build_rdma_gcc:
   image: carvicsforth/ubuntu_carv:latest
@@ -42,7 +42,7 @@ build_clang-tidy:
     - mkdir -p build;cd build
     - cmake .. "-DCMAKE_C_CLANG_TIDY=/bin/clang-tidy;-checks=* --format-style=../.clang-format"
     - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;make test_spills;make test_deletes;
+    - make ycsb-edb;make test_scans;
 
 install_kreon:
   image: carvicsforth/ubuntu_carv:latest

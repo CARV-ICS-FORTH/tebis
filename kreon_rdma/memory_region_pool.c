@@ -18,12 +18,13 @@
 
 #define ALLOC_LOCAL 1 // if true use numa_alloc_local, otherwise use posix_memalign
 
-const size_t MEM_REGION_BASE_SIZE = 256 * 1024; //8 * 1024 * 1024;
-const size_t MR_PREALLOCATE_COUNT = 128; //FIXME unused
+const size_t MEM_REGION_BASE_SIZE = 256 * 1024;
+//const size_t MEM_REGION_BASE_SIZE = 8 * 1024 * 1024;
+const size_t MR_PREALLOCATE_COUNT = 128; // FIXME unused
 
 static int _mrpool_preallocate_mr(memory_region_pool *);
 static void _mrpool_initialize_mem_region(memory_region *, struct ibv_pd *, size_t);
-static void _mrpool_destroy_mr(struct NODE *);
+static void _mrpool_destroy_mr(struct klist_node *);
 
 memory_region *mrpool_get_static_buffer(struct rdma_cm_id *id, uint32_t size)
 {
@@ -35,8 +36,10 @@ memory_region *mrpool_get_static_buffer(struct rdma_cm_id *id, uint32_t size)
 /**
  * Initialize a memory region pool. The mrpool struct is allocated by the caller
  * and not in this function
- * @param pd The protection domain where the allocated memory buffers will be registered
- * @return Returns the newly allocated memory region pool or NULL if the allocation failed
+ * @param pd The protection domain where the allocated memory buffers will be
+ * registered
+ * @return Returns the newly allocated memory region pool or NULL if the
+ * allocation failed
  */
 memory_region_pool *mrpool_create(struct ibv_pd *pd, size_t max_allocated_memory, pool_type type,
 				  size_t allocation_size)
@@ -53,7 +56,7 @@ memory_region_pool *mrpool_create(struct ibv_pd *pd, size_t max_allocated_memory
 
 	pool->type = type;
 	if (pool->type == PREALLOCATED) {
-		pool->free_mrs = init_list(_mrpool_destroy_mr);
+		pool->free_mrs = klist_init();
 		_mrpool_preallocate_mr(pool);
 		pool->default_allocation_size = MEM_REGION_BASE_SIZE;
 	} else if (pool->type == DYNAMIC) {
@@ -78,19 +81,19 @@ memory_region_pool *mrpool_create(struct ibv_pd *pd, size_t max_allocated_memory
 memory_region *mrpool_allocate_memory_region(memory_region_pool *pool, struct rdma_cm_id *id)
 {
 	/* TODO We could have a preallocation policy for cases where the free list is
-	 * empty. Properly implementing it is tricky since we wouldn't want this
-	 * allocate call to take too long and we wouldn't want to allocate
-	 * significantly more memory than we'll be using.
-	 *
-	 * Perhaps we could asign the preallocation as a task to a worker
-	 */
-	LIST *freelist;
-	NODE *freelist_node;
+   * empty. Properly implementing it is tricky since we wouldn't want this
+   * allocate call to take too long and we wouldn't want to allocate
+   * significantly more memory than we'll be using.
+   *
+   * Perhaps we could asign the preallocation as a task to a worker
+   */
+	struct klist *freelist;
+	struct klist_node *freelist_node;
 	memory_region *mr = NULL;
 
 	if (pool->type == PREALLOCATED) {
 		freelist = pool->free_mrs;
-		freelist_node = remove_first(freelist);
+		freelist_node = klist_get_first(freelist);
 		if (freelist_node) {
 			mr = (memory_region *)freelist_node->data;
 		}
@@ -121,7 +124,7 @@ void mrpool_free_memory_region(memory_region **mr)
 	if (pool->type == PREALLOCATED) {
 		memset((*mr)->local_memory_buffer, 0xFF, (*mr)->memory_region_length);
 		memset((*mr)->remote_memory_buffer, 0xFF, (*mr)->memory_region_length);
-		add_first(pool->free_mrs, *mr, NULL);
+		klist_add_first(pool->free_mrs, *mr, NULL, NULL);
 		// FIXME decrement allocated memory
 	} else {
 		if (rdma_dereg_mr((*mr)->local_memory_region)) {
@@ -152,7 +155,7 @@ void mrpool_free_memory_region(memory_region **mr)
  */
 static int _mrpool_preallocate_mr(memory_region_pool *pool)
 {
-	LIST *freelist = pool->free_mrs;
+	struct klist *freelist = pool->free_mrs;
 	size_t i;
 	// size_t count = max_allocated_memory / MEM_REGION_BASE_SIZE;
 	size_t count = MR_PREALLOCATE_COUNT; // FIXME only added this for experiments
@@ -166,19 +169,22 @@ static int _mrpool_preallocate_mr(memory_region_pool *pool)
 		}
 		_mrpool_initialize_mem_region(mr, pool->pd, MEM_REGION_BASE_SIZE);
 		mr->mrpool = pool;
-		add_first(freelist, mr, NULL);
+		klist_add_first(freelist, mr, NULL, NULL);
 	}
 	return 0;
 }
 
 /**
  * Initialize a new memory region. The memory_region_s is allocated by the
- * caller. A memory buffer is created for the local and remote memory regions and
+ * caller. A memory buffer is created for the local and remote memory regions
+ * and
  * both are registered by calling ibv_reg_mr.
  * @param mr The memory region struct to be initialized
- * @param pd The protection domain to be used for registering the newly allocated
+ * @param pd The protection domain to be used for registering the newly
+ * allocated
  *           memory regions
- * @param memory_region_size The size of the memory region buffers to be allocated
+ * @param memory_region_size The size of the memory region buffers to be
+ * allocated
  */
 static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, size_t memory_region_size)
 {
@@ -215,7 +221,7 @@ static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, 
  * Free list node destructor. De-register a memory region and free its memory.
  * @param node The list node to be freed
  */
-static void _mrpool_destroy_mr(struct NODE *node)
+static void _mrpool_destroy_mr(struct klist_node *node)
 {
 	memory_region *mr = (memory_region *)node->data;
 	if (ibv_dereg_mr(mr->local_memory_region)) {

@@ -104,12 +104,18 @@ class EutropiaDB : public YCSBDB {
 	int __read(int id, const std::string &table, const std::string &key, const std::vector<std::string> *fields,
 		   std::vector<KVPair> &result)
 	{
+		struct K {
+			uint32_t size;
+			char buf[60];
+		} my_key;
 		std::hash<std::string> hash_fn;
 		uint32_t db_id = hash_fn(key) % db_num;
 		std::map<std::string, std::string> vmap;
-
-		char *val = (char *)find_key(dbs[db_id], (void *)key.c_str(), key.length());
-		if (val == NULL) {
+		my_key.size = key.length();
+		memcpy(my_key.buf, key.c_str(), my_key.size);
+		int level_id;
+		uint64_t kv_offt = find_kv_offt(dbs[db_id], &my_key, &level_id);
+		if (kv_offt == 0) {
 			std::cout << "[1]cannot find : " << key << " in DB " << db_id << std::endl;
 			return 0;
 			exit(EXIT_FAILURE);
@@ -264,21 +270,29 @@ class EutropiaDB : public YCSBDB {
 			std::hash<std::string> hash_fn;
 			uint32_t db_id = hash_fn(key) % db_num;
 			std::map<std::string, std::string> vmap;
-
-			char *val = (char *)find_key(dbs[db_id], (void *)key.c_str(), key.length());
-			if (val == NULL) {
+			struct K {
+				uint32_t size;
+				char buf[60];
+			} my_key;
+			my_key.size = key.length();
+			memcpy(my_key.buf, key.c_str(), my_key.size);
+			int level_id;
+			uint64_t kv_offt = find_kv_offt(dbs[db_id], &my_key, &level_id);
+			if (kv_offt == 0) {
 				std::cout << "[1]cannot find : " << key << " in DB " << db_id << std::endl;
 				exit(EXIT_FAILURE);
 			}
-#if 0
-        if(*(int32_t *)val > 16000){
-          std::cout << "TOO LARGE VALUE SIZE IN READ!" << std::endl;
-          std::cout << "[" << *(int32_t *)val << "]" << std::endl;
-          exit(EXIT_FAILURE);
-        }
-#endif
+
+			struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = 0 };
+			if (level_id)
+				L = bt_get_kv_log_address(dbs[db_id]->db_desc, kv_offt);
+			else
+				L.addr = bt_get_real_address(kv_offt);
+			char *val = (char *)L.addr;
 			val = val + sizeof(uint32_t) + *(uint32_t *)val;
 			std::string value(val + sizeof(uint32_t), *(uint32_t *)val);
+			if (L.in_tail)
+				bt_done_with_value_log_address(dbs[db_id]->db_desc, &L);
 
 			std::vector<std::string> tokens;
 			boost::split(tokens, value, boost::is_any_of(" "));
@@ -369,8 +383,13 @@ class EutropiaDB : public YCSBDB {
 		std::hash<std::string> hash_fn;
 		int8_t ret;
 		uint32_t db_id = hash_fn(key) % db_num;
-
-		ret = delete_key(dbs[db_id], (void *)key.c_str(), key.size());
+		struct K {
+			uint32_t size;
+			char buf[60];
+		} my_key;
+		my_key.size = key.size();
+		memcpy(my_key.buf, key.c_str(), my_key.size);
+		ret = delete_key(dbs[db_id], &my_key);
 		if (ret != 0) {
 			std::cerr << "I could not delete " << key << std::endl;
 			return 0;

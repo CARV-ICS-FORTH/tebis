@@ -11,16 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-/** @file btree.c
- *  @brief kreon system implementation
- *
- *  @TODO Extended Summary
- *	@author Giorgos Saloustros (gesalous@ics.forth.gr)
- *	@author Anastasios Papagiannis (apapag@ics.forth.gr)
- *	@author Pilar Gonzalez-ferez (pilar@ics.forth.gr)
- *	@author Giorgos Xanthakis (gxanth@ics.forth.gr)
- *	@author Angelos Bilas (bilas@ics.forth.gr)
- **/
 #include <stdlib.h>
 #include <inttypes.h>
 #include <string.h>
@@ -55,8 +45,8 @@
 
 #define FAILURE 0
 
-int32_t leaf_order;
-int32_t index_order;
+int32_t leaf_order = -1;
+int32_t index_order = -1;
 /*stats counters*/
 extern uint64_t internal_tree_cow_for_leaf;
 extern uint64_t internal_tree_cow_for_index;
@@ -79,13 +69,60 @@ uint32_t size_per_height[MAX_HEIGHT] = { 8192, 4096, 2048, 1024, 512, 256, 128, 
 static uint8_t _writers_join_as_readers(bt_insert_req *ins_req);
 static uint8_t _concurrent_insert(bt_insert_req *ins_req);
 
-//void assert_index_node(node_header *node);
+// void assert_index_node(node_header *node);
 #define BT_DELETE_MARKER_ID 0xFFFFFFFF
 struct bt_delete_marker {
 	uint32_t marker_id;
 	uint32_t key_size;
 	char key[];
 };
+
+void *bt_get_real_address(uint64_t dev_offt)
+{
+	return (void *)MAPPED + dev_offt;
+}
+
+struct bt_kv_log_address bt_get_kv_log_address(struct db_descriptor *db_desc, uint64_t dev_offt)
+{
+	struct bt_kv_log_address reply = { .addr = NULL, .tail_id = 0, .in_tail = UINT8_MAX };
+	RWLOCK_RDLOCK(&db_desc->log_tail_buf_lock);
+
+	for (int i = 0; i < LOG_TAIL_BUFS; ++i) {
+		if (db_desc->log_tail_buf[i]->free)
+			continue;
+
+		if (dev_offt >= db_desc->log_tail_buf[i]->start && dev_offt <= db_desc->log_tail_buf[i]->end) {
+			__sync_fetch_and_add(&db_desc->log_tail_buf[i]->pending_readers, 1);
+			reply.in_tail = 1;
+			// log_info("KV at tail! offt %llu in the device or %llu", dev_offt,
+			// dev_offt % SEGMENT_SIZE);
+			reply.addr = &db_desc->log_tail_buf[i]->buf[dev_offt % SEGMENT_SIZE];
+			reply.tail_id = i;
+			RWLOCK_UNLOCK(&db_desc->log_tail_buf_lock);
+			return reply;
+		}
+		// log_info("KV NOT at tail %d! DB: %s offt %llu start %llu end %llu", i,
+		// db_desc->db_name, dev_offt,
+		//	 db_desc->log_tail_buf[i]->start, db_desc->log_tail_buf[i]->end);
+	}
+
+	reply.in_tail = 0;
+	RWLOCK_UNLOCK(&db_desc->log_tail_buf_lock);
+	reply.addr = (void *)(MAPPED + dev_offt);
+	reply.tail_id = UINT8_MAX;
+	return reply;
+}
+
+void bt_done_with_value_log_address(struct db_descriptor *db_desc, struct bt_kv_log_address *L)
+{
+	assert(db_desc->log_tail_buf[L->tail_id]->pending_readers > 0);
+	__sync_fetch_and_sub(&db_desc->log_tail_buf[L->tail_id]->pending_readers, 1);
+}
+
+uint64_t bt_get_absolute_address(void *addr)
+{
+	return ((uint64_t)addr - MAPPED);
+}
 
 static inline void move_leaf_data(leaf_node *leaf, int32_t middle)
 {
@@ -115,9 +152,8 @@ static inline void update_leaf_index_stats(char key_format)
 
 static bt_split_result split_index(node_header *node, bt_insert_req *ins_req);
 
-static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node);
-
-//void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t)
+// void bt_set_compaction_callback(struct db_descriptor *db_desc,
+// bt_compaction_callback t)
 //{
 //	db_desc->t = t;
 //	return;
@@ -148,13 +184,10 @@ void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flu
 }
 
 void bt_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
-bt_split_result split_leaf(bt_insert_req *req, leaf_node *node);
 
-static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key);
-
+#if DEBUG_BTREE
 void assert_leaf_node(node_header *leaf);
-/*functions used for debugging*/
-// static void print_node(node_header *node);
+#endif
 
 int prefix_compare(char *l, char *r, size_t prefix_size)
 {
@@ -172,7 +205,6 @@ void bt_set_db_in_replicated_mode(db_handle *handle)
 	return;
 }
 
-#if 0
 void bt_decrease_level0_writers(db_handle *handle)
 {
 	if (!handle->db_desc->is_in_replicated_mode) {
@@ -182,7 +214,6 @@ void bt_decrease_level0_writers(db_handle *handle)
 	}
 	__sync_fetch_and_sub(&handle->db_desc->pending_replica_operations, 1);
 }
-#endif
 
 /**
  * @param   index_key: address of the index_key
@@ -196,6 +227,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 {
 	int64_t ret;
 	uint32_t size;
+
 	/*we need the left most entry*/
 	if (key2 == NULL)
 		return 1;
@@ -240,7 +272,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 			ret = prefix_compare(key1f->key_buf, key2p->prefix, key1f->key_size);
 		if (ret == 0) {
 			/*we have a tie, prefix didn't help, fetch query_key form KV log*/
-			key2f = (struct kv_format *)(MAPPED + key2p->device_offt);
+			key2f = (struct kv_format *)bt_get_real_address(key2p->device_offt);
 			key2p = NULL;
 
 			size = key1f->key_size;
@@ -276,7 +308,7 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 
 		if (ret == 0) {
 			/* we have a tie, prefix didn't help, fetch query_key form KV log*/
-			key1f = (struct kv_format *)(MAPPED + key1p->device_offt);
+			key1f = (struct kv_format *)bt_get_real_address(key1p->device_offt);
 			key1p = NULL;
 
 			size = key2f->key_size;
@@ -308,9 +340,9 @@ int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format)
 		if (ret != 0)
 			return ret;
 		/*full comparison*/
-		key1f = (struct kv_format *)(MAPPED + key1p->device_offt);
+		key1f = (struct kv_format *)bt_get_real_address(key1p->device_offt);
 		key1p = NULL;
-		key2f = (struct kv_format *)(MAPPED + key2p->device_offt);
+		key2f = (struct kv_format *)bt_get_real_address(key2p->device_offt);
 		key2p = NULL;
 
 		size = key2f->key_size;
@@ -358,7 +390,8 @@ static void init_level_locktable(db_descriptor *database, uint8_t level_id)
 static void destroy_level_locktable(db_descriptor *database, uint8_t level_id)
 {
 	int i;
-	//log_info("Destroying lock table for DB %s level_id %u", database->db_name, level_id);
+	// log_info("Destroying lock table for DB %s level_id %u", database->db_name,
+	// level_id);
 	for (i = 0; i < MAX_HEIGHT; ++i)
 		free(database->levels[level_id].level_lock_table[i]);
 }
@@ -384,7 +417,8 @@ static void bt_init_fresh_db(struct db_handle *hd, char *db_name, int group_id, 
 		}
 	}
 
-	//db_desc->commit_log = (commit_log_info *)get_space_for_system(volume_desc, sizeof(commit_log_info));
+	// db_desc->commit_log = (commit_log_info *)get_space_for_system(volume_desc,
+	// sizeof(commit_log_info));
 	if (!init_kv_log) {
 		log_warn("Ommiting KV log initialization for DB %s", hd->db_desc->db_name);
 		hd->db_desc->KV_log_first_segment = NULL;
@@ -392,9 +426,9 @@ static void bt_init_fresh_db(struct db_handle *hd, char *db_name, int group_id, 
 		hd->db_desc->KV_log_size = 0;
 		hd->db_desc->L1_index_end_log_offset = 0;
 		hd->db_desc->L1_segment = NULL;
-		//db_desc->commit_log->first_kv_log = NULL;
-		//db_desc->commit_log->last_kv_log = NULL;
-		//db_desc->commit_log->kv_log_size = 0;
+		// db_desc->commit_log->first_kv_log = NULL;
+		// db_desc->commit_log->last_kv_log = NULL;
+		// db_desc->commit_log->kv_log_size = 0;
 	} else {
 		log_info("Initializing KV log for DB %s", hd->db_desc->db_name);
 		hd->db_desc->KV_log_first_segment = seg_get_raw_log_segment(hd->volume_desc);
@@ -407,16 +441,6 @@ static void bt_init_fresh_db(struct db_handle *hd, char *db_name, int group_id, 
 		hd->db_desc->KV_log_size = sizeof(segment_header);
 		hd->db_desc->L1_index_end_log_offset = sizeof(segment_header);
 		hd->db_desc->L1_segment = hd->db_desc->KV_log_last_segment;
-#if 0
-			db_desc->commit_log->first_kv_log =
-				(segment_header *)((uint64_t)db_desc->KV_log_first_segment - MAPPED);
-			db_desc->commit_log->last_kv_log =
-				(segment_header *)((uint64_t)db_desc->KV_log_last_segment - MAPPED);
-			db_desc->commit_log->kv_log_size = (uint64_t)db_desc->KV_log_size;
-			/*persist commit log information, this location stays permanent, there no
-* need to rewrite it during snapshot()*/
-			db_entry->commit_log = (uint64_t)db_desc->commit_log - MAPPED;
-#endif
 	}
 }
 
@@ -430,7 +454,7 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 	strcpy(hd->db_desc->db_name, db_entry->db_name);
 	hd->db_desc->dirty = 0;
 
-	//Zero l0
+	// Zero l0
 	for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; tree_id++) {
 		hd->db_desc->levels[0].first_segment[tree_id] = NULL;
 		hd->db_desc->levels[0].last_segment[tree_id] = NULL;
@@ -446,13 +470,15 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 			/*segments info per level*/
 			if (db_entry->first_segment[level_id][tree_id] != 0)
 				hd->db_desc->levels[level_id].first_segment[tree_id] =
-					(struct segment_header *)(MAPPED + db_entry->first_segment[level_id][tree_id]);
+					(struct segment_header *)bt_get_real_address(
+						db_entry->first_segment[level_id][tree_id]);
 			else
 				hd->db_desc->levels[level_id].first_segment[tree_id] = NULL;
 
 			if (db_entry->last_segment[level_id][tree_id] != 0)
 				hd->db_desc->levels[level_id].last_segment[tree_id] =
-					(struct segment_header *)(MAPPED + db_entry->last_segment[level_id][tree_id]);
+					(struct segment_header *)bt_get_real_address(
+						db_entry->last_segment[level_id][tree_id]);
 			else
 				hd->db_desc->levels[level_id].last_segment[tree_id] = NULL;
 			hd->db_desc->levels[level_id].offset[tree_id] = db_entry->offset[level_id][tree_id];
@@ -462,12 +488,14 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 			/*finally the roots*/
 			if (db_entry->root_r[level_id][tree_id] != 0) {
 				hd->db_desc->levels[level_id].root_r[tree_id] =
-					(node_header *)(MAPPED + db_entry->root_r[level_id][tree_id]);
-				//log_warn("Recovered root_r of [%lu][%lu] = %llu of DB %s", level_id, tree_id,
-				//	 hd->db_desc->levels[level_id].root_r[tree_id], hd->db_desc->db_name);
+					(node_header *)bt_get_real_address(db_entry->root_r[level_id][tree_id]);
+				// log_warn("Recovered root_r of [%lu][%lu] = %llu of DB %s", level_id,
+				// tree_id,
+				//	 hd->db_desc->levels[level_id].root_r[tree_id],
+				// hd->db_desc->db_name);
 			} else {
 				hd->db_desc->levels[level_id].root_r[tree_id] = NULL;
-				//log_info("NULL root for[%u][%u]", level_id, tree_id);
+				// log_info("NULL root for[%u][%u]", level_id, tree_id);
 			}
 
 			hd->db_desc->levels[level_id].root_w[tree_id] = NULL;
@@ -475,23 +503,27 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 	}
 	/*recover value log for this database*/
 	if (db_entry->KV_log_first_seg_offt != 0)
-		hd->db_desc->KV_log_first_segment = (struct segment_header *)(MAPPED + db_entry->KV_log_first_seg_offt);
+		hd->db_desc->KV_log_first_segment =
+			(struct segment_header *)bt_get_real_address(db_entry->KV_log_first_seg_offt);
 	else
 		hd->db_desc->KV_log_first_segment = NULL;
 
 	if (db_entry->KV_log_last_seg_offt != 0)
-		hd->db_desc->KV_log_last_segment = (struct segment_header *)(MAPPED + db_entry->KV_log_last_seg_offt);
+		hd->db_desc->KV_log_last_segment =
+			(struct segment_header *)bt_get_real_address(db_entry->KV_log_last_seg_offt);
 	else
 		hd->db_desc->KV_log_last_segment = NULL;
+
 	hd->db_desc->KV_log_size = db_entry->KV_log_size;
 	hd->db_desc->L1_index_end_log_offset = db_entry->L1_index_end_log_offset;
 	if (db_entry->L1_segment_offt != 0)
-		hd->db_desc->L1_segment = (struct segment_header *)(MAPPED + db_entry->L1_segment_offt);
+		hd->db_desc->L1_segment = (struct segment_header *)bt_get_real_address(db_entry->L1_segment_offt);
 	else
 		hd->db_desc->L1_segment = NULL;
 
-	log_info("DB: %s KV log status - First segment: %llu Last segment: %llu KV log size %llu", hd->db_desc->db_name,
-		 (LLU)hd->db_desc->KV_log_first_segment, (LLU)hd->db_desc->KV_log_last_segment,
+	log_info("DB: %s KV log status - First segment: %llu Last segment: %llu KV "
+		 "log size %llu",
+		 hd->db_desc->db_name, (LLU)hd->db_desc->KV_log_first_segment, (LLU)hd->db_desc->KV_log_last_segment,
 		 (LLU)hd->db_desc->KV_log_size);
 }
 
@@ -523,7 +555,8 @@ static void bt_recover_L0(struct db_handle *hd)
 			cursor += sizeof(uint32_t);
 			log_offset += sizeof(uint32_t);
 			ins_req.metadata.is_tombstone = 1;
-			//log_info("Recovering a delete for DB: %s key is %u:%s", hd->db_desc->db_name,
+			// log_info("Recovering a delete for DB: %s key is %u:%s",
+			// hd->db_desc->db_name,
 			//	 *(uint32_t *)cursor, cursor + 4);
 		} else
 			ins_req.metadata.is_tombstone = 0;
@@ -534,9 +567,10 @@ static void bt_recover_L0(struct db_handle *hd)
 		} else
 			memcpy(p.prefix, cursor + sizeof(uint32_t), PREFIX_SIZE);
 
-		//log_info("Recovering key %u:%s log offset at %llu end of log %llu", *(uint32_t *)cursor, cursor + 4,
+		//log_info("Recovering key %u:%s log offset at %llu end of log %llu",
+		// *(uint32_t *)cursor, cursor + 4,
 		//	 log_offset, hd->db_desc->KV_log_size);
-		p.device_offt = (uint64_t)cursor - MAPPED;
+		p.device_offt = bt_get_absolute_address(cursor);
 		p.tombstone = 0;
 		ins_req.key_value_buf = &p;
 
@@ -544,7 +578,7 @@ static void bt_recover_L0(struct db_handle *hd)
 		uint32_t kv_size = *(uint32_t *)cursor + sizeof(uint32_t);
 		cursor = cursor + kv_size;
 		log_offset += kv_size;
-		//assert(*(uint32_t *)cursor > 0 && *(uint32_t *)cursor < 1200);
+		// assert(*(uint32_t *)cursor > 0 && *(uint32_t *)cursor < 1200);
 		kv_size = (*(uint32_t *)cursor + sizeof(uint32_t));
 		cursor = cursor + kv_size;
 		log_offset += kv_size;
@@ -553,19 +587,19 @@ static void bt_recover_L0(struct db_handle *hd)
 			remaining = 0;
 		else
 			remaining = SEGMENT_SIZE - (log_offset % SEGMENT_SIZE);
-		//log_info("Remaining are %u",remaining);
+		// log_info("Remaining are %u",remaining);
 		if (remaining < sizeof(uint32_t) || *(uint32_t *)cursor == 0) {
-			//time to change segment
+			// time to change segment
 			if (curr->next_segment == NULL)
 				break;
-			curr = (struct segment_header *)(MAPPED + curr->next_segment);
+			curr = (struct segment_header *)bt_get_real_address((uint64_t)curr->next_segment);
 			log_offset += remaining;
 			log_offset += sizeof(struct segment_header);
 			cursor = (char *)((uint64_t)curr + (log_offset % SEGMENT_SIZE));
-			//log_info("Changed segment!");
+			// log_info("Changed segment!");
 		}
 	}
-	//assert(log_offset == hd->db_desc->KV_log_size);
+	// assert(log_offset == hd->db_desc->KV_log_size);
 	log_info("Done recovering L0 of DB %s !", hd->db_desc->db_name);
 }
 
@@ -573,13 +607,15 @@ static void bt_reclaim_db_space(struct db_descriptor *db_desc, struct volume_des
 {
 	for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
 		if (db_desc->levels[level_id].first_segment[1] != NULL) {
-			log_info("Reclaiming space from pending compactions for DB %s after an unclean shutdown",
+			log_info("Reclaiming space from pending compactions for DB %s after an "
+				 "unclean shutdown",
 				 db_desc->db_name);
 			struct segment_header *curr_segment = db_desc->levels[level_id].first_segment[1];
 			while (curr_segment != NULL) {
 				struct segment_header *next = NULL;
 				if (curr_segment->next_segment != NULL)
-					next = (struct segment_header *)(MAPPED + curr_segment->next_segment);
+					next = (struct segment_header *)bt_get_real_address(
+						(uint64_t)curr_segment->next_segment);
 				free_block(volume_desc, curr_segment, SEGMENT_SIZE);
 				curr_segment = next;
 			}
@@ -595,11 +631,14 @@ static void bt_reclaim_db_space(struct db_descriptor *db_desc, struct volume_des
 
 static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
 {
+	if (volume_desc->mem_catalogue == NULL) {
+		log_fatal("Null mem_catalogue");
+		exit(EXIT_FAILURE);
+	}
 	for (int i = 0; i < NUM_OF_DB_GROUPS; i++) {
 		if (volume_desc->mem_catalogue->db_group_index[i] != 0) {
-			struct pr_db_group *db_group =
-				(struct pr_db_group *)(MAPPED +
-						       (uint64_t)volume_desc->mem_catalogue->db_group_index[i]);
+			struct pr_db_group *db_group = (struct pr_db_group *)bt_get_real_address(
+				(uint64_t)volume_desc->mem_catalogue->db_group_index[i]);
 			for (int j = 0; j < GROUP_SIZE; j++) {
 				if (db_group->db_entries[j].valid) {
 					/*hosts a database*/
@@ -627,14 +666,15 @@ static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
 
 							if (s_first_offt != 0)
 								db_desc.levels[level_id].first_segment[tree_id] =
-									(struct segment_header *)(MAPPED +
-												  s_first_offt);
+									(struct segment_header *)bt_get_real_address(
+										s_first_offt);
 							else
 								db_desc.levels[level_id].first_segment[tree_id] = NULL;
 
 							if (s_last_offt != 0)
 								db_desc.levels[level_id].last_segment[tree_id] =
-									(struct segment_header *)(MAPPED + s_last_offt);
+									(struct segment_header *)bt_get_real_address(
+										s_last_offt);
 							else
 								db_desc.levels[level_id].last_segment[tree_id] = NULL;
 							db_desc.levels[level_id].offset[tree_id] = offt;
@@ -645,9 +685,8 @@ static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
 							/*finally the roots*/
 							if (db_entry->root_r[level_id][tree_id] != 0) {
 								db_desc.levels[level_id].root_r[tree_id] =
-									(node_header *)(MAPPED +
-											db_entry->root_r[level_id]
-													[tree_id]);
+									(node_header *)bt_get_real_address(
+										db_entry->root_r[level_id][tree_id]);
 							} else
 								db_desc.levels[level_id].root_r[tree_id] = NULL;
 
@@ -670,21 +709,13 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 {
 	(void)size2;
 	db_handle *handle;
-	volume_descriptor *volume_desc;
-	db_descriptor *db_desc;
-	char *key;
-	uint64_t val;
-	int i = 0;
-	int digits;
 	uint8_t level_id, tree_id;
 
 	fprintf(stderr, "\n%s[%s:%s:%d](\"%s\", %" PRIu64 ", %s);%s\n", "\033[0;32m", __FILE__, __func__, __LINE__,
 		volumeName, start, db_name, "\033[0m");
 
 	MUTEX_LOCK(&init_lock);
-
-	if (mappedVolumes == NULL) {
-		mappedVolumes = init_list(&destroy_volume_node);
+	if (leaf_order == -1) {
 		/*calculate max leaf,index order*/
 		leaf_order = (LEAF_NODE_SIZE - sizeof(node_header)) / (sizeof(uint64_t) + PREFIX_SIZE);
 		while (leaf_order % 2 != 0)
@@ -704,83 +735,26 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 				  sizeof(node_header));
 			exit(EXIT_FAILURE);
 		}
-		//log_info("index order set to: %d leaf order is set to %d sizeof "
-		//	 "node_header = %lu",
-		//	 index_order, leaf_order, sizeof(node_header));
+		log_info("index order set to: %d leaf order is set to %d sizeof "
+			 "node_header = %lu",
+			 index_order, leaf_order, sizeof(node_header));
 	}
-	//Is requested volume already mapped?, construct key which will be
-	//volumeName|start
-	val = start;
-	digits = 0;
-	while (val > 0) {
-		val = val / 10;
-		digits++;
-	}
-	if (digits == 0)
-		digits = 1;
 
-	key = calloc(1, strlen(volumeName) + digits + 1);
-	strcpy(key, volumeName);
-	sprintf(key + strlen(volumeName), "%llu", (LLU)start);
-	key[strlen(volumeName) + digits] = '\0';
-	volume_desc = (volume_descriptor *)find_element(mappedVolumes, key);
-
+	struct volume_descriptor *volume_desc = get_volume_desc(volumeName, start, 0);
 	if (volume_desc == NULL) {
-		volume_desc = calloc(1, sizeof(volume_descriptor));
-		volume_desc->state = VOLUME_IS_OPEN;
-		volume_desc->snap_preemption = SNAP_INTERRUPT_DISABLE;
-		volume_desc->last_snapshot = get_timestamp();
-		volume_desc->last_commit = get_timestamp();
-		volume_desc->last_sync = get_timestamp();
-
-		volume_desc->volume_name = calloc(1, strlen(volumeName) + 1);
-		strcpy(volume_desc->volume_name, volumeName);
-		volume_desc->volume_id = malloc(strlen(key) + 1);
-		strcpy(volume_desc->volume_id, key);
-		volume_desc->open_databases = init_list(&destoy_db_list_node);
-		volume_desc->offset = start;
-		/*allocator lock*/
-		MUTEX_INIT(&(volume_desc->allocator_lock), NULL);
-		/*free operations log*/
-		MUTEX_INIT(&(volume_desc->FREE_LOG_LOCK), NULL);
-		//this call will fill volume's size
-		allocator_init(volume_desc);
-		add_first(mappedVolumes, volume_desc, key);
-		volume_desc->reference_count++;
-		//soft state about the in use pages of level-0 for each SEGMENT_SIZE
-		//segment inside the volume
-		volume_desc->segment_utilization_vector_size =
-			((volume_desc->volume_superblock->dev_size_in_blocks -
-			  (1 + FREE_LOG_SIZE + volume_desc->volume_superblock->bitmap_size_in_blocks)) /
-			 (SEGMENT_SIZE / DEVICE_BLOCK_SIZE)) *
-			2;
-		volume_desc->segment_utilization_vector =
-			(uint16_t *)malloc(volume_desc->segment_utilization_vector_size);
-		if (volume_desc->segment_utilization_vector == NULL) {
-			log_fatal("failed to allocate memory for segment utilization vector of "
-				  "size %lu",
-				  volume_desc->segment_utilization_vector_size);
-			exit(EXIT_FAILURE);
-		}
-		memset(volume_desc->segment_utilization_vector, 0x00, volume_desc->segment_utilization_vector_size);
-		log_info("Open volume %s successfully", volume_desc->volume_name);
+		volume_desc = get_volume_desc(volumeName, start, 1);
 		bt_reclaim_volume_space(volume_desc);
-	} else {
-		//log_info("Volume already mapped");
-		volume_desc->reference_count++;
 	}
-	/*Before searching the actual volume's catalogue take a look at the current
-* open databases*/
-	db_desc = find_element(volume_desc->open_databases, db_name);
+	// Before searching the actual volume's catalogue take a look at the current
+	// open databases
+	struct db_descriptor *db_desc = klist_find_element_with_key(volume_desc->open_databases, db_name);
 	if (db_desc != NULL) {
-		log_info("DB %s already open in volume %s", db_name, key);
-		handle = malloc(sizeof(db_handle));
-		memset(handle, 0x00, sizeof(db_handle));
+		log_info("DB %s already open in volume %s", db_name, volumeName);
+		handle = calloc(1, sizeof(db_handle));
 		handle->volume_desc = volume_desc;
 		handle->db_desc = db_desc;
 		db_desc->ref_count++;
 		MUTEX_UNLOCK(&init_lock);
-		free(key);
 		return handle;
 	} else {
 		pr_db_group *db_group;
@@ -792,13 +766,13 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 		log_info("Searching volume's %s catalogue for db %s...", volume_desc->volume_name, db_name);
 		empty_group = -1;
 		empty_index = -1;
-		//we are going to search system's catalogue to find the root_r of the
-		//corresponding database
-		for (i = 0; i < NUM_OF_DB_GROUPS; i++) {
+		// we are going to search system's catalogue to find the root_r of the
+		// corresponding database
+		for (int i = 0; i < NUM_OF_DB_GROUPS; i++) {
 			/*is group empty?*/
 			if (volume_desc->mem_catalogue->db_group_index[i] != 0) {
-				db_group = (pr_db_group *)(MAPPED +
-							   (uint64_t)volume_desc->mem_catalogue->db_group_index[i]);
+				db_group = (pr_db_group *)bt_get_real_address(
+					(uint64_t)volume_desc->mem_catalogue->db_group_index[i]);
 				for (j = 0; j < GROUP_SIZE; j++) {
 					/*empty slot keep in mind*/
 					if (db_group->db_entries[j].valid == 0 && empty_index == -1) {
@@ -815,7 +789,7 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 						//	 db_name, db_entry->offset[0]);
 						if (strcmp((const char *)db_entry->db_name, (const char *)db_name) ==
 						    0) {
-							//found database, recover state and create the appropriate handle
+							// found database, recover state and create the appropriate handle
 							// and store it in the open_db's list
 							log_info("DB: %s found at index [%d,%d]", db_entry->db_name, i,
 								 j);
@@ -845,26 +819,22 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 		// log_info("mem epoch %llu", volume_desc->mem_catalogue->epoch);
 		if (empty_index == -1) {
 			/*space found in empty group*/
-			pr_db_group *new_group = get_space_for_system(volume_desc, sizeof(pr_db_group));
+			pr_db_group *new_group = get_space_for_system(volume_desc, sizeof(pr_db_group), 1);
 			memset(new_group, 0x00, sizeof(pr_db_group));
 			new_group->epoch = volume_desc->mem_catalogue->epoch;
 			volume_desc->mem_catalogue->db_group_index[empty_group] =
-				(pr_db_group *)((uint64_t)new_group - MAPPED);
+				(pr_db_group *)bt_get_absolute_address(new_group);
 			empty_index = 0;
-			//log_info("allocated new pr_db_group epoch at %llu volume epoch %llu", new_group->epoch,
+			// log_info("allocated new pr_db_group epoch at %llu volume epoch %llu",
+			// new_group->epoch,
 			//	 volume_desc->mem_catalogue->epoch);
 		}
 		log_info("DB %s not found, allocating slot [%d,%d] for it", (const char *)db_name, empty_group,
 			 empty_index);
-		pr_db_group *cur_group =
-			(pr_db_group *)(MAPPED + (uint64_t)volume_desc->mem_catalogue->db_group_index[empty_group]);
+		pr_db_group *cur_group = (pr_db_group *)bt_get_real_address(
+			(uint64_t)volume_desc->mem_catalogue->db_group_index[empty_group]);
 		db_entry = &cur_group->db_entries[empty_index];
 		db_entry->valid = 1;
-		// db_entry = (pr_db_entry *)(MAPPED +
-		// (uint64_t)volume_desc->mem_catalogue->db_group_index[empty_group] +
-		//			   (uint64_t)DB_ENTRY_SIZE + (uint64_t)(empty_index *
-		// DB_ENTRY_SIZE));
-		// db_entry->replica_forest = NULL;
 		handle = calloc(1, sizeof(db_handle));
 		db_desc = (db_descriptor *)calloc(1, sizeof(db_descriptor));
 		handle->db_desc = db_desc;
@@ -890,7 +860,7 @@ finish_init:
 		MUTEX_INIT(&db_desc->levels[level_id].level_allocation_lock, NULL);
 		init_level_locktable(db_desc, level_id);
 		db_desc->levels[level_id].active_writers = 0;
-		//db_desc->pending_replica_operations = 0;
+		db_desc->pending_replica_operations = 0;
 		/*check again which tree should be active*/
 		db_desc->levels[level_id].active_tree = 0;
 
@@ -906,10 +876,10 @@ finish_init:
 	db_desc->idx_init = NULL;
 	db_desc->destroy_rdma_buf = NULL;
 	db_desc->send_idx = NULL;
-	//db_desc->t = NULL;
+	// db_desc->t = NULL;
 	db_desc->fl = NULL;
 	db_desc->is_in_replicated_mode = 0;
-	db_desc->pending_barrier_op = 0;
+	db_desc->block_on_L0 = 1;
 	MUTEX_INIT(&db_desc->lock_log, NULL);
 	MUTEX_INIT(&db_desc->client_barrier_lock, NULL);
 	if (pthread_cond_init(&db_desc->client_barrier, NULL) != 0) {
@@ -917,6 +887,65 @@ finish_init:
 		perror("pthread_cond_init() error");
 		exit(EXIT_FAILURE);
 	}
+
+#if VALUE_LOG_EXPLICIT_IO
+	// value log tail related
+	if (pthread_rwlock_init(&db_desc->log_tail_buf_lock, NULL) != 0) {
+		log_fatal("Failed to init lock");
+	}
+	for (int i = 0; i < LOG_TAIL_BUFS; ++i) {
+		if (posix_memalign((void **)&db_desc->log_tail_buf[i], ALIGNMENT, sizeof(struct log_tail)) != 0) {
+			log_fatal("Failed to allocate value log tail buffer for DB:%s", db_desc->db_name);
+			exit(EXIT_FAILURE);
+		}
+		db_desc->log_tail_buf[i]->dev_segment_offt = 0;
+		db_desc->log_tail_buf[i]->start = 0;
+		db_desc->log_tail_buf[i]->end = 0;
+		db_desc->log_tail_buf[i]->pending_readers = 0;
+		db_desc->log_tail_buf[i]->free = 1;
+		db_desc->log_tail_buf[i]->IOs_completed_in_tail = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
+		db_desc->log_tail_buf[i]->fd = FD;
+		for (int j = 0; j < (SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE); ++j) {
+			db_desc->log_tail_buf[i]->bytes_written_in_log_chunk[j] = 0;
+		}
+	}
+
+	// Read last segment of db in memory
+	off_t dev_offt = bt_get_absolute_address((void *)db_desc->KV_log_last_segment);
+	ssize_t bytes_read = 0;
+	ssize_t bytes = 0;
+	while (bytes_read < SEGMENT_SIZE) {
+		bytes = pread(FD, db_desc->log_tail_buf[0]->buf, SEGMENT_SIZE - bytes_read, dev_offt + bytes_read);
+		if (bytes == -1) {
+			log_fatal("Failed to read error code");
+			perror("Error");
+			assert(0);
+			exit(EXIT_FAILURE);
+		}
+		bytes_read += bytes;
+	}
+	db_desc->log_tail_buf[0]->dev_segment_offt = bt_get_absolute_address((void *)db_desc->KV_log_last_segment);
+	db_desc->log_tail_buf[0]->start = db_desc->log_tail_buf[0]->dev_segment_offt;
+	db_desc->log_tail_buf[0]->end = db_desc->log_tail_buf[0]->start + SEGMENT_SIZE;
+	db_desc->log_tail_buf[0]->pending_readers = 0;
+	uint32_t offt_in_seg = db_desc->KV_log_size % SEGMENT_SIZE;
+	uint32_t chunk_id = offt_in_seg / LOG_TAIL_CHUNK_SIZE;
+	uint32_t num_chunks = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
+	db_desc->log_tail_buf[0]->IOs_completed_in_tail = 0;
+	for (uint32_t j = 0; j < num_chunks; ++j) {
+		if (j < chunk_id) {
+			db_desc->log_tail_buf[0]->bytes_written_in_log_chunk[j] = LOG_TAIL_CHUNK_SIZE;
+			++db_desc->log_tail_buf[0]->IOs_completed_in_tail;
+		} else if (j == chunk_id)
+			db_desc->log_tail_buf[0]->bytes_written_in_log_chunk[j] = offt_in_seg % LOG_TAIL_CHUNK_SIZE;
+		else
+			db_desc->log_tail_buf[0]->bytes_written_in_log_chunk[j] = 0;
+	}
+
+	db_desc->log_tail_buf[0]->free = 0;
+	log_info("Recovered last segment of DB: %s in memory IOs completed %u", db_desc->db_name,
+		 db_desc->log_tail_buf[0]->IOs_completed_in_tail);
+#endif
 
 	sem_init(&db_desc->compaction_daemon_interrupts, PTHREAD_PROCESS_PRIVATE, 0);
 	if (pthread_create(&(handle->db_desc->compaction_daemon), NULL, (void *)compaction_daemon, (void *)handle) !=
@@ -930,10 +959,9 @@ finish_init:
 			a++;
 	}
 
-	add_first(volume_desc->open_databases, db_desc, db_name);
+	klist_add_first(volume_desc->open_databases, db_desc, db_name, NULL);
 	bt_recover_L0(handle);
 	MUTEX_UNLOCK(&init_lock);
-	free(key);
 
 	return handle;
 }
@@ -942,7 +970,7 @@ char db_close(db_handle *handle)
 {
 	MUTEX_LOCK(&init_lock);
 	/*verify that this is a valid db*/
-	if (find_element(handle->volume_desc->open_databases, handle->db_desc->db_name) == NULL) {
+	if (klist_find_element_with_key(handle->volume_desc->open_databases, handle->db_desc->db_name) == NULL) {
 		log_warn("Received close for db: %s that is not listed as open", handle->db_desc->db_name);
 		goto finish;
 	}
@@ -984,7 +1012,12 @@ char db_close(db_handle *handle)
 	log_info("All pending compactions done for db %s", handle->db_desc->db_name);
 	snapshot(handle->volume_desc);
 
-	//free L0
+	if (!klist_remove_element(handle->volume_desc->open_databases, handle->db_desc)) {
+		log_fatal("Failed to remove db_desc of DB %s", handle->db_desc->db_name);
+		exit(EXIT_FAILURE);
+	}
+
+	// free L0
 	for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; ++tree_id) {
 		if (RWLOCK_WRLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
 			exit(EXIT_FAILURE);
@@ -995,11 +1028,6 @@ char db_close(db_handle *handle)
 		}
 	}
 
-	if (remove_element(handle->volume_desc->open_databases, handle->db_desc) != 1) {
-		log_fatal("Could not find db: %s", handle->db_desc->db_name);
-		exit(EXIT_FAILURE);
-	}
-
 	for (int i = 0; i < MAX_LEVELS; i++) {
 		if (pthread_rwlock_destroy(&handle->db_desc->levels[i].guard_of_level.rx_lock)) {
 			log_fatal("Failed to destroy guard of level lock");
@@ -1007,7 +1035,7 @@ char db_close(db_handle *handle)
 		}
 		destroy_level_locktable(handle->db_desc, i);
 	}
-	//memset(handle->db_desc, 0x00, sizeof(struct db_descriptor));
+	// memset(handle->db_desc, 0x00, sizeof(struct db_descriptor));
 	if (pthread_cond_destroy(&handle->db_desc->client_barrier) != 0) {
 		log_fatal("Failed to destroy condition variable");
 		perror("pthread_cond_destroy() error");
@@ -1019,6 +1047,36 @@ finish:
 	free(handle);
 	MUTEX_UNLOCK(&init_lock);
 	return KREON_OK;
+}
+
+void destroy_db_desc(void *handle)
+{
+	struct db_handle *hd = (struct db_handle *)handle;
+	// free L0
+	for (int tree_id = 0; tree_id < NUM_TREES_PER_LEVEL; ++tree_id) {
+		if (RWLOCK_WRLOCK(&hd->db_desc->levels[0].guard_of_level.rx_lock)) {
+			exit(EXIT_FAILURE);
+		}
+		seg_free_level(handle, 0, tree_id);
+		if (RWLOCK_UNLOCK(&hd->db_desc->levels[0].guard_of_level.rx_lock)) {
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	for (int i = 0; i < MAX_LEVELS; i++) {
+		if (pthread_rwlock_destroy(&hd->db_desc->levels[i].guard_of_level.rx_lock)) {
+			log_fatal("Failed to destroy guard of level lock");
+			exit(EXIT_FAILURE);
+		}
+		destroy_level_locktable(hd->db_desc, i);
+	}
+	// memset(handle->db_desc, 0x00, sizeof(struct db_descriptor));
+	if (pthread_cond_destroy(&hd->db_desc->client_barrier) != 0) {
+		log_fatal("Failed to destroy condition variable");
+		perror("pthread_cond_destroy() error");
+		exit(EXIT_FAILURE);
+	}
+	free(hd->db_desc);
 }
 
 enum optype { insert_op, delete_op };
@@ -1048,7 +1106,8 @@ uint8_t bt_insert(db_handle *handle, void *key, void *value, uint32_t key_size, 
 	*(uint32_t *)key_buf = key_size;
 	memcpy((void *)(uint64_t)key_buf + sizeof(uint32_t), key, key_size);
 	*(uint32_t *)((uint64_t)key_buf + sizeof(uint32_t) + key_size) = value_size;
-	memcpy((void *)(uint64_t)key_buf + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size);
+	if (value)
+		memcpy((void *)(uint64_t)key_buf + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size);
 	ins_req.metadata.handle = handle;
 	ins_req.key_value_buf = key_buf;
 	ins_req.metadata.level_id = 0;
@@ -1080,13 +1139,14 @@ uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key
 	return bt_insert(handle, key, value, key_size, value_size, insert_op);
 }
 
-int8_t delete_key(db_handle *handle, void *key, uint32_t size)
+int8_t delete_key(db_handle *handle, void *key)
 {
-	if (!find_key(handle, key, size))
+	int level_id;
+	if (!find_kv_offt(handle, key, &level_id))
+		// if (!find_key(handle, key, size))
 		return FAILED;
-	else {
-		return bt_insert(handle, key, NULL, size, 0, delete_op);
-	}
+	else
+		return bt_insert(handle, key + sizeof(uint32_t), NULL, *(uint32_t *)key, 0, delete_op);
 }
 
 void extract_keyvalue_size(log_operation *req, metadata_tologop *data_size)
@@ -1102,7 +1162,8 @@ void extract_keyvalue_size(log_operation *req, metadata_tologop *data_size)
 		data_size->key_len = *(uint32_t *)req->ins_req->key_value_buf;
 		data_size->value_len = 0;
 		data_size->kv_size = data_size->key_len + sizeof(struct bt_delete_marker) + sizeof(uint32_t);
-		//log_info("data size is %lu key len %lu",data_size->kv_size,data_size->key_len);
+		// log_info("data size is %lu key len
+		// %lu",data_size->kv_size,data_size->key_len);
 		break;
 	default:
 		log_fatal("Trying to append unknown operation in log! ");
@@ -1125,8 +1186,8 @@ void write_keyvalue_inlog(log_operation *req, metadata_tologop *data_size, char 
 		memcpy(addr_inlog, req->ins_req->key_value_buf + (sizeof(uint32_t)), data_size->key_len);
 		addr_inlog += data_size->key_len;
 		*(uint32_t *)addr_inlog = 0;
-		//addr_inlog += (sizeof(data_size->key_len) + data_size->key_len);
-		//memcpy(addr_inlog, &data_size->value_len, sizeof(data_size->value_len));
+		// addr_inlog += (sizeof(data_size->key_len) + data_size->key_len);
+		// memcpy(addr_inlog, &data_size->value_len, sizeof(data_size->value_len));
 		break;
 	}
 	default:
@@ -1135,16 +1196,314 @@ void write_keyvalue_inlog(log_operation *req, metadata_tologop *data_size, char 
 	}
 }
 
-void *append_key_value_to_log(log_operation *req)
+struct log_ticket {
+	// in var
+	struct log_tail *tail;
+	struct log_operation *req;
+	struct metadata_tologop *data_size;
+	uint64_t log_offt;
+	// out var
+	uint64_t IO_start_offt;
+	uint32_t IO_size;
+	uint32_t op_size;
+};
+
+static void copy_kv_to_tail(struct log_ticket *ticket)
+{
+	if (!ticket->req)
+		return;
+	uint64_t offt_in_seg = ticket->log_offt % SEGMENT_SIZE;
+	switch (ticket->req->optype_tolog) {
+	case insertOp: {
+		ticket->op_size = sizeof(ticket->data_size->key_len) + ticket->data_size->key_len +
+				  sizeof(ticket->data_size->value_len) + ticket->data_size->value_len;
+		// log_info("Copying ta log offt %llu in buf %u bytes %u", ticket->log_offt,
+		// offt_in_seg, ticket->op_size);
+		memcpy(&ticket->tail->buf[offt_in_seg], ticket->req->ins_req->key_value_buf, ticket->op_size);
+		break;
+	}
+	case deleteOp: {
+		uint32_t offt = offt_in_seg;
+		struct bt_delete_marker dm = { .marker_id = BT_DELETE_MARKER_ID,
+					       .key_size = ticket->data_size->key_len };
+		ticket->op_size = sizeof(struct bt_delete_marker);
+		memcpy(&ticket->tail->buf[offt], &dm, ticket->op_size);
+		offt += sizeof(struct bt_delete_marker);
+		memcpy(&ticket->tail->buf[offt], ticket->req->ins_req->key_value_buf + (sizeof(uint32_t)),
+		       ticket->data_size->key_len);
+		offt += ticket->data_size->key_len;
+		ticket->op_size += ticket->data_size->key_len;
+		memset(&ticket->tail->buf[offt], 0x00, sizeof(uint32_t));
+		ticket->op_size += sizeof(uint32_t);
+		break;
+	}
+	case paddingOp: {
+		if (offt_in_seg == 0)
+			ticket->op_size = 0;
+		else {
+			ticket->op_size = SEGMENT_SIZE - offt_in_seg;
+			// log_info("Time for padding for log_offset %llu offt in seg %llu pad bytes
+			// %u", ticket->log_offt,
+			//	 offt_in_seg, ticket->op_size);
+			memset(&ticket->tail->buf[offt_in_seg], 0, ticket->op_size);
+		}
+		break;
+	}
+	default:
+		log_fatal("Unknown op");
+		exit(EXIT_FAILURE);
+	}
+
+	uint32_t remaining = ticket->op_size;
+	uint32_t curr_offt_in_seg = offt_in_seg;
+	while (remaining > 0) {
+		uint32_t chunk_id = curr_offt_in_seg / LOG_TAIL_CHUNK_SIZE;
+		int64_t offt_in_chunk = curr_offt_in_seg - (chunk_id * LOG_TAIL_CHUNK_SIZE);
+		int64_t bytes = LOG_TAIL_CHUNK_SIZE - offt_in_chunk;
+		if (remaining < bytes)
+			bytes = remaining;
+		//log_info("Charging %u bytes for chunk id %u op size %u", bytes, chunk_id, ticket->op_size);
+		//assert(ticket->op_size < (2 * 1024 * 1024));
+		__sync_fetch_and_add(&ticket->tail->bytes_written_in_log_chunk[chunk_id], bytes);
+		remaining -= bytes;
+		curr_offt_in_seg += bytes;
+	}
+}
+
+static void do_log_chunk_IO(struct log_ticket *ticket)
+{
+	uint64_t offt_in_seg = ticket->log_offt % SEGMENT_SIZE;
+	uint32_t chunk_offt = offt_in_seg % LOG_TAIL_CHUNK_SIZE;
+	uint32_t chunk_id = offt_in_seg / LOG_TAIL_CHUNK_SIZE;
+	uint32_t num_chunks = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
+	assert(chunk_id != num_chunks);
+	int do_IO;
+
+	if (chunk_offt + ticket->op_size >= LOG_TAIL_CHUNK_SIZE) {
+		ticket->IO_start_offt = chunk_id * LOG_TAIL_CHUNK_SIZE;
+		ticket->IO_size = LOG_TAIL_CHUNK_SIZE;
+		do_IO = 1;
+	} else {
+		ticket->IO_start_offt = 0;
+		ticket->IO_size = 0;
+		do_IO = 0;
+	}
+
+	if (!do_IO)
+		return;
+
+	// log_info("Checking if all data for chunk id %u are there currently are %u",
+	// chunk_id,
+	// Can I set new segment for the others to proceed?
+	//	 ticket->tail->bytes_written_in_log_chunk[chunk_id]);
+	// wait until all pending bytes are written
+	wait_for_value(&ticket->tail->bytes_written_in_log_chunk[chunk_id], LOG_TAIL_CHUNK_SIZE);
+	// do the IO finally
+	ssize_t total_bytes_written;
+	if (chunk_id)
+		total_bytes_written = 0;
+	else
+		total_bytes_written = sizeof(struct segment_header);
+	ssize_t bytes_written = 0;
+	uint32_t size = LOG_TAIL_CHUNK_SIZE;
+	// log_info("IO time, start %llu size %llu segment dev_offt %llu offt in seg
+	// %llu", total_bytes_written, size,
+	//	 ticket->tail->dev_segment_offt, ticket->IO_start_offt);
+	while (total_bytes_written < size) {
+		bytes_written =
+			pwrite(ticket->tail->fd, &ticket->tail->buf[ticket->IO_start_offt + total_bytes_written],
+			       size - total_bytes_written,
+			       ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
+		if (bytes_written == -1) {
+			log_fatal("Failed to write LOG_CHUNK reason follows");
+			perror("Reason");
+			exit(EXIT_FAILURE);
+		}
+		total_bytes_written += bytes_written;
+	}
+	__sync_fetch_and_add(&ticket->tail->IOs_completed_in_tail, 1);
+
+	assert(ticket->tail->IOs_completed_in_tail <= num_chunks);
+#if 0
+	if (chunk_id == num_chunks - 1) {
+		// log_info("Resetting segment start %llu end %llu ...",
+		// ticket->tail->start, ticket->tail->end);
+		// Wait for all chunk IOs to finish to characterize it free
+		spin_loop(&ticket->tail->IOs_completed_in_tail, num_chunks);
+
+		memset(ticket->tail->bytes_written_in_log_chunk, 0x00,
+		       sizeof(ticket->tail->bytes_written_in_log_chunk));
+		ticket->tail->dev_segment_offt = 0;
+		ticket->tail->start = 0;
+		ticket->tail->end = 0;
+		while (!__sync_bool_compare_and_swap(&ticket->tail->IOs_completed_in_tail,num_chunks,0));
+		while (!__sync_bool_compare_and_swap(&ticket->tail->free, 0, 1))
+			;
+	}
+#endif
+}
+
+static void do_log_IO(struct log_ticket *ticket)
+{
+	uint64_t log_offt = ticket->log_offt;
+	uint32_t op_size = ticket->op_size;
+	uint32_t remaining = ticket->op_size;
+	uint64_t c_log_offt = log_offt;
+	while (remaining > 0) {
+		ticket->log_offt = c_log_offt;
+		if (remaining >= LOG_TAIL_CHUNK_SIZE)
+			ticket->op_size = LOG_TAIL_CHUNK_SIZE;
+		else
+			ticket->op_size = remaining;
+		do_log_chunk_IO(ticket);
+		remaining -= ticket->op_size;
+		c_log_offt += ticket->op_size;
+	}
+	ticket->log_offt = log_offt;
+	ticket->op_size = op_size;
+}
+
+static void print_log_tail(struct db_descriptor *db_desc, struct log_tail *tail)
+{
+	int id = 0;
+	log_info("log tail");
+	uint32_t *start = (uint32_t *)&tail->buf[sizeof(struct segment_header)];
+	uint32_t *value = (uint32_t *)((uint64_t)start + sizeof(uint32_t) + *start);
+	uint32_t offt_in_buf = sizeof(struct segment_header);
+	while (offt_in_buf < db_desc->KV_log_size % SEGMENT_SIZE) {
+		printf("id %d Key len: %u key %s value len %u offt %u\n", id++, *start, (char *)&start[1], *value,
+		       offt_in_buf);
+		start = (uint32_t *)((uint64_t)value + sizeof(uint32_t) + *value);
+		offt_in_buf += sizeof(uint32_t) + *start + sizeof(uint32_t) + *value;
+		value = (uint32_t *)((uint64_t)start + sizeof(uint32_t) + *start);
+	}
+}
+
+static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
+{
+	db_handle *handle = req->metadata->handle;
+	metadata_tologop data_size;
+	extract_keyvalue_size(req, &data_size);
+
+	struct log_ticket my_ticket = { .log_offt = 0, .IO_start_offt = 0, .IO_size = 0 };
+	struct log_ticket pad_ticket = { .log_offt = 0, .IO_start_offt = 0, .IO_size = 0 };
+
+	MUTEX_LOCK(&handle->db_desc->lock_log);
+	// print_log_tail(handle->db_desc,
+	// handle->db_desc->log_tail_buf[tail_id%LOG_TAIL_BUFS]);
+	uint32_t available_space_in_log;
+	// append data part in the data log
+	if (handle->db_desc->KV_log_size % SEGMENT_SIZE != 0)
+		available_space_in_log = SEGMENT_SIZE - (handle->db_desc->KV_log_size % SEGMENT_SIZE);
+	else
+		available_space_in_log = 0;
+
+	uint32_t num_chunks = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
+	int segment_change = 0;
+	if (available_space_in_log < data_size.kv_size) {
+		// fill info for kreon master here
+		req->metadata->log_segment_addr = bt_get_absolute_address(handle->db_desc->KV_log_last_segment);
+		assert(req->metadata->log_segment_addr % SEGMENT_SIZE == 0);
+		req->metadata->log_offset_full_event = handle->db_desc->KV_log_size;
+		req->metadata->segment_id = handle->db_desc->KV_log_last_segment->segment_id;
+		req->metadata->log_padding = available_space_in_log;
+		req->metadata->end_of_log = handle->db_desc->KV_log_size + available_space_in_log;
+		req->metadata->segment_full_event = 1;
+
+		uint32_t curr_tail_id = handle->db_desc->curr_tail_id;
+
+		// pad with zeroes remaining bytes in segment
+		log_operation pad_op = { .metadata = NULL, .optype_tolog = paddingOp, .ins_req = NULL };
+		pad_ticket.req = &pad_op;
+		pad_ticket.data_size = NULL;
+		pad_ticket.tail = handle->db_desc->log_tail_buf[curr_tail_id % LOG_TAIL_BUFS];
+		pad_ticket.log_offt = handle->db_desc->KV_log_size;
+
+		copy_kv_to_tail(&pad_ticket);
+
+		// log_info("Resetting segment start %llu end %llu ...",
+		// ticket->tail->start, ticket->tail->end);
+		// Wait for all chunk IOs to finish to characterize it free
+		uint32_t next_tail_id = ++curr_tail_id;
+		struct log_tail *next_tail = handle->db_desc->log_tail_buf[next_tail_id % LOG_TAIL_BUFS];
+
+		// if (next_tail->free)
+		//	num_chunks = 0;
+
+		wait_for_value(&next_tail->IOs_completed_in_tail, num_chunks);
+		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
+		wait_for_value(&next_tail->pending_readers, 0);
+		// int warn_print = 1;
+		// warn_print = 1;
+		// while (next_tail->pending_readers) {
+		//	if (warn_print) {
+		// log_warn("Still pending readers for DB: %s not ready yet maybe increase "
+		//	 "LOG_TAIL_BUFS from %d?",
+		//	 handle->db_desc->db_name, LOG_TAIL_BUFS);
+		//		warn_print = 0;
+		//	}
+		//}
+
+		handle->db_desc->KV_log_size += available_space_in_log;
+
+		struct segment_header *d_header = seg_get_raw_log_segment(handle->volume_desc);
+		memset(d_header->garbage_bytes, 0x00, 2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
+		d_header->segment_id = handle->db_desc->KV_log_last_segment->segment_id + 1;
+		d_header->next_segment = NULL;
+		handle->db_desc->KV_log_last_segment->next_segment = (void *)bt_get_absolute_address(d_header);
+		handle->db_desc->KV_log_last_segment = d_header;
+		// position the log to the newly added block
+		handle->db_desc->KV_log_size += sizeof(segment_header);
+		// Reset tail for new use
+		for (int j = 0; j < (SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE); ++j)
+			next_tail->bytes_written_in_log_chunk[j] = 0;
+		next_tail->IOs_completed_in_tail = 0;
+		next_tail->start = bt_get_absolute_address(d_header);
+		next_tail->end = next_tail->start + SEGMENT_SIZE;
+		next_tail->dev_segment_offt = bt_get_absolute_address(d_header);
+		next_tail->bytes_written_in_log_chunk[0] = sizeof(struct segment_header);
+		next_tail->free = 0;
+		handle->db_desc->curr_tail_id = next_tail_id;
+		segment_change = 1;
+		RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);
+	}
+	uint32_t tail_id = handle->db_desc->curr_tail_id;
+	my_ticket.req = req;
+	my_ticket.data_size = &data_size;
+	my_ticket.tail = handle->db_desc->log_tail_buf[tail_id % LOG_TAIL_BUFS];
+	my_ticket.log_offt = handle->db_desc->KV_log_size;
+	req->metadata->log_offset = handle->db_desc->KV_log_size;
+	handle->db_desc->KV_log_size += data_size.kv_size;
+	MUTEX_UNLOCK(&handle->db_desc->lock_log);
+
+	if (segment_change) {
+		// do the padding IO as well
+		do_log_IO(&pad_ticket);
+		wait_for_value(&pad_ticket.tail->IOs_completed_in_tail, num_chunks);
+		// Now time to retire
+		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
+		pad_ticket.tail->free = 1;
+		RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);
+	}
+	copy_kv_to_tail(&my_ticket);
+	do_log_IO(&my_ticket);
+	uint64_t kv_dev_offt = my_ticket.tail->dev_segment_offt + (my_ticket.log_offt % SEGMENT_SIZE);
+	if (my_ticket.req->optype_tolog == deleteOp) {
+		//log_info("Delete size was %u",data_size.kv_size);
+		kv_dev_offt += sizeof(uint32_t);
+	}
+	return kv_dev_offt;
+}
+
+static uint64_t append_key_value_to_log(log_operation *req)
 {
 	segment_header *d_header;
 	void *addr_inlog; /*address at the device*/
 	metadata_tologop data_size;
 	uint32_t available_space_in_log;
-
+	// uint32_t allocated_space;
 	db_handle *handle = req->metadata->handle;
 	extract_keyvalue_size(req, &data_size);
-
 	MUTEX_LOCK(&handle->db_desc->lock_log);
 	/*append data part in the data log*/
 	if (handle->db_desc->KV_log_size % SEGMENT_SIZE != 0)
@@ -1154,7 +1513,7 @@ void *append_key_value_to_log(log_operation *req)
 
 	if (available_space_in_log < data_size.kv_size) {
 		/*fill info for kreon master here*/
-		req->metadata->log_segment_addr = (uint64_t)handle->db_desc->KV_log_last_segment - MAPPED;
+		req->metadata->log_segment_addr = bt_get_absolute_address(handle->db_desc->KV_log_last_segment);
 		assert(req->metadata->log_segment_addr % SEGMENT_SIZE == 0);
 		req->metadata->log_offset_full_event = handle->db_desc->KV_log_size;
 		req->metadata->segment_id = handle->db_desc->KV_log_last_segment->segment_id;
@@ -1167,18 +1526,15 @@ void *append_key_value_to_log(log_operation *req)
 				      (handle->db_desc->KV_log_size % SEGMENT_SIZE));
 		memset(addr_inlog, 0x00, available_space_in_log);
 
-		//uint32_t allocated_space;
-		//allocated_space = data_size.kv_size + sizeof(segment_header);
-		//allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
-
+		// allocated_space = data_size.kv_size + sizeof(segment_header);
+		// allocated_space += SEGMENT_SIZE - (allocated_space % SEGMENT_SIZE);
 		d_header = seg_get_raw_log_segment(handle->volume_desc);
-		assert(((uint64_t)d_header - MAPPED) % SEGMENT_SIZE == 0);
 		memset(d_header->garbage_bytes, 0x00, 2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
 		d_header->segment_id = handle->db_desc->KV_log_last_segment->segment_id + 1;
 		d_header->next_segment = NULL;
-		handle->db_desc->KV_log_last_segment->next_segment = (void *)((uint64_t)d_header - MAPPED);
+		handle->db_desc->KV_log_last_segment->next_segment = (void *)bt_get_absolute_address(d_header);
 		handle->db_desc->KV_log_last_segment = d_header;
-		/* position the log to the newly added block*/
+		// position the log to the newly added block
 		handle->db_desc->KV_log_size += (available_space_in_log + sizeof(segment_header));
 	}
 
@@ -1200,7 +1556,7 @@ void *append_key_value_to_log(log_operation *req)
 		log_fatal("Unknown operation!");
 		exit(EXIT_FAILURE);
 	}
-	return addr_inlog;
+	return bt_get_absolute_address(addr_inlog);
 }
 
 uint8_t _insert_key_value(bt_insert_req *ins_req)
@@ -1245,9 +1601,59 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 	return rc;
 }
 
+static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(struct db_descriptor *db_desc, int level_id, leaf_node *leaf,
+							struct kv_format *key)
+{
+	int32_t start_idx = 0;
+	int32_t end_idx = leaf->header.numberOfEntriesInNode - 1;
+	char key_buf_prefix[PREFIX_SIZE] = { '\0' };
+
+	memcpy(key_buf_prefix, key->key_buf, MIN(key->key_size, PREFIX_SIZE));
+
+	while (start_idx <= end_idx) {
+		int32_t middle = (start_idx + end_idx) / 2;
+		int64_t ret = prefix_compare(leaf->prefix[middle], key_buf_prefix, PREFIX_SIZE);
+		if (ret < 0)
+			start_idx = middle + 1;
+		else if (ret > 0)
+			end_idx = middle - 1;
+		else {
+			void *index_key = NULL;
+			if (level_id) {
+				index_key = (void *)bt_get_real_address(leaf->kv_entry[middle].device_offt);
+				//log_info("level_id %u Comparing index key %u:%s with query key %u:%s", level_id,
+				//	 *(uint32_t *)index_key, index_key + 4, *(uint32_t *)key, key + 4);
+				ret = bt_key_cmp(index_key, key, KV_FORMAT, KV_FORMAT);
+			} else {
+				struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
+				if (!level_id)
+					L = bt_get_kv_log_address(db_desc, leaf->kv_entry[middle].device_offt);
+				else
+					L.addr = bt_get_real_address(leaf->kv_entry[middle].device_offt);
+				// level-0 lookup
+				index_key = L.addr;
+				//log_info("level_id %u Comparing index key %u:%s with query key %u:%s", level_id,
+				//	 *(uint32_t *)index_key, index_key + 4, *(uint32_t *)key, key + 4);
+				ret = bt_key_cmp(index_key, key, KV_FORMAT, KV_FORMAT);
+				if (L.in_tail)
+					bt_done_with_value_log_address(db_desc, &L);
+			}
+
+			if (ret == 0)
+				return &(leaf->kv_entry[middle]);
+			else if (ret < 0)
+				start_idx = middle + 1;
+			else
+				end_idx = middle - 1;
+		}
+	}
+
+	return NULL;
+}
+
 static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int level_id, int tree_id)
 {
-	struct lookup_reply rep = { .addr = NULL, .tombstone = 0 };
+	struct lookup_reply rep = { .kv_offt = 0, .tombstone = 0 };
 	node_header *curr_node, *son_node = NULL;
 	struct leaf_kv_pointer *leaf_entry = NULL;
 	lock_table *prev_lock = NULL, *curr_lock = NULL;
@@ -1266,21 +1672,22 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 	}
 #if ENABLE_BLOOM_FILTERS
 	if (level_id > 0) {
-		//log_info("Key is %s", key + 4);
 		char prefix_key[PREFIX_SIZE];
 		int check;
 		if (*(uint32_t *)key < PREFIX_SIZE) {
 			memset(prefix_key, 0x00, PREFIX_SIZE);
 			memcpy(prefix_key, key + sizeof(uint32_t), *(uint32_t *)key);
 			check = bloom_check(&db_desc->levels[level_id].bloom_filter[0], prefix_key, PREFIX_SIZE);
-			//log_info("prefix key is %s ************", prefix_key);
+			// log_info("prefix key is %s ************", prefix_key);
 		} else {
 			check = bloom_check(&db_desc->levels[level_id].bloom_filter[0], key + sizeof(uint32_t),
 					    PREFIX_SIZE);
 		}
 		assert(check != -1);
 		if (0 == check) {
-			//log_info("element %u : %s in not present %d\n", *(uint32_t *)key, key + 4, check);
+			// log_info("element %u : %s in not present %d\n", *(uint32_t *)key, key
+			// +
+			// 4, check);
 			return rep;
 		}
 	}
@@ -1290,11 +1697,12 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 		if (RWLOCK_RDLOCK(&curr_lock->rx_lock) != 0)
 			exit(EXIT_FAILURE);
 
-		leaf_entry = bt_find_key_addr_in_leaf((leaf_node *)curr_node, (struct kv_format *)key);
+		leaf_entry =
+			bt_find_key_addr_in_leaf(db_desc, level_id, (leaf_node *)curr_node, (struct kv_format *)key);
 		if (leaf_entry == NULL)
-			rep.addr = NULL;
+			rep.kv_offt = 0;
 		else {
-			rep.addr = (void *)MAPPED + leaf_entry->device_offt;
+			rep.kv_offt = leaf_entry->device_offt;
 			rep.tombstone = leaf_entry->tombstone;
 		}
 	} else {
@@ -1308,7 +1716,7 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 			}
 
 			next_addr = _index_node_binary_search((index_node *)curr_node, key, KV_FORMAT);
-			son_node = (void *)(MAPPED + *(uint64_t *)next_addr);
+			son_node = (void *)bt_get_real_address(*(uint64_t *)next_addr);
 			prev_lock = curr_lock;
 			curr_node = son_node;
 		}
@@ -1321,42 +1729,40 @@ static struct lookup_reply lookup_in_tree(db_descriptor *db_desc, void *key, int
 		if (RWLOCK_UNLOCK(&prev_lock->rx_lock) != 0)
 			exit(EXIT_FAILURE);
 
-		/* log_debug("curr node - MAPPEd %p",MAPPED-(uint64_t)curr_node); */
-		leaf_entry = bt_find_key_addr_in_leaf((leaf_node *)curr_node, (struct kv_format *)key);
+		leaf_entry =
+			bt_find_key_addr_in_leaf(db_desc, level_id, (leaf_node *)curr_node, (struct kv_format *)key);
 
 		if (leaf_entry == NULL) {
-			// log_info("key not found %s v1 %llu v2 %llu",((struct splice
-			// *)key)->data,curr_v2, curr_node->v1);
-			rep.addr = NULL;
+			rep.kv_offt = 0;
 		} else {
-			rep.addr = (void *)MAPPED + leaf_entry->device_offt;
+			rep.kv_offt = leaf_entry->device_offt;
 			rep.tombstone = leaf_entry->tombstone;
 		}
 	}
 	if (RWLOCK_UNLOCK(&curr_lock->rx_lock) != 0)
 		exit(EXIT_FAILURE);
 	__sync_fetch_and_sub(&db_desc->levels[level_id].active_writers, 1);
-
 	return rep;
 }
 
-/*this function will be reused in various places such as deletes*/
-void *__find_key(db_handle *handle, void *key)
+// this function will be reused in various places such as deletes
+uint64_t find_kv_offt(db_handle *handle, void *key, int *kv_level_id)
 {
-	struct lookup_reply rep = { .addr = NULL, .tombstone = 0 };
-
-	/*again special care for L0*/
-	uint8_t tree_id = handle->db_desc->levels[0].active_tree;
-	uint8_t base = tree_id;
-	//Acquiring guard lock for level 0
+	struct lookup_reply rep;
+	int level_id = 0;
+	*kv_level_id = -1;
+	// Acquiring guard lock for level 0
 	if (RWLOCK_RDLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock) != 0)
 		exit(EXIT_FAILURE);
 	__sync_fetch_and_add(&handle->db_desc->levels[0].active_writers, 1);
+	/*again special care for L0*/
+	uint8_t tree_id = handle->db_desc->levels[0].active_tree;
+	uint8_t base = tree_id;
 
 	while (1) {
 		rep = lookup_in_tree(handle->db_desc, key, 0, tree_id);
 
-		if (rep.addr != NULL) {
+		if (rep.kv_offt != 0) {
 			goto finish;
 		}
 		++tree_id;
@@ -1367,9 +1773,9 @@ void *__find_key(db_handle *handle, void *key)
 	}
 
 	/*search the rest trees of the level*/
-	for (uint8_t level_id = 1; level_id < MAX_LEVELS; ++level_id) {
+	for (level_id = 1; level_id < MAX_LEVELS; ++level_id) {
 		rep = lookup_in_tree(handle->db_desc, key, level_id, 0);
-		if (rep.addr != NULL) {
+		if (rep.kv_offt != 0) {
 			goto finish;
 		}
 	}
@@ -1378,51 +1784,19 @@ finish:
 
 	if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock) != 0)
 		exit(EXIT_FAILURE);
-	if (rep.addr != NULL && !rep.tombstone)
-		return rep.addr;
-	else {
-		return NULL;
+	if (rep.kv_offt != 0 && !rep.tombstone) {
+		*kv_level_id = level_id;
+		return rep.kv_offt;
+	} else {
+		return 0;
 	}
 }
 
-/* returns the addr where the value of the KV pair resides */
-/* TODO: make this return the offset from MAPPED, not a pointer
- * to the offset */
-static struct leaf_kv_pointer *bt_find_key_addr_in_leaf(leaf_node *leaf, struct kv_format *key)
-{
-	int32_t start_idx = 0;
-	int32_t end_idx = leaf->header.numberOfEntriesInNode - 1;
-	char key_buf_prefix[PREFIX_SIZE] = { '\0' };
-
-	memcpy(key_buf_prefix, key->key_buf, MIN(key->key_size, PREFIX_SIZE));
-
-	while (start_idx <= end_idx) {
-		int32_t middle = (start_idx + end_idx) / 2;
-
-		int32_t ret = prefix_compare(leaf->prefix[middle], key_buf_prefix, PREFIX_SIZE);
-		if (ret < 0)
-			start_idx = middle + 1;
-		else if (ret > 0)
-			end_idx = middle - 1;
-		else {
-			void *index_key = (void *)(MAPPED + leaf->kv_entry[middle].device_offt);
-			ret = bt_key_cmp(index_key, key, KV_FORMAT, KV_FORMAT);
-			if (ret == 0)
-				return &(leaf->kv_entry[middle]);
-			else if (ret < 0)
-				start_idx = middle + 1;
-			else
-				end_idx = middle - 1;
-		}
-	}
-
-	return NULL;
-}
-
+#if 0
 void *find_key(db_handle *handle, void *key, uint32_t key_size)
 {
 	char buf[4000];
-	void *key_buf = &(buf[0]);
+	void *key_buf = NULL;
 	void *value;
 
 	if (key_size <= (4000 - sizeof(uint32_t))) {
@@ -1440,17 +1814,18 @@ void *find_key(db_handle *handle, void *key, uint32_t key_size)
 
 	return value;
 }
+#endif
 
 /**
- * @param   node:
- * @param   left_child:
- * @param   right_child:
- * @param   key:
- * @param   key_len:
- |block_header|pointer_to_node|pointer_to_key|pointer_to_node |
- pointer_to_key|...
+* @param   node:
+* @param   left_child:
+* @param   right_child:
+* @param   key:
+* @param   key_len:
+|block_header|pointer_to_node|pointer_to_key|pointer_to_node |
+pointer_to_key|...
 */
-int8_t update_index(index_node *node, node_header *left_child, node_header *right_child, void *key_buf)
+static int8_t update_index(index_node *node, node_header *left_child, node_header *right_child, void *key_buf)
 {
 	int64_t ret = 0;
 	void *addr;
@@ -1461,15 +1836,14 @@ int8_t update_index(index_node *node, node_header *left_child, node_header *righ
 	int32_t start_idx = 0;
 	int32_t end_idx = node->header.numberOfEntriesInNode - 1;
 	size_t num_of_bytes;
-
-	addr = (void *)(uint64_t)node + sizeof(node_header);
+	// addr = (void *)(uint64_t)node + sizeof(node_header);
 
 	if (node->header.numberOfEntriesInNode > 0) {
 		while (1) {
 			middle = (start_idx + end_idx) / 2;
 			addr = (void *)(uint64_t)node + (uint64_t)sizeof(node_header) + sizeof(uint64_t) +
 			       (uint64_t)(middle * 2 * sizeof(uint64_t));
-			index_key_buf = (void *)(MAPPED + *(uint64_t *)addr);
+			index_key_buf = bt_get_real_address(*(uint64_t *)addr);
 			ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, KV_FORMAT);
 			if (ret > 0) {
 				end_idx = middle - 1;
@@ -1504,18 +1878,18 @@ int8_t update_index(index_node *node, node_header *left_child, node_header *righ
 
 	/*update the entry*/
 	if (left_child != 0)
-		entry_val = (uint64_t)left_child - MAPPED;
+		entry_val = bt_get_absolute_address(left_child);
 	else
 		entry_val = 0;
 
 	memcpy(addr, &entry_val, sizeof(uint64_t));
 	addr += sizeof(uint64_t);
-	entry_val = (uint64_t)key_buf - MAPPED;
+	entry_val = bt_get_absolute_address(key_buf);
 	memcpy(addr, &entry_val, sizeof(uint64_t));
 
 	addr += sizeof(uint64_t);
 	if (right_child != 0)
-		entry_val = (uint64_t)right_child - MAPPED;
+		entry_val = bt_get_absolute_address(right_child);
 	else
 		entry_val = 0;
 
@@ -1524,15 +1898,15 @@ int8_t update_index(index_node *node, node_header *left_child, node_header *righ
 }
 
 /**
- * @param   handle: database handle
- * @param   node: address of the index node where the key should be inserted
- * @param   left_child: address to the left child (full not absolute)
- * @param   right_child: address to the left child (full not absolute)
- * @param   key: address of the key to be inserted
- * @param   key_len: size of the key
- */
-void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *left_child, node_header *right_child,
-			 void *key_buf, char allocation_code)
+* @param   handle: database handle
+* @param   node: address of the index node where the key should be inserted
+* @param   left_child: address to the left child (full not absolute)
+* @param   right_child: address to the left child (full not absolute)
+* @param   key: address of the key to be inserted
+* @param   key_len: size of the key
+*/
+static void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *left_child,
+				node_header *right_child, uint64_t kv_offt, char allocation_code)
 {
 	void *key_addr = NULL;
 	struct db_handle *handle = ins_req->metadata.handle;
@@ -1542,7 +1916,17 @@ void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *
 	int32_t req_space;
 	int32_t allocated_space;
 
-	uint32_t key_len = *(uint32_t *)key_buf;
+	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = 0 };
+	if (left_child->height == 0)
+		L = bt_get_kv_log_address(ins_req->metadata.handle->db_desc, kv_offt);
+	else
+		L.addr = bt_get_real_address(kv_offt);
+
+	// log_info("Pivot (kv_offt %llu) is %u:%s in tail? %d height %u", kv_offt,
+	// *(uint32_t *)L.addr, L.addr + 4,
+	//	 L.in_tail, left_child->height);
+	uint32_t key_len = *(uint32_t *)L.addr;
+	// assert(key_len < 30);
 	int8_t ret;
 
 	// assert_index_node(node);
@@ -1561,6 +1945,7 @@ void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *
 
 		if (allocated_space > KEY_BLOCK_SIZE) {
 			log_fatal("Cannot host index key larger than KEY_BLOCK_SIZE");
+			assert(0);
 			exit(EXIT_FAILURE);
 		}
 		d_header =
@@ -1569,42 +1954,48 @@ void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_header *
 
 		d_header->next = NULL;
 		d_header->type = keyBlockHeader;
-		last_d_header = (IN_log_header *)(MAPPED + (uint64_t)node->header.last_IN_log_header);
-		last_d_header->next = (void *)((uint64_t)d_header - MAPPED);
+		last_d_header = (IN_log_header *)bt_get_real_address((uint64_t)node->header.last_IN_log_header);
+		last_d_header->next = (void *)bt_get_absolute_address((void *)d_header);
 		node->header.last_IN_log_header = last_d_header->next;
-		node->header.key_log_size +=
-			(avail_space + sizeof(IN_log_header)); /* position the log to the newly added block*/
+		node->header.key_log_size += (avail_space + sizeof(IN_log_header)); /* position the log to the
+newly added block*/
 	}
 	/* put the KV now */
-	key_addr = (void *)MAPPED + (uint64_t)node->header.last_IN_log_header +
-		   (uint64_t)(node->header.key_log_size % KEY_BLOCK_SIZE);
-	memcpy(key_addr, key_buf, sizeof(uint32_t) + key_len); /*key length */
+	key_addr = (void *)bt_get_real_address((uint64_t)node->header.last_IN_log_header +
+					       (uint64_t)(node->header.key_log_size % KEY_BLOCK_SIZE));
+	memcpy(key_addr, L.addr, sizeof(uint32_t) + key_len); /*key length */
 	node->header.key_log_size += (sizeof(uint32_t) + key_len);
 
+	if (L.in_tail)
+		bt_done_with_value_log_address(ins_req->metadata.handle->db_desc, &L);
+
 	ret = update_index(node, left_child, right_child, key_addr);
+
 	if (ret)
 		node->header.numberOfEntriesInNode++;
 	// assert_index_node(node);
 }
 
 /*
- * gesalous: Added at 13/06/2014 16:22. After the insertion of a leaf it's
- * corresponding index will be updated
- * for later use in efficient searching.
- */
-static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_buf)
+* gesalous: Added at 13/06/2014 16:22. After the insertion of a leaf it's
+* corresponding index will be updated
+* for later use in efficient searching.
+*/
+static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *kv_buf, uint64_t kv_offt)
 {
 	struct kv_format *k_format = NULL;
 	struct kv_prefix *k_prefix = NULL;
 	struct kv_prefix k_prefix2 = { .prefix = { '\0' }, .device_offt = 0, .tombstone = 0 };
-
+	void *query_key = NULL;
 	if (req->metadata.key_format == KV_FORMAT) {
-		k_format = (struct kv_format *)key_buf;
+		k_format = (struct kv_format *)kv_buf;
 		memcpy(k_prefix2.prefix, k_format->key_buf, MIN(k_format->key_size, PREFIX_SIZE));
+		query_key = kv_buf;
 		k_prefix = &k_prefix2;
 	} else {
-		/* operation coming from spill request (i.e. KV_PREFIX) */
-		k_prefix = (struct kv_prefix *)key_buf;
+		/* operation coming from spill request or recovery (i.e. KV_PREFIX) */
+		k_prefix = (struct kv_prefix *)kv_buf;
+		query_key = bt_get_real_address(k_prefix->device_offt);
 	}
 
 	int64_t ret = 1;
@@ -1615,7 +2006,7 @@ static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_b
 	end_idx = leaf->header.numberOfEntriesInNode - 1;
 
 	struct leaf_kv_pointer *leaf_entry = NULL;
-	leaf_entry = &leaf->kv_entry[0];
+	// leaf_entry = &leaf->kv_entry[0];
 
 	while (leaf->header.numberOfEntriesInNode > 0) {
 		middle = (start_idx + end_idx) / 2;
@@ -1636,12 +2027,20 @@ static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_b
 			__sync_fetch_and_add(&ins_hack_miss, 1);
 #endif
 		// update_leaf_index_stats(req->key_format);
+		int level_id = req->metadata.level_id;
+		struct bt_kv_log_address index_L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
+		if (!level_id)
+			index_L = bt_get_kv_log_address(req->metadata.handle->db_desc, leaf_entry->device_offt);
+		else
+			index_L.addr = bt_get_real_address(leaf_entry->device_offt);
 
-		void *index_key_buf;
-		index_key_buf = (void *)MAPPED + leaf_entry->device_offt; //*(uint64_t *)addr);
-		ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, req->metadata.key_format);
+		ret = bt_key_cmp(index_L.addr, query_key, KV_FORMAT, KV_FORMAT);
+
+		if (index_L.in_tail)
+			bt_done_with_value_log_address(req->metadata.handle->db_desc, &index_L);
+
 		if (ret == 0) {
-			if (req->metadata.gc_request && pointer_to_kv_in_log != index_key_buf)
+			if (req->metadata.gc_request && pointer_to_kv_in_log != index_L.addr)
 				return ret;
 			break;
 		} else if (ret < 0) {
@@ -1665,16 +2064,14 @@ static int bt_update_leaf_index(bt_insert_req *req, leaf_node *leaf, void *key_b
 	/*setup offset in the device*/
 	uint64_t device_offt = 0;
 	if (req->metadata.key_format == KV_FORMAT)
-		device_offt = (uint64_t)key_buf - MAPPED;
+		device_offt = kv_offt;
 	else /* KV_PREFIX */
 		device_offt = k_prefix->device_offt;
 
 	leaf->kv_entry[middle].device_offt = device_offt;
 	leaf->kv_entry[middle].tombstone = req->metadata.is_tombstone;
-
 	/*setup the prefix*/
 	memcpy(&leaf->prefix[middle], k_prefix->prefix, PREFIX_SIZE);
-
 	return ret;
 }
 
@@ -1694,6 +2091,7 @@ char *node_type(nodeType_t type)
 	}
 }
 
+#if DEBUG_BTREE
 void assert_leaf_node(node_header *leaf1)
 {
 	struct leaf_kv_pointer *prev, *curr = NULL;
@@ -1706,8 +2104,8 @@ void assert_leaf_node(node_header *leaf1)
 
 	for (uint64_t i = 1; i < leaf->header.numberOfEntriesInNode; i++) {
 		curr = &leaf->kv_entry[i];
-		void *prev_full = (void *)MAPPED + prev->device_offt;
-		void *curr_full = (void *)MAPPED + curr->device_offt;
+		void *prev_full = bt_get_real_address(prev->device_offt);
+		void *curr_full = bt_get_real_address(curr->device_offt);
 		ret = bt_key_cmp(prev_full, curr_full, KV_FORMAT, KV_FORMAT);
 		if (ret > 0) {
 			log_fatal("corrupted leaf index at index %llu total entries %llu", (LLU)i,
@@ -1719,6 +2117,7 @@ void assert_leaf_node(node_header *leaf1)
 		}
 	}
 }
+#endif
 
 void print_key(void *key)
 {
@@ -1738,11 +2137,12 @@ void print_key(void *key)
 static bt_split_result split_index(node_header *node, bt_insert_req *ins_req)
 {
 	bt_split_result result;
+	result.middle_kv_offt = 0;
 	node_header *left_child;
 	node_header *right_child;
 	node_header *tmp_index;
 	void *full_addr;
-	void *key_buf;
+	uint64_t kv_offt;
 	uint32_t i = 0;
 	// assert_index_node(node);
 	result.left_child = (node_header *)seg_get_index_node(
@@ -1766,23 +2166,18 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req)
 		else
 			tmp_index = result.right_child;
 
-		left_child = (node_header *)(MAPPED + *(uint64_t *)full_addr);
+		left_child = (node_header *)bt_get_real_address(*(uint64_t *)full_addr);
 		full_addr += sizeof(uint64_t);
-		key_buf = (void *)(MAPPED + *(uint64_t *)full_addr);
+		kv_offt = *(uint64_t *)full_addr;
 		full_addr += sizeof(uint64_t);
-		right_child = (node_header *)(MAPPED + *(uint64_t *)full_addr);
+		right_child = (node_header *)bt_get_real_address(*(uint64_t *)full_addr);
 		if (i == node->numberOfEntriesInNode / 2) {
-			result.middle_key_buf = key_buf;
+			result.middle_kv_offt = kv_offt;
 			continue; /*middle key not needed, is going to the upper level*/
 		}
-
-		insert_key_at_index(ins_req, (index_node *)tmp_index, left_child, right_child, key_buf, KEY_LOG_SPLIT);
+		insert_key_at_index(ins_req, (index_node *)tmp_index, left_child, right_child, kv_offt, KEY_LOG_SPLIT);
 	}
 
-	// result.left_child->v2++; /*lamport counter*/
-	// result.right_child->v2++; /*lamport counter*/
-	// assert_index_node(result.left_child);
-	// assert_index_node(result.right_child);
 	return result;
 }
 
@@ -1792,11 +2187,12 @@ static bt_split_result split_index(node_header *node, bt_insert_req *ins_req)
  **/
 static int bt_insert_kv_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 {
-	void *key_addr = NULL;
+	uint64_t kv_offt = 0;
 	int ret;
 	uint8_t level_id;
 
 	level_id = ins_req->metadata.level_id;
+	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = 0 };
 
 	if (ins_req->metadata.append_to_log && ins_req->metadata.key_format == KV_FORMAT) {
 		log_operation append_op = { .metadata = &ins_req->metadata,
@@ -1805,17 +2201,29 @@ static int bt_insert_kv_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 
 		if (ins_req->metadata.is_tombstone)
 			append_op.optype_tolog = deleteOp;
+#if VALUE_LOG_EXPLICIT_IO
+		kv_offt = append_key_value_to_log_direct_IO(&append_op);
+#else
+		kv_offt = append_key_value_to_log(&append_op);
+#endif
+		// log_info("KV offt %llu", kv_offt);
+		// assert(kv_offt > 20000000);
+		// construct the kv address
 
-		key_addr = append_key_value_to_log(&append_op);
-	} else if (!ins_req->metadata.append_to_log && ins_req->metadata.key_format == KV_PREFIX)
-		key_addr = ins_req->key_value_buf;
-
-	else {
+		if (!level_id) {
+			L = bt_get_kv_log_address(ins_req->metadata.handle->db_desc, kv_offt);
+		} else {
+			L.addr = bt_get_real_address(kv_offt);
+		}
+	} else if (!ins_req->metadata.append_to_log && ins_req->metadata.key_format == KV_PREFIX) {
+		L.addr = ins_req->key_value_buf;
+		kv_offt = 0;
+	} else {
 		log_fatal("Wrong combination of key format / append_to_log option");
 		exit(EXIT_FAILURE);
 	}
 
-	if (bt_update_leaf_index(ins_req, (leaf_node *)leaf, key_addr) != 0) {
+	if (bt_update_leaf_index(ins_req, (leaf_node *)leaf, L.addr, kv_offt) != 0) {
 		++leaf->numberOfEntriesInNode;
 		__sync_fetch_and_add(
 			&(ins_req->metadata.handle->db_desc->levels[level_id].level_size[ins_req->metadata.tree_id]),
@@ -1826,14 +2234,17 @@ static int bt_insert_kv_at_leaf(bt_insert_req *ins_req, node_header *leaf)
 		leaf->fragmentation++;
 		ret = 0;
 	}
+	if (L.in_tail)
+		bt_done_with_value_log_address(ins_req->metadata.handle->db_desc, &L);
 
 	return ret;
 }
 
-bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
+static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
 {
 	leaf_node *node_copy;
 	bt_split_result rep;
+	rep.middle_kv_offt = 0;
 	uint8_t level_id = req->metadata.level_id;
 	/*cow check*/
 	if (node->header.epoch <= req->metadata.handle->volume_desc->dev_catalogue->epoch) {
@@ -1866,7 +2277,9 @@ bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
 		right_entries = node->header.numberOfEntriesInNode - (node->header.numberOfEntriesInNode / 2);
 	}
 
-	rep.middle_key_buf = (void *)(MAPPED + node->kv_entry[split_point].device_offt);
+	rep.middle_kv_offt = node->kv_entry[split_point].device_offt;
+	// log_info("Split point[%u] dev_offt = %llu", split_point,
+	// rep.middle_kv_offt);
 	/* pointers */
 	memcpy(&(rep.right_lchild->kv_entry[0]), &node->kv_entry[split_point],
 	       right_entries * sizeof(struct leaf_kv_pointer));
@@ -1919,7 +2332,7 @@ void *_index_node_binary_search(index_node *node, void *key_buf, char query_key_
 			return NULL;
 
 		addr = &(node->p[middle].pivot);
-		index_key_buf = (void *)(MAPPED + *(uint64_t *)addr);
+		index_key_buf = (void *)bt_get_real_address(*(uint64_t *)addr);
 		ret = bt_key_cmp(index_key_buf, key_buf, KV_FORMAT, query_key_format);
 		if (ret == 0) {
 			// log_debug("I passed from this corner case1 %s",
@@ -1977,7 +2390,7 @@ void assert_index_node(node_header *node)
 	//	log_info("Checking node of height %lu\n",node->height);
 	for (k = 0; k < node->numberOfEntriesInNode; k++) {
 		/*check child type*/
-		child = (node_header *)(MAPPED + *(uint64_t *)addr);
+		child = (node_header *)bt_get_real_address(*(uint64_t *)addr);
 		if (child->type != rootNode && child->type != internalNode && child->type != leafNode &&
 		    child->type != leafRootNode) {
 			log_fatal("corrupted child at index for child %llu type is %d\n", (LLU)(uint64_t)child - MAPPED,
@@ -2160,8 +2573,8 @@ int splitValidation(node_header *father, node_header *son, db_descriptor *db_des
 void init_leaf_node(leaf_node *node)
 {
 	node->header.fragmentation = 0;
-	//node->header.v1 = 0;
-	//node->header.v2 = 0;
+	// node->header.v1 = 0;
+	// node->header.v2 = 0;
 	node->header.first_IN_log_header = NULL;
 	node->header.last_IN_log_header = NULL;
 	node->header.key_log_size = 0;
@@ -2173,8 +2586,8 @@ void init_leaf_node(leaf_node *node)
 static void init_index_node(index_node *node)
 {
 	node->header.fragmentation = 0;
-	//node->header.v1 = 0;
-	//node->header.v2 = 0;
+	// node->header.v1 = 0;
+	// node->header.v2 = 0;
 	node->header.type = internalNode;
 	node->header.numberOfEntriesInNode = 0;
 }
@@ -2184,6 +2597,7 @@ uint8_t _concurrent_insert(bt_insert_req *ins_req)
 	/*The array with the locks that belong to this thread from upper levels*/
 	lock_table *upper_level_nodes[MAX_HEIGHT];
 	bt_split_result split_res;
+
 	lock_table *lock;
 	void *next_addr;
 	pr_system_catalogue *mem_catalogue;
@@ -2221,12 +2635,12 @@ uint8_t _concurrent_insert(bt_insert_req *ins_req)
 	int retry = 0;
 release_and_retry:
 	if (retry) {
-		//retry = 0;
+		// retry = 0;
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		//}
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 	}
 
 	retry = 1;
@@ -2244,9 +2658,9 @@ release_and_retry:
 	upper_level_nodes[size++] = guard_of_level;
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
-	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-	//	__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-	//}
+	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	}
 
 	mem_catalogue = ins_req->metadata.handle->volume_desc->mem_catalogue;
 
@@ -2315,14 +2729,14 @@ release_and_retry:
 		if (son->numberOfEntriesInNode >= order) {
 			/*Overflow split*/
 			if (son->height > 0) {
-				//son->v1++;
+				// son->v1++;
 				split_res = split_index(son, ins_req);
 				/*node has splitted, free it*/
 				seg_free_index_node(ins_req->metadata.handle->volume_desc, &db_desc->levels[level_id],
 						    ins_req->metadata.tree_id, (index_node *)son);
-				//son->v2++;
+				// son->v2++;
 			} else {
-				//son->v1++;
+				// son->v1++;
 				split_res = bt_split_leaf(ins_req, (leaf_node *)son);
 				if ((uint64_t)son != (uint64_t)split_res.left_child) {
 					/*cow happened*/
@@ -2330,16 +2744,16 @@ release_and_retry:
 							   &ins_req->metadata.handle->db_desc->levels[level_id],
 							   ins_req->metadata.tree_id, (leaf_node *)son);
 					/*fix the dangling lamport*/
-					//split_res.left_child->v2++;
-				} //else
-				//son->v2++;
+					// split_res.left_child->v2++;
+				} // else
+				// son->v2++;
 			}
 			/*Insert pivot at father*/
 			if (father != NULL) {
 				/*lamport counter*/
-				//father->v1++;
+				// father->v1++;
 				insert_key_at_index(ins_req, (index_node *)father, split_res.left_child,
-						    split_res.right_child, split_res.middle_key_buf, KEY_LOG_EXPANSION);
+						    split_res.right_child, split_res.middle_kv_offt, KEY_LOG_EXPANSION);
 
 				// log_info("pivot Key is %d:%s\n", *(uint32_t
 				// *)split_res.middle_key_buf,
@@ -2354,7 +2768,7 @@ release_and_retry:
 				// log_info("node healthy!");
 
 				/*lamport counter*/
-				//father->v2++;
+				// father->v2++;
 			} else {
 				/*Root was splitted*/
 				// log_info("new root");
@@ -2369,13 +2783,13 @@ release_and_retry:
 
 				init_index_node(new_index_node);
 				new_index_node->header.type = rootNode;
-				//new_index_node->header.v1++; /*lamport counter*/
-				//son->v1++;
+				// new_index_node->header.v1++; /*lamport counter*/
+				// son->v1++;
 				insert_key_at_index(ins_req, new_index_node, split_res.left_child,
-						    split_res.right_child, split_res.middle_key_buf, KEY_LOG_EXPANSION);
+						    split_res.right_child, split_res.middle_kv_offt, KEY_LOG_EXPANSION);
 
-				//new_index_node->header.v2++; /*lamport counter*/
-				//son->v2++;
+				// new_index_node->header.v2++; /*lamport counter*/
+				// son->v2++;
 				/*new write root of the tree*/
 				db_desc->levels[level_id].root_w[ins_req->metadata.tree_id] =
 					(node_header *)new_index_node;
@@ -2403,9 +2817,9 @@ release_and_retry:
 			son = node_copy;
 			/*Update father's pointer*/
 			if (father != NULL) {
-				//father->v1++; /*lamport counter*/
+				// father->v1++; /*lamport counter*/
 				*(uint64_t *)next_addr = (uint64_t)node_copy - MAPPED;
-				//father->v2++; /*lamport counter*/
+				// father->v2++; /*lamport counter*/
 			} else { /*We COWED the root*/
 				db_desc->levels[level_id].root_w[ins_req->metadata.tree_id] = node_copy;
 			}
@@ -2425,14 +2839,14 @@ release_and_retry:
 		father = son;
 		/*Taking the lock of the next node before its traversal*/
 		lock = _find_position(ins_req->metadata.handle->db_desc->levels[level_id].level_lock_table,
-				      (node_header *)(MAPPED + *(uint64_t *)next_addr));
+				      (node_header *)bt_get_real_address(*(uint64_t *)next_addr));
 		upper_level_nodes[size++] = lock;
 		if (RWLOCK_WRLOCK(&lock->rx_lock) != 0) {
 			log_fatal("ERROR unlocking reason follows rc %d");
 			exit(EXIT_FAILURE);
 		}
 		/*Node acquired */
-		son = (node_header *)(MAPPED + *(uint64_t *)next_addr);
+		son = (node_header *)bt_get_real_address(*(uint64_t *)next_addr);
 		if (son->type == leafNode || son->type == leafRootNode)
 			order = leaf_order;
 		else
@@ -2453,9 +2867,9 @@ release_and_retry:
 		exit(EXIT_FAILURE);
 	}
 
-	//son->v1++;
+	// son->v1++;
 	ret = bt_insert_kv_at_leaf(ins_req, son);
-	//son->v2++;
+	// son->v2++;
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);
 	// if (ins_req->metadata.level_id == 0 &&
@@ -2517,18 +2931,18 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 
 	/*mark your presence*/
 	__sync_fetch_and_add(num_level_writers, 1);
-	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-	//	__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-	//}
+	if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+		__sync_fetch_and_add(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+	}
 	upper_level_nodes[size++] = guard_of_level;
 
 	if (db_desc->levels[level_id].root_w[ins_req->metadata.tree_id] == NULL ||
 	    db_desc->levels[level_id].root_w[ins_req->metadata.tree_id]->type == leafRootNode) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		//}
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 		return FAILURE;
 	}
 
@@ -2550,31 +2964,31 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 			/*failed needs split*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
-			//if (ins_req->metadata.level_id == 0 &&
-			//    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-			//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-			//}
+			if (ins_req->metadata.level_id == 0 &&
+			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			}
 			return FAILURE;
 		} else if (son->epoch <= volume_desc->dev_catalogue->epoch) {
 			/*failed needs COW*/
 			_unlock_upper_levels(upper_level_nodes, size, release);
 			__sync_fetch_and_sub(num_level_writers, 1);
-			//if (ins_req->metadata.level_id == 0 &&
-			//    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-			//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-			//}
+			if (ins_req->metadata.level_id == 0 &&
+			    ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+				__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+			}
 			return FAILURE;
 		}
 
 		/*Find the next node to traverse*/
 		next_addr = _index_node_binary_search((index_node *)son, ins_req->key_value_buf,
 						      ins_req->metadata.key_format);
-		son = (node_header *)(MAPPED + *(uint64_t *)next_addr);
+		son = (node_header *)bt_get_real_address(*(uint64_t *)next_addr);
 		if (son->height == 0)
 			break;
 		/*Acquire the lock of the next node before its traversal*/
 		lock = _find_position(db_desc->levels[level_id].level_lock_table,
-				      (node_header *)(MAPPED + *(uint64_t *)next_addr));
+				      (node_header *)bt_get_real_address(*(uint64_t *)next_addr));
 		upper_level_nodes[size++] = lock;
 		if (RWLOCK_RDLOCK(&lock->rx_lock) != 0) {
 			log_fatal("ERROR unlocking");
@@ -2586,7 +3000,7 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	}
 
 	lock = _find_position(db_desc->levels[level_id].level_lock_table,
-			      (node_header *)(MAPPED + *(uint64_t *)next_addr));
+			      (node_header *)bt_get_real_address(*(uint64_t *)next_addr));
 	upper_level_nodes[size++] = lock;
 	if (RWLOCK_WRLOCK(&lock->rx_lock) != 0) {
 		log_fatal("ERROR unlocking");
@@ -2596,9 +3010,9 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 	if (son->numberOfEntriesInNode >= (uint32_t)leaf_order || son->epoch <= volume_desc->dev_catalogue->epoch) {
 		_unlock_upper_levels(upper_level_nodes, size, release);
 		__sync_fetch_and_sub(num_level_writers, 1);
-		//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
-		//	__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
-		//}
+		if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode) {
+			__sync_fetch_and_sub(&ins_req->metadata.handle->db_desc->pending_replica_operations, 1);
+		}
 		return FAILURE;
 	}
 	/*Succesfully reached a bin (bottom internal node)*/
@@ -2606,14 +3020,15 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 		log_fatal("son corrupted");
 		exit(EXIT_FAILURE);
 	}
-	//son->v1++;
+	// son->v1++;
 	ret = bt_insert_kv_at_leaf(ins_req, son);
-	//son->v2++;
+	// son->v2++;
 	/*Unlock remaining locks*/
 	_unlock_upper_levels(upper_level_nodes, size, release);
-	//if (ins_req->metadata.level_id == 0 && ins_req->metadata.handle->db_desc->is_in_replicated_mode)
+	// if (ins_req->metadata.level_id == 0 &&
+	// ins_req->metadata.handle->db_desc->is_in_replicated_mode)
 	//	return SUCCESS;
-	//else {
+	// else {
 	__sync_fetch_and_sub(num_level_writers, 1);
 	//	return SUCCESS;
 	//}

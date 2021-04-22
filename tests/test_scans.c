@@ -6,7 +6,6 @@
 #include <log.h>
 #include "../kreon_lib/btree/btree.h"
 #include "../kreon_lib/scanner/scanner.h"
-#include "../kreon_lib/scanner/min_max_heap.h"
 #define KEY_PREFIX "userakias_computerakias"
 #define KV_SIZE 1024
 #define VOLUME_NAME "/mnt/gesalous/kreon.dat"
@@ -69,12 +68,12 @@ void *scan_tester(void *args)
 			//log_info("key is %d:%s  malloced %d scanner size %d",k->key_size,k->key_buf,sc->malloced,sizeof(scannerHandle));
 			//log_info("key of scanner %d:%s",*(uint32_t *)sc->keyValue,sc->keyValue + sizeof(uint32_t));
 			uint32_t key_size = getKeySize(sc);
-			void *keyptr = getKeyPtr(sc);
+			void *keyptr = get_kv_pointer(sc);
 			if (key_size != k->key_size || memcmp(k->key_buf, keyptr, k->key_size) != 0) {
 				log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 					  key_size, keyptr);
 
-				//#if 0
+#if 0
 				log_info("Min heap state is");
 				struct sh_heap_node nd;
 
@@ -91,9 +90,10 @@ void *scan_tester(void *args)
 					log_info("Key %s from Tree[%d][%d]", nd.key_value.kv->key_buf, nd.level_id,
 						 nd.active_tree);
 				}
-				//#endif
+#endif
 				exit(EXIT_FAILURE);
 			}
+			done_with_kv_pointer(sc);
 
 			//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
 			//assert(element.node->type == leafNode);
@@ -114,8 +114,8 @@ void *scan_tester(void *args)
 					log_fatal("DB end at key %s is this correct? NO", k->key_buf);
 					exit(EXIT_FAILURE);
 				}
-				key_size = getKeySize(sc);
-				keyptr = getKeyPtr(sc);
+				keyptr = get_kv_pointer(sc);
+				key_size = *(uint32_t *)keyptr;
 				if (k->key_size != key_size || memcmp(k->key_buf, keyptr, k->key_size) != 0) {
 					log_fatal("Test failed key %s not found scanner instead returned %s",
 						  k->key_buf, keyptr + sizeof(uint32_t));
@@ -126,10 +126,24 @@ void *scan_tester(void *args)
 						log_info("Key %s from Tree[%d][%d]", nd.KV + 4, nd.level_id,
 							 nd.active_tree);
 					}
+					log_info("Is it actually there? Let's search and report the stack");ua j
+
+					struct scannerHandle *scd = (scannerHandle *)malloc(sizeof(scannerHandle));
+					init_dirty_scanner(scd, my_args->handle, (key *)k, GREATER_OR_EQUAL);keyptr = getKeyPtr(sc);
+				if (k->key_size != key_size || memcmp(k->key_buf, keyptr, k->key_size) != 0) {
+					log_fatal("Test failed key %s not found scanner instead returned %s",
+						  k->key_buf, keyptr + sizeof(uint32_t));
+					log_info("Min heap state is");
+					struct sh_heap_node nd;
+					while (sh_remove_min(&sc->heap, &nd) != EMPTY_MIN_HEAP) {
+						log_info("Key %s from Tree[%d][%d]", nd.KV + 4, nd.level_id,
+							 nd.active_tree);
+					}
 					log_info("Is it actually there? Let's search and report the stack");
 
 					struct scannerHandle *scd = (scannerHandle *)malloc(sizeof(scannerHandle));
 					init_dirty_scanner(scd, my_args->handle, (key *)k, GREATER_OR_EQUAL);
+
 					log_info("Scanner returned %s", scd->keyValue + 4);
 					while (sh_remove_min(&scd->heap, &nd) != EMPTY_MIN_HEAP) {
 						log_info("Key %s from Tree[%d][%d]", nd.KV + 4, nd.level_id,
@@ -141,10 +155,11 @@ void *scan_tester(void *args)
 				//log_info("done");
 			}
 
+			done_with_kv_pointer(sc);
 			if (i % 100000 == 0)
 				log_info("</Scan no %llu>", i);
-			closeScanner(sc);
 		}
+		closeScanner(sc);
 		log_info("Round %d of scan test Successfull", round + 1);
 
 		//gets now
@@ -156,7 +171,8 @@ void *scan_tester(void *args)
 			memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 			sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 			k->key_size = strlen(k->key_buf) + 1;
-			if (find_key(my_args->handle, k->key_buf, k->key_size) == NULL) {
+			int level_id;
+			if (find_kv_offt(my_args->handle, &k, &level_id) == 0) {
 				log_fatal("Key %s not found !", k->key_buf);
 				exit(EXIT_FAILURE);
 			}
@@ -168,7 +184,7 @@ void *scan_tester(void *args)
 		for (i = local_base + 1; i < (local_base + my_args->num_keys); i = i + 2) {
 			sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 			k->key_size = strlen(k->key_buf) + 1;
-			if (delete_key(my_args->handle, k->key_buf, k->key_size) != SUCCESS) {
+			if (delete_key(my_args->handle, &k) != SUCCESS) {
 				log_fatal("Failed to delete key %s", k->key_buf);
 				exit(EXIT_FAILURE);
 			}
@@ -182,12 +198,13 @@ void *scan_tester(void *args)
 		for (i = local_base; i < local_base + my_args->num_keys; i++) {
 			sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 			k->key_size = strlen(k->key_buf) + 1;
-			void *kv = find_key(my_args->handle, k->key_buf, k->key_size);
-			if (kv == NULL && i % 2 == 0) {
+			int level_id;
+			uint64_t kv_offt = find_kv_offt(my_args->handle, &k, &level_id);
+			if (kv_offt == 0 && i % 2 == 0) {
 				log_fatal("key %s not found! i = %d", k->key_buf, i);
 				exit(EXIT_FAILURE);
 			}
-			if (kv != NULL && i % 2 == 1) {
+			if (kv_offt != 0 && i % 2 == 1) {
 				log_fatal("key %s found whereas was deleted previously i %d", k->key_buf, i);
 				exit(EXIT_FAILURE);
 			}
@@ -212,13 +229,14 @@ void *scan_tester(void *args)
 			assert(isValid(sc));
 			//log_info("key is %d:%s  malloced %d scanner size %d",k->key_size,k->key_buf,sc->malloced,sizeof(scannerHandle));
 			//log_info("key of scanner %d:%s",*(uint32_t *)sc->keyValue,sc->keyValue + sizeof(uint32_t));
-			uint32_t key_size = getKeySize(sc);
-			void *keyptr = getKeyPtr(sc);
+			void *keyptr = get_kv_pointer(sc);
+			uint32_t key_size = *(uint32_t *)keyptr;
+
 			if (key_size != k->key_size || memcmp(k->key_buf, keyptr, k->key_size) != 0) {
 				log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 					  key_size, keyptr);
 
-				//#if 0
+#if 0
 				log_info("Min heap state is");
 				struct sh_heap_node nd;
 
@@ -235,9 +253,10 @@ void *scan_tester(void *args)
 					log_info("Key %s from Tree[%d][%d]", nd.key_value.kv->key_buf, nd.level_id,
 						 nd.active_tree);
 				}
-				//#endif
+#endif
 				exit(EXIT_FAILURE);
 			}
+			done_with_kv_pointer(sc);
 
 			//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
 			//assert(element.node->type == leafNode);
@@ -258,18 +277,20 @@ void *scan_tester(void *args)
 					log_fatal("DB end at key %s is this correct? NO", k->key_buf);
 					exit(EXIT_FAILURE);
 				}
-				key_size = getKeySize(sc);
-				keyptr = getKeyPtr(sc);
+
+				keyptr = get_kv_pointer(sc);
+				key_size = *(uint32_t *)keyptr;
+
 				if (k->key_size != key_size || memcmp(k->key_buf, keyptr, k->key_size) != 0) {
 					log_fatal("Test failed key %s not found scanner instead returned %s",
 						  k->key_buf, keyptr + sizeof(uint32_t));
 				}
 			}
-
+			done_with_kv_pointer(sc);
 			if (i % 100000 == 0)
 				log_info("</Scan no %llu>", i);
-			closeScanner(sc);
 		}
+		closeScanner(sc);
 		log_info("Scans after delete successfull!");
 
 		if (round < NUM_OF_ROUNDS - 1)

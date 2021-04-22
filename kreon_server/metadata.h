@@ -25,7 +25,7 @@
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 
-#define RU_REPLICA_NUM_SEGMENTS 1
+#define RU_REPLICA_NUM_SEGMENTS 4
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
 #define RU_MAX_NUM_REPLICAS 2
@@ -346,7 +346,7 @@ struct krm_server_desc {
 	char mail_path[KRM_HOSTNAME_SIZE];
 	sem_t wake_up;
 	pthread_mutex_t msg_list_lock;
-	LIST *msg_list;
+	struct klist *msg_list;
 	zhandle_t *zh;
 	struct rco_pool *compaction_pool;
 	uint8_t IP[IP_SIZE];
@@ -387,7 +387,7 @@ struct rco_task_queue {
 	pthread_cond_t queue_monitor;
 	int my_id;
 	int sleeping;
-	LIST *task_queue;
+	struct klist *task_queue;
 };
 
 struct rco_pool {

@@ -71,9 +71,9 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 	/*special care for level 0 due to double buffering*/
 	if (dirty) {
 		/*take read lock of all levels (Level-0 client writes, other for switching
-    *trees
-    *after compaction
-    */
+*trees
+*after compaction
+*/
 		// for (int i = 0; i < MAX_LEVELS; i++)
 		RWLOCK_RDLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock);
 	}
@@ -111,10 +111,12 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 				sc->LEVEL_SCANNERS[0][i].valid = 1;
 				/*full scanners only use the heap*/
 				nd.key_value = sc->LEVEL_SCANNERS[0][i].key_value;
-				//log_info("Tree[%d][%d] gave us key %s", 0, i, nd.key_value.kv->key_buf);
+				// log_info("Tree[%d][%d] gave us key %s", 0, i,
+				// nd.key_value.kv->key_buf);
 				nd.level_id = 0;
 				nd.active_tree = active_tree;
 				nd.type = KV_FORMAT;
+				nd.db_desc = handle->db_desc;
 				sh_insert_heap_node(&sc->heap, &nd);
 			}
 		}
@@ -138,11 +140,13 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 			if (retval == 0) {
 				sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
 				nd.key_value = sc->LEVEL_SCANNERS[level_id][tree_id].key_value;
-				//log_info("Tree[%d][%d] gave us key %s", level_id, 0, nd.key_value.kv->key_buf);
+				// log_info("Tree[%d][%d] gave us key %s", level_id, 0,
+				// nd.key_value.kv->key_buf);
 				nd.type = KV_FORMAT;
 				// log_info("Tree[%d][%d] gave us key %s", level_id, 0, nd.KV + 4);
 				nd.level_id = level_id;
 				nd.active_tree = tree_id;
+				nd.db_desc = handle->db_desc;
 				sh_insert_heap_node(&sc->heap, &nd);
 				sc->LEVEL_SCANNERS[level_id][tree_id].valid = 1;
 			}
@@ -150,8 +154,8 @@ static void init_generic_scanner(struct scannerHandle *sc, struct db_handle *han
 	}
 
 	if (getNext(sc) == END_OF_DATABASE) {
-		sc->key_value.kv = NULL;
-		//log_warn("Reached end of database");
+		sc->key_value.kv_log_offt = 0;
+		// log_warn("Reached end of database");
 		memset(&sc->key_value, 0x00, sizeof(struct sc_full_kv));
 	}
 	return;
@@ -258,42 +262,103 @@ void close_dirty_scanner(scannerHandle *sc)
 
 int isValid(scannerHandle *sc)
 {
-	if (sc->key_value.kv != NULL)
+	if (sc->key_value.kv_log_offt != 0)
 		return 1;
 	return 0;
 }
 
 int32_t getKeySize(scannerHandle *sc)
 {
-	return sc->key_value.kv->key_size;
+	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0 };
+	if (sc->key_value.level_id == 0)
+		L = bt_get_kv_log_address(sc->db->db_desc, sc->key_value.kv_log_offt);
+	else
+		L.addr = bt_get_real_address(sc->key_value.kv_log_offt);
+	struct kv_format *K = (struct kv_format *)L.addr;
+	int32_t size = K->key_size;
+	if (L.in_tail)
+		bt_done_with_value_log_address(sc->db->db_desc, &L);
+	return size;
 }
 
-void *getKeyPtr(scannerHandle *sc)
+void *get_kv_pointer(scannerHandle *sc)
 {
-	return sc->key_value.kv->key_buf;
+	sc->key_value.L.addr = NULL;
+	sc->key_value.L.in_tail = 0;
+	sc->key_value.L.tail_id = UINT8_MAX;
+	if (sc->key_value.level_id)
+		sc->key_value.L.addr = bt_get_real_address(sc->key_value.kv_log_offt);
+	else
+		sc->key_value.L = bt_get_kv_log_address(sc->db->db_desc, sc->key_value.kv_log_offt);
+	return sc->key_value.L.addr;
+}
+
+void done_with_kv_pointer(scannerHandle *sc)
+{
+	if (sc->key_value.L.in_tail)
+		bt_done_with_value_log_address(sc->db->db_desc, &sc->key_value.L);
+}
+
+uint64_t getKeyOfft(scannerHandle *sc)
+{
+	return sc->key_value.kv_log_offt;
 }
 
 int32_t getValueSize(scannerHandle *sc)
 {
-	int32_t *val_ptr = (int32_t *)((char *)((uint64_t)sc->key_value.kv) + sizeof(struct kv_format) +
-				       sc->key_value.kv->key_size);
-	return *val_ptr;
+	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0 };
+	if (sc->key_value.level_id == 0)
+		L = bt_get_kv_log_address(sc->db->db_desc, sc->key_value.kv_log_offt);
+	else
+		L.addr = bt_get_real_address(sc->key_value.kv_log_offt);
+	struct kv_format *K = (struct kv_format *)L.addr;
+	int32_t *val_ptr = (int32_t *)((uint64_t)K + sizeof(struct kv_format) + K->key_size);
+	int size = *val_ptr;
+	if (L.in_tail)
+		bt_done_with_value_log_address(sc->db->db_desc, &L);
+	return size;
 }
 
-void *getValuePtr(scannerHandle *sc)
+uint64_t getValuePtr(scannerHandle *sc)
 {
-	void *val_ptr = ((char *)((uint64_t)sc->key_value.kv) + sizeof(struct kv_format) + sc->key_value.kv->key_size +
-			 sizeof(uint32_t));
-	return val_ptr + sizeof(int32_t);
+	int key_size = getKeySize(sc);
+	return getKeyOfft(sc) + key_size;
 }
 
 static int64_t sc_compare_with_current(struct level_scanner *level_sc, struct kv_format *key)
 {
 	switch (level_sc->type) {
-	case SPILL_BUFFER_SCANNER:
-		return bt_key_cmp(&level_sc->kv_prefix, key, KV_PREFIX, KV_FORMAT);
-	default:
-		return bt_key_cmp(level_sc->key_value.kv, key, KV_FORMAT, KV_FORMAT);
+	case SPILL_BUFFER_SCANNER: {
+		uint32_t cmp_size = PREFIX_SIZE;
+		if (key->key_size < cmp_size)
+			cmp_size = key->key_size;
+		//compare prefixes manually
+		int64_t ret = memcmp(level_sc->kv_prefix.prefix, key->key_buf, cmp_size);
+		if (!ret) {
+			struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0 };
+			if (level_sc->level_id)
+				L.addr = bt_get_real_address(level_sc->kv_prefix.device_offt);
+			else
+				L = bt_get_kv_log_address(level_sc->db->db_desc, level_sc->kv_prefix.device_offt);
+			//full key comparison
+			ret = bt_key_cmp(L.addr, key, KV_FORMAT, KV_FORMAT);
+			if (L.in_tail)
+				bt_done_with_value_log_address(level_sc->db->db_desc, &L);
+		}
+		return ret;
+	}
+	default: {
+		struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
+		if (level_sc->level_id)
+			L.addr = bt_get_real_address(level_sc->key_value.kv_log_offt);
+		else
+			L = bt_get_kv_log_address(level_sc->db->db_desc, level_sc->key_value.kv_log_offt);
+		int64_t ret = bt_key_cmp(L.addr, key, KV_FORMAT, KV_FORMAT);
+		//log_info("Compared index %s with seek key %s",L.addr+4,key+4);
+		if (L.in_tail)
+			bt_done_with_value_log_address(level_sc->db->db_desc, &L);
+		return ret;
+	}
 	}
 }
 
@@ -323,11 +388,11 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 
 	stack_push(&(level_sc->stack), element);
 	/* for L0 already safe we have read lock of guard lock
-   * else its just a root_r of levels >= 1
-   */
+* else its just a root_r of levels >= 1
+*/
 	node = level_sc->root;
 	read_lock_node(level_sc, node);
-	//assert(node->type == rootNode);
+	// assert(node->type == rootNode);
 
 	if (node->type == leafRootNode && node->numberOfEntriesInNode == 0) {
 		/*we seek in an empty tree*/
@@ -345,7 +410,10 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 			middle = (start_idx + end_idx) / 2;
 			/*reconstruct full key*/
 			addr = &(inode->p[middle].pivot);
-			full_pivot_key = (void *)(MAPPED + *(uint64_t *)addr);
+			//its ok
+			full_pivot_key = bt_get_real_address(*(uint64_t *)addr);
+
+			// Don't worry no access to KV log
 			ret = bt_key_cmp(full_pivot_key, start_key_buf, KV_FORMAT, KV_FORMAT);
 			// log_info("pivot %u:%s app %u:%s ret %lld", *(uint32_t
 			// *)(full_pivot_key), full_pivot_key + 4,
@@ -367,11 +435,11 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 		element.node = node;
 		element.guard = 0;
 		int num_entries = node->numberOfEntriesInNode;
-		/*the path we need to follow*/
+		/*the path we need to follow, its ok*/
 		if (ret <= 0)
-			node = (node_header *)(MAPPED + inode->p[middle].right[0]);
+			node = (node_header *)bt_get_real_address(inode->p[middle].right[0]);
 		else
-			node = (node_header *)(MAPPED + inode->p[middle].left[0]);
+			node = (node_header *)bt_get_real_address(inode->p[middle].left[0]);
 
 		read_lock_node(level_sc, node);
 
@@ -439,9 +507,17 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 			// if (start_idx > end_idx)
 			//	break;
 		} else {
-			/*prefix is the same*/
-			addr = (void *)(MAPPED + lnode->kv_entry[middle].device_offt);
-			ret = bt_key_cmp(addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+			if (level_sc->level_id) {
+				addr = bt_get_real_address(lnode->kv_entry[middle].device_offt);
+				ret = bt_key_cmp(addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+			} else {
+				//level 0 case,seek
+				struct bt_kv_log_address L = bt_get_kv_log_address(level_sc->db->db_desc,
+										   lnode->kv_entry[middle].device_offt);
+				ret = bt_key_cmp(L.addr, start_key_buf, KV_FORMAT, KV_FORMAT);
+				if (L.in_tail)
+					bt_done_with_value_log_address(level_sc->db->db_desc, &L);
+			}
 
 			if (ret == 0) {
 				break;
@@ -471,7 +547,7 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 		middle = 0;
 	} else if (middle >= (int64_t)lnode->header.numberOfEntriesInNode - 1) {
 		// log_info("rightmost");
-		//middle = lnode->header.numberOfEntriesInNode - 1;
+		// middle = lnode->header.numberOfEntriesInNode - 1;
 		element.node = node;
 		element.idx = 0;
 		element.leftmost = 0;
@@ -490,8 +566,9 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 	}
 	switch (level_sc->type) {
 	case FULL_SCANNER:
-		level_sc->key_value.kv = (struct kv_format *)(MAPPED + lnode->kv_entry[middle].device_offt);
+		level_sc->key_value.kv_log_offt = lnode->kv_entry[middle].device_offt;
 		level_sc->key_value.deleted = lnode->kv_entry[middle].tombstone;
+		level_sc->key_value.level_id = level_sc->level_id;
 		break;
 	case SPILL_BUFFER_SCANNER:
 		memcpy(level_sc->kv_prefix.prefix, &lnode->prefix[middle][0], PREFIX_SIZE);
@@ -542,6 +619,7 @@ int32_t getNext(scannerHandle *sc)
 				next_nd.active_tree = nd.active_tree;
 				next_nd.type = nd.type;
 				next_nd.key_value = sc->LEVEL_SCANNERS[nd.level_id][nd.active_tree].key_value;
+				next_nd.db_desc = sc->db->db_desc;
 				sh_insert_heap_node(&sc->heap, &next_nd);
 			}
 			if (nd.duplicate == 1 || nd.key_value.deleted) {
@@ -551,7 +629,7 @@ int32_t getNext(scannerHandle *sc)
 			}
 			return KREON_OK;
 		} else {
-			sc->key_value.kv = NULL;
+			sc->key_value.kv_log_offt = 0;
 			return END_OF_DATABASE;
 		}
 	}
@@ -570,7 +648,7 @@ int32_t _get_next_KV(level_scanner *sc)
 	if (stack_top.guard) {
 		switch (sc->type) {
 		case FULL_SCANNER:
-			sc->key_value.kv = NULL;
+			sc->key_value.kv_log_offt = 0;
 			break;
 		case SPILL_BUFFER_SCANNER:
 			memset(&sc->kv_prefix, 0x00, sizeof(struct kv_prefix));
@@ -635,7 +713,7 @@ int32_t _get_next_KV(level_scanner *sc)
 					stack_top.idx = 0;
 					stack_push(&sc->stack, stack_top);
 					inode = (index_node *)stack_top.node;
-					node = (node_header *)(MAPPED + inode->p[0].right[0]);
+					node = (node_header *)bt_get_real_address(inode->p[0].right[0]);
 					assert(node->type == rootNode || node->type == leafRootNode ||
 					       node->type == internalNode || node->type == leafNode);
 					// stack_top.node = node;
@@ -665,7 +743,7 @@ int32_t _get_next_KV(level_scanner *sc)
 				break;
 			} else if (stack_top.node->type == internalNode || stack_top.node->type == rootNode) {
 				inode = (index_node *)stack_top.node;
-				node = (node_header *)(MAPPED + (uint64_t)inode->p[stack_top.idx].right[0]);
+				node = (node_header *)bt_get_real_address((uint64_t)inode->p[stack_top.idx].right[0]);
 				up = 0;
 				assert(node->type == rootNode || node->type == leafRootNode ||
 				       node->type == internalNode || node->type == leafNode);
@@ -694,7 +772,7 @@ int32_t _get_next_KV(level_scanner *sc)
 				break;
 			} else if (node->type == internalNode || node->type == rootNode) {
 				inode = (index_node *)node;
-				node = (node_header *)(MAPPED + (uint64_t)inode->p[0].left[0]);
+				node = (node_header *)bt_get_real_address((uint64_t)inode->p[0].left[0]);
 			} else {
 				log_fatal("Reached corrupted node");
 				assert(0);
@@ -708,7 +786,7 @@ int32_t _get_next_KV(level_scanner *sc)
 	/*fill buffer and return*/
 	switch (sc->type) {
 	case FULL_SCANNER:
-		sc->key_value.kv = (void *)MAPPED + lnode->kv_entry[idx].device_offt;
+		sc->key_value.kv_log_offt = lnode->kv_entry[idx].device_offt;
 		sc->key_value.deleted = lnode->kv_entry[idx].tombstone;
 		break;
 	case SPILL_BUFFER_SCANNER:
@@ -725,7 +803,7 @@ int32_t _get_next_KV(level_scanner *sc)
 
 	return SUCCESS;
 }
-
+#if 0
 int32_t _get_prev_KV(level_scanner *sc)
 {
 	stackElementT stack_top;
@@ -1595,3 +1673,4 @@ int Seek(db_handle *handle, void *Keyname, struct Kreoniterator *it)
 	}
 	return 1;
 }
+#endif

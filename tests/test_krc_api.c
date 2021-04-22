@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
 	uint32_t error_code;
 
 	if (argc != 2) {
-		log_fatal("Wrong format test_krc_api <zookeeper_host:port>");
+		log_fatal("Wrong format test_krc_api <zookeeper_host> (assumes port 2181)");
 		exit(EXIT_FAILURE);
 	}
 	strcpy(ZOOKEEPER, argv[1]);
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
 	memset(v->value_buf, 0xDD, v->value_size);
 	log_info("inserting key %s", k->key_buf);
 	krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
-	log_info("Initializing single value scan");
+	log_info("Testing single value scan");
 	sc = krc_scan_init(16, 64 * 1024);
 	int entries = 0;
 	while (krc_scan_get_next(sc, &s_key, &s_key_size, &s_value, &s_value_size))
@@ -106,13 +106,16 @@ int main(int argc, char *argv[])
 		log_info("Scan in single key value db scenario failed expected 1 got %d!", entries);
 		exit(EXIT_FAILURE);
 	}
-
+	log_info("Single value scan success!");
+	krc_scan_close(sc);
+	log_info("Deleting key");
 	if (krc_delete(k->key_size, k->key_buf) != KRC_SUCCESS) {
 		log_fatal("key %s not found failed to clean state from scan in single key "
-			  "value db scenario!");
+			  "value db scenario!",
+			  k->key_buf);
 		exit(EXIT_FAILURE);
 	}
-	krc_scan_close(sc);
+
 	log_info("Scan in single key value db SUCCESS!", entries);
 	// exit(EXIT_SUCCESS);
 	log_info("Starting population for %lu keys...", NUM_KEYS);
@@ -152,7 +155,7 @@ int main(int argc, char *argv[])
 		free(get_buffer);
 		get_buffer = NULL;
 	}
-
+#if 0
 	log_info("Gets successful ended, testing small put/get with offset....");
 	uint64_t offset = 0;
 	uint32_t sum = 0;
@@ -198,7 +201,7 @@ int main(int argc, char *argv[])
 	}
 
 	log_info("Put/get with offset successful expected %u got %u", sum, sum_g);
-
+#endif
 	log_info("testing small scans....");
 
 	for (i = BASE; i < (BASE + (NUM_KEYS - SCAN_SIZE)); i++) {
@@ -460,9 +463,7 @@ int main(int argc, char *argv[])
 		++i;
 	}
 
-	for (i = 0; i < (1024 * 1024); i += 1024) {
-		krc_put_with_offset(k->key_size, k->key_buf, i, 1024, v->value_buf + i);
-	}
+	krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
 	log_info("Uploaded to kreon value of 1 MB now read it");
 	get_buffer = NULL;
 	error_code = krc_get(k->key_size, k->key_buf, &get_buffer, &get_size, 0);
@@ -498,11 +499,11 @@ int main(int argc, char *argv[])
 		value *v = (value *)((uint64_t)k + sizeof(key) + k->key_size);
 		v->value_size = KV_SIZE - ((2 * sizeof(key)) + k->key_size);
 		memset(v->value_buf, 0xDD, v->value_size);
-		krc_put_with_offset(k->key_size, k->key_buf, 0, 0, NULL);
+		krc_put(k->key_size, k->key_buf, 0, NULL);
 	}
 	k->key_size = strlen(TOMBSTONE);
 	sprintf(k->key_buf, "%s", TOMBSTONE);
-	krc_put_with_offset(k->key_size, k->key_buf, 0, 0, NULL);
+	krc_put(k->key_size, k->key_buf, 0, NULL);
 	sprintf(k->key_buf, "%s", ZERO_VALUE_PREFIX);
 
 	log_info("Scanning now zero sided value keys");
