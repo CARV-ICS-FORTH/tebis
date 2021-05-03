@@ -116,8 +116,8 @@ void bt_flush_log_tail_chunk(struct db_handle *hd)
 		total_bytes_written = sizeof(struct segment_header);
 	ssize_t bytes_written = 0;
 	uint32_t size = LOG_TAIL_CHUNK_SIZE;
-	log_info("Flushing log tail log size %llu chunk id %llu start %llu size %llu", hd->db_desc->KV_log_size,
-		 chunk_id, total_bytes_written, chunk_size);
+	/*log_info("Flushing log tail log size %llu chunk id %llu start %llu size %llu", hd->db_desc->KV_log_size,*/
+	/*chunk_id, total_bytes_written, chunk_size);*/
 	while (total_bytes_written < size) {
 		bytes_written =
 			pwrite(tail->fd, &tail->buf[start_offt + total_bytes_written], size - total_bytes_written,
