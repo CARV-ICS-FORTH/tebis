@@ -64,24 +64,27 @@ int main()
 	memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + 100);
 	k->key_size = strlen(k->key_buf) + 1;
-	void *keyptr = getKeyPtr(sc);
+
+	void *keyptr = get_kv_pointer(sc);
 	if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 		log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 			  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 		exit(EXIT_FAILURE);
 	}
+	done_with_kv_pointer(sc);
 	log_info("milestone 1");
 	getNext(sc);
 	memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + 101);
 	k->key_size = strlen(k->key_buf) + 1;
 
-	keyptr = getKeyPtr(sc);
+	keyptr = get_kv_pointer(sc);
 	if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 		log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 			  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 		exit(EXIT_FAILURE);
 	}
+	done_with_kv_pointer(sc);
 	closeScanner(sc);
 	log_info("milestone 2");
 	log_info("Cornercase scenario...DONE");
@@ -97,12 +100,13 @@ int main()
 		assert(isValid(sc));
 		//log_info("key is %d:%s  malloced %d scanner size %d",k->key_size,k->key_buf,sc->malloced,sizeof(scannerHandle));
 		//log_info("key of scanner %d:%s",*(uint32_t *)sc->keyValue,sc->keyValue + sizeof(uint32_t));
-		keyptr = getKeyPtr(sc);
+		keyptr = get_kv_pointer(sc);
 		if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 			log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 				  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
 			exit(EXIT_FAILURE);
 		}
+		done_with_kv_pointer(sc);
 		//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
 		//assert(element.node->type == leafNode);
 		//stack_push(&(sc->LEVEL_SCANNERS[0].stack), element);
@@ -117,12 +121,13 @@ int main()
 				log_warn("DB end at key %s is this correct? yes", k->key_buf);
 				break;
 			}
-			keyptr = getKeyPtr(sc);
+			keyptr = get_kv_pointer(sc);
 			if (memcmp(k, keyptr, k->key_size) != 0) {
 				log_fatal("Test failed key %s not found scanner instead returned %s", k->key_buf,
 					  keyptr + sizeof(uint32_t));
 				exit(EXIT_FAILURE);
 			}
+			done_with_kv_pointer(sc);
 			//log_info("done");
 		}
 

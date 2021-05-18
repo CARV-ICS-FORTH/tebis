@@ -104,10 +104,16 @@ if(NOT CMAKE_CXX_COMPILER)
 endif()
 
 include_directories(${CMAKE_BINARY_DIR})
-set(CMAKE_C_FLAGS_RELEASE "-std=gnu99 -Wall")
+set(CMAKE_C_FLAGS_RELEASE "-std=gnu11 -Wall")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -g ")
 set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -g")
+
+# set(CMAKE_C_FLAGS "-fsanitize=address -fsanitize=leak -static-libasan
+# ${CMAKE_C_FLAGS}") set(CMAKE_CXX_FLAGS "-fsanitize=address -fsanitize=leak
+# -static-libasan ${CMAKE_CXX_FLAGS}") set(CMAKE_C_FLAGS "-fsanitize=leak
+# -static-libasan ${CMAKE_C_FLAGS}") set(CMAKE_CXX_FLAGS "-fsanitize=leak
+# -static-libasan ${CMAKE_CXX_FLAGS}")
 
 if(Zookeeper_LIBRARY)
   add_subdirectory(kreon_rdma)

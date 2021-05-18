@@ -14,13 +14,12 @@
 
 #pragma once
 #include <semaphore.h>
-#include "conf.h"
-#include "../../build/config.h"
-#include "../allocator/allocator.h"
-
 #include <pthread.h>
 #include <stdlib.h>
-#include <bloom.h>
+#include <config.h>
+#include "conf.h"
+#include "../allocator/allocator.h"
+
 #include "stats.h"
 
 #define SUCCESS 4
@@ -38,7 +37,7 @@
  * KV_FORMAT: [key_len|key]
  * KV_PREFIX: [PREFIX|HASH|ADDR_TO_KV_LOG]
  */
-enum KV_type { KV_FORMAT = 19, KV_PREFIX = 20 };
+enum KV_type { KV_FORMAT = 19, KV_FORMAT_OFFT, KV_PREFIX, KV_PREFIX_OFFT };
 #define SYSTEM_ID 0
 #define KV_LOG_ID 5
 
@@ -51,7 +50,7 @@ extern int32_t leaf_order;
 extern int32_t index_order;
 
 struct lookup_reply {
-	void *addr;
+	uint64_t kv_offt;
 	uint8_t tombstone;
 };
 
@@ -100,10 +99,10 @@ typedef struct IN_log_header {
 typedef struct node_header {
 	nodeType_t type; /*internal or leaf node*/
 	/*0 are leaves, 1 are Bottom Internal nodes, and then we have
-  INs and root*/
+INs and root*/
 	int32_t height;
 	uint64_t epoch; /*epoch of the node. It will be used for knowing when to
-               perform copy on write*/
+         perform copy on write*/
 	uint64_t fragmentation;
 	/*data log info, KV log for leaves private for index*/
 	IN_log_header *first_IN_log_header;
@@ -234,6 +233,8 @@ typedef struct level_descriptor {
 	char tree_status[NUM_TREES_PER_LEVEL];
 	uint8_t active_tree;
 	uint8_t level_id;
+
+	int segments_allocated[NUM_TREES_PER_LEVEL];
 } level_descriptor;
 
 struct bt_compaction_callback_args {
@@ -246,29 +247,50 @@ struct bt_compaction_callback_args {
 	int dst_remote_tree;
 };
 
-//functions pointers for sending the index to replicas for Tebis
+// functions pointers for sending the index to replicas for Tebis
 typedef int (*init_index_transfer)(uint64_t db_id, uint8_t level_id);
 typedef int (*destroy_local_rdma_buffer)(uint64_t db_id, uint8_t level_id);
 typedef int (*send_index_segment_to_replicas)(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg,
 					      uint32_t size, uint8_t level_id, struct node_header *root);
-//typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
+// typedef int (*bt_compaction_callback)(struct bt_compaction_callback_args *);
 typedef int (*bt_flush_replicated_logs)(void *);
+
+#define LOG_TAIL_CHUNK_SIZE (256 * 1024L)
+#define LOG_TAIL_BUFS 4
+
+struct log_tail {
+	char buf[SEGMENT_SIZE];
+	uint32_t bytes_written_in_log_chunk[SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE];
+	uint64_t dev_segment_offt;
+	uint64_t start;
+	uint64_t end;
+	uint32_t pending_readers;
+	uint32_t free;
+	uint32_t IOs_completed_in_tail;
+	int fd;
+};
 
 typedef struct db_descriptor {
 	char db_name[MAX_DB_NAME_SIZE];
 	level_descriptor levels[MAX_LEVELS];
-	//int64_t pending_replica_operations;
+	/*for distributed version*/
+	int64_t pending_replica_operations;
 	pthread_mutex_t lock_log;
 	// compaction daemon staff
 	pthread_t compaction_daemon;
 	sem_t compaction_daemon_interrupts;
 	pthread_cond_t client_barrier;
 	pthread_mutex_t client_barrier_lock;
+	// value log tail related
+	pthread_rwlock_t log_tail_buf_lock;
+	struct log_tail *log_tail_buf[LOG_TAIL_BUFS];
+	uint64_t curr_tail_id;
+
 	/*for distributed version*/
 	init_index_transfer idx_init;
 	destroy_local_rdma_buffer destroy_rdma_buf;
 	send_index_segment_to_replicas send_idx;
-	//bt_compaction_callback t;
+	// bt_compaction_callback t;
 	bt_flush_replicated_logs fl;
 
 	struct segment_header *KV_log_first_segment;
@@ -277,23 +299,20 @@ typedef struct db_descriptor {
 	uint64_t latest_proposal_start_segment_offset;
 	uint64_t L1_index_end_log_offset;
 	struct segment_header *L1_segment;
-#if 0
-	commit_log_info *commit_log;
-#endif
 	/*how many guys have a reference to this db*/
 	int32_t ref_count;
 	int32_t group_id;
 	int32_t group_index;
 	volatile char dirty;
 	/*this flag is set to 1 to let the storage engine know that its insert
-	 * path is a subset of a more complex path replicated path in kreonR.
-	 * if set decreasing the number of active writers for a db after
-	 * SUCCESSFULL insert operation takes place outside the library. This
-	 * operation takes place at the replication path after all replicas
-	 * acknowledge that they have received the mutation
-	 */
+   * path is a subset of a more complex path replicated path in kreonR.
+   * if set decreasing the number of active writers for a db after
+   * SUCCESSFULL insert operation takes place outside the library. This
+   * operation takes place at the replication path after all replicas
+   * acknowledge that they have received the mutation
+   */
 	char is_in_replicated_mode;
-	uint8_t pending_barrier_op;
+	uint8_t block_on_L0;
 	enum db_status stat;
 } __attribute__((packed)) __attribute__((aligned)) db_descriptor;
 
@@ -305,7 +324,8 @@ typedef struct db_handle {
 void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init);
 void set_destroy_local_rdma_buffer(struct db_descriptor *db_desc, destroy_local_rdma_buffer destroy_rdma_buf);
 void set_send_index_segment_to_replicas(struct db_descriptor *db_desc, send_index_segment_to_replicas send_idx);
-//void bt_set_compaction_callback(struct db_descriptor *db_desc, bt_compaction_callback t);
+// void bt_set_compaction_callback(struct db_descriptor *db_desc,
+// bt_compaction_callback t);
 void bt_set_flush_replicated_logs_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 void bt_set_inform_engine_for_pending_op_callback(struct db_descriptor *db_desc, bt_flush_replicated_logs fl);
 
@@ -317,21 +337,18 @@ typedef struct recovery_request {
 void recovery_worker(void *);
 
 void snapshot(volume_descriptor *volume_desc);
-#if 0
-void commit_db_log(db_descriptor *db_desc, commit_log_info *info);
-void commit_db_logs_per_volume(volume_descriptor *volume_desc);
-#endif
 
-typedef struct rotate_data {
-	node_header *left;
-	node_header *right;
-	void *pivot;
-	int pos_left;
-	int pos_right;
-} rotate_data;
+struct bt_kv_log_address {
+	void *addr;
+	uint8_t in_tail;
+	uint8_t tail_id;
+};
+struct bt_kv_log_address bt_get_kv_log_address(struct db_descriptor *db_desc, uint64_t dev_offt);
+void bt_done_with_value_log_address(struct db_descriptor *db_desc, struct bt_kv_log_address *L);
+void bt_flush_log_tail_chunk(struct db_handle *hd);
+void *bt_get_real_address(uint64_t dev_offt);
+uint64_t bt_get_absolute_address(void *addr);
 
-/*client API*/
-/*management operations*/
 db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG);
 char db_close(db_handle *handle);
 
@@ -368,39 +385,14 @@ typedef struct bt_insert_req {
 	void *key_value_buf;
 } bt_insert_req;
 
-typedef struct ancestors {
-	rotate_data neighbors[MAX_HEIGHT];
-	node_header *parent[MAX_HEIGHT];
-	int8_t node_has_key[MAX_HEIGHT];
-	int size;
-} ancestors;
-
-//typedef struct delete_request {
-//	bt_mutate_req metadata;
-//	ancestors *ancs; /* This field is redundant and should be removed */
-//	index_node *parent;
-//	leaf_node *self;
-//	uint64_t offset; /*offset in my parent*/
-//	void *key_buf;
-//} delete_request;
-
-/* In case more operations are tracked in the log in the future such as
-  transactions
-  you will need to change the request_type enumerator and the log_operation
-  struct.
-  In the request_type you will add the name of the operation i.e. transactionOp
-  and
-  in the log_operation you will add a pointer in the union with the new
-  operation i.e. transaction_request.
-*/
-typedef enum { insertOp, deleteOp, unknownOp } request_type;
+typedef enum { insertOp, deleteOp, paddingOp, unknownOp } request_type;
 
 typedef struct log_operation {
 	bt_mutate_req *metadata;
 	request_type optype_tolog;
-	//union {
+	// union {
 	bt_insert_req *ins_req;
-	//delete_request *del_req;
+	// delete_request *del_req;
 	//};
 } log_operation;
 
@@ -417,7 +409,7 @@ typedef struct bt_split_result {
 		leaf_node *right_lchild;
 	};
 
-	void *middle_key_buf;
+	uint64_t middle_kv_offt;
 	uint8_t stat;
 } bt_split_result;
 
@@ -433,24 +425,21 @@ typedef struct split_data {
 } split_data;
 
 void bt_set_db_in_replicated_mode(db_handle *handle);
-//void bt_decrease_level0_writers(db_handle *handle);
+void bt_decrease_level0_writers(db_handle *handle);
 
 uint8_t insert_key_value(db_handle *handle, void *key, void *value, uint32_t key_size, uint32_t value_size);
 uint8_t _insert_key_value(bt_insert_req *ins_req);
-void *append_key_value_to_log(log_operation *req);
 
 uint8_t _insert_index_entry(db_handle *db, kv_location *location, int INSERT_FLAGS);
 char *node_type(nodeType_t type);
-void *find_key(db_handle *handle, void *key, uint32_t key_size);
-void *__find_key(db_handle *handle, void *key);
-int8_t delete_key(db_handle *handle, void *key, uint32_t size);
+uint64_t find_kv_offt(db_handle *handle, void *key, int *kv_level_id);
+int8_t delete_key(db_handle *handle, void *key);
 
 int64_t bt_key_cmp(void *key1, void *key2, char key1_format, char key2_format);
 int prefix_compare(char *l, char *r, size_t unused);
 
-/*functions used from other parts except btree/btree.c*/
-
-void *__findKey(db_handle *handle, void *key_buf, char dirty); // dirty 0
+//functions used from other parts except btree/btree.c
+//void *__findKey(db_handle *handle, void *key_buf, char dirty); // dirty 0
 void *_index_node_binary_search(index_node *node, void *key_buf, char query_key_format);
 
 // void free_logical_node(allocator_descriptor *allocator_desc, node_header
@@ -470,4 +459,4 @@ lock_table *_find_position(lock_table **table, node_header *node);
 #define REAL_ADDRESS(X) (MAPPED + X)
 #define VALUE_SIZE_OFFSET(K) (sizeof(uint32_t) + K)
 #define likely(x) __builtin_expect((x), 1)
-#define unlikely(x) __builtin_expect((x), 0) YAML : 47 : 29 : error : invalid boolean
+#define unlikely(x) __builtin_expect((x), 0)

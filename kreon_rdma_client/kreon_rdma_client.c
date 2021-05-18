@@ -21,7 +21,7 @@
 #include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_server/djb2.h"
 #include <log.h>
-#define KRC_GET_SIZE (256 * 1024)
+#define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;
 enum reply_checker_status {
@@ -1082,11 +1082,14 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	//uint32_t id = (uint64_t)conn % spinner->num_queues;
 	pthread_mutex_lock(&spinner->queue[id]->queue_lock);
 	/*get an async req buffer*/
-	struct krc_async_req *req = utils_queue_pop(&spinner->queue[id]->avail_buffers);
-	if (req == NULL) {
-		log_fatal("Out of buffers, should you increase them");
-		exit(EXIT_FAILURE);
-	}
+	/*struct krc_async_req *req = utils_queue_pop(&spinner->queue[id]->avail_buffers);*/
+	/*if (req == NULL) {*/
+	/*log_fatal("Out of buffers, should you increase them");*/
+	/*exit(EXIT_FAILURE);*/
+	/*}*/
+	struct krc_async_req *req;
+	while (!(req = utils_queue_pop(&spinner->queue[id]->avail_buffers)))
+		usleep(6);
 	req->conn = conn;
 	req->request = req_header;
 	req->reply = rep_header;

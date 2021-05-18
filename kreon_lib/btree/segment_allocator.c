@@ -1,3 +1,17 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include <assert.h>
 #include <signal.h>
 #include "segment_allocator.h"
@@ -31,12 +45,12 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 	if (available_space < size) {
 		/*we need to go to the actual allocator to get space*/
 		if (level_desc->level_id != 0) {
-			MUTEX_LOCK(&volume_desc->allocator_lock);
+			MUTEX_LOCK(&volume_desc->bitmap_lock);
 			new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, reason);
-			MUTEX_UNLOCK(&volume_desc->allocator_lock);
+			MUTEX_UNLOCK(&volume_desc->bitmap_lock);
 			assert(new_segment);
 		} else {
-			if (posix_memalign((void **)&new_segment, ALIGNMENT, SEGMENT_SIZE) != 0) {
+			if (posix_memalign((void **)&new_segment, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
 				log_info("MEMALIGN FAILED");
 				exit(EXIT_FAILURE);
 			}
@@ -58,6 +72,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			level_desc->last_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id]->segment_id = segment_id + 1;
 			level_desc->offset[tree_id] += (available_space + sizeof(segment_header));
+			level_desc->segments_allocated[tree_id]++;
 		} else {
 			//log_info("Adding first index segmet for [%u]",tree_id);
 			/*special case for the first segment for this level*/
@@ -67,6 +82,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			level_desc->last_segment[tree_id] = new_segment;
 			level_desc->last_segment[tree_id]->segment_id = 0;
 			level_desc->offset[tree_id] = sizeof(segment_header);
+			level_desc->segments_allocated[tree_id]++;
 		}
 		offset_in_segment = level_desc->offset[tree_id] % SEGMENT_SIZE;
 	}
@@ -86,9 +102,9 @@ struct segment_header *get_segment_for_explicit_IO(volume_descriptor *volume_des
 		log_warn("Not allowed this kind of allocations for L0!");
 		return NULL;
 	}
-	MUTEX_LOCK(&volume_desc->allocator_lock);
+	MUTEX_LOCK(&volume_desc->bitmap_lock);
 	struct segment_header *new_segment = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, 1);
-	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	MUTEX_UNLOCK(&volume_desc->bitmap_lock);
 	assert(new_segment);
 
 	if (level_desc->offset[tree_id]) {
@@ -237,7 +253,7 @@ void seg_free_leaf_node(volume_descriptor *volume_desc, level_descriptor *level_
 segment_header *seg_get_raw_index_segment(volume_descriptor *volume_desc, level_descriptor *level_desc, int tree_id)
 {
 	segment_header *sg;
-	MUTEX_LOCK(&volume_desc->allocator_lock);
+	MUTEX_LOCK(&volume_desc->bitmap_lock);
 	sg = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, KV_LOG_EXPANSION);
 	if (level_desc->first_segment[tree_id] == NULL) {
 		level_desc->first_segment[tree_id] = sg;
@@ -253,17 +269,17 @@ segment_header *seg_get_raw_index_segment(volume_descriptor *volume_desc, level_
 		level_desc->offset[tree_id] += SEGMENT_SIZE;
 		level_desc->last_segment[tree_id]->segment_id = id;
 	}
-	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	MUTEX_UNLOCK(&volume_desc->bitmap_lock);
 	return sg;
 }
 
 segment_header *seg_get_raw_log_segment(volume_descriptor *volume_desc)
 {
 	segment_header *sg;
-	MUTEX_LOCK(&volume_desc->allocator_lock);
+	MUTEX_LOCK(&volume_desc->bitmap_lock);
 	sg = (segment_header *)allocate(volume_desc, SEGMENT_SIZE, -1, KV_LOG_EXPANSION);
 
-	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	MUTEX_UNLOCK(&volume_desc->bitmap_lock);
 	return sg;
 }
 
@@ -273,7 +289,7 @@ void free_raw_segment(volume_descriptor *volume_desc, segment_header *segment)
 	return;
 }
 
-void *get_space_for_system(volume_descriptor *volume_desc, uint32_t size)
+void *get_space_for_system(volume_descriptor *volume_desc, uint32_t size, int lock)
 {
 	void *addr;
 	if (size % 4096 != 0) {
@@ -289,7 +305,8 @@ void *get_space_for_system(volume_descriptor *volume_desc, uint32_t size)
 	uint64_t offset_in_segment = 0;
 	uint64_t segment_id;
 
-	MUTEX_LOCK(&volume_desc->allocator_lock);
+	if (lock)
+		MUTEX_LOCK(&volume_desc->bitmap_lock);
 
 	first_sys_segment = (segment_header *)(MAPPED + volume_desc->mem_catalogue->first_system_segment);
 	last_sys_segment = (segment_header *)(MAPPED + volume_desc->mem_catalogue->last_system_segment);
@@ -338,16 +355,25 @@ void *get_space_for_system(volume_descriptor *volume_desc, uint32_t size)
 	addr = (void *)(uint64_t)last_sys_segment + offset_in_segment;
 	volume_desc->mem_catalogue->offset += size;
 
-	//log_info("offset now %llu in segment %llu", volume_desc->mem_catalogue->offset, offset_in_segment);
-	MUTEX_UNLOCK(&volume_desc->allocator_lock);
+	if (lock)
+		MUTEX_UNLOCK(&volume_desc->bitmap_lock);
 	return addr;
+}
+
+void free_system_space(volume_descriptor *volume_desc, void *addr, uint32_t length)
+{
+	(void)volume_desc;
+	(void)addr;
+	(void)length;
+	//TODO
+	return;
 }
 
 void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 {
 	segment_header *curr_segment;
 	uint64_t space_freed = 0;
-	log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);
+	/*log_info("Freeing tree [%u][%u] for db %s", level_id, tree_id, handle->db_desc->db_name);*/
 
 	curr_segment = handle->db_desc->levels[level_id].first_segment[tree_id];
 	//if (level_id == 0) {
@@ -360,11 +386,12 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 		return;
 		//goto finish;
 	}
+	int freed_segments = 0;
 	while (1) {
 		uint64_t next_dev_offt = (uint64_t)curr_segment->next_segment;
 		if (level_id == 0) {
+			++freed_segments;
 			free(curr_segment);
-			//assert(0);
 		} else
 			free_block(handle->volume_desc, curr_segment, SEGMENT_SIZE);
 		space_freed += SEGMENT_SIZE;
@@ -375,11 +402,7 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	}
 	log_info("Freed space %llu MB from db:%s level tree [%u][%u]", space_freed / (1024 * 1024),
 		 handle->db_desc->db_name, level_id, tree_id);
-	/*assert check
-						if(db_desc->spilled_keys != db_desc->total_keys[spill_req->src_tree_id]){
-						printf("[%s:%s:%d] FATAL keys missing --- spilled keys %llu actual %llu spiller id %d\n",__FILE__,__func__,__LINE__,(LLU)db_desc->spilled_keys,(LLU)db_desc->total_keys[spill_req->src_tree_id], spill_req->src_tree_id);
-						exit(EXIT_FAILURE);
-						}*/
+	assert(handle->db_desc->levels[level_id].segments_allocated[tree_id] == freed_segments);
 	/*buffered tree out*/
 	handle->db_desc->levels[level_id].level_size[tree_id] = 0;
 	handle->db_desc->levels[level_id].first_segment[tree_id] = NULL;
@@ -387,11 +410,11 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 	handle->db_desc->levels[level_id].offset[tree_id] = 0;
 	handle->db_desc->levels[level_id].root_r[tree_id] = NULL;
 	handle->db_desc->levels[level_id].root_w[tree_id] = NULL;
+	handle->db_desc->levels[level_id].segments_allocated[tree_id] = 0;
 	//finish:
 	//if (level_id == 0) {
 	//	if (RWLOCK_UNLOCK(&handle->db_desc->levels[0].guard_of_level.rx_lock)) {
 	//		exit(EXIT_FAILURE);
 	//	}
 	//}
-	return;
 }

@@ -1,3 +1,17 @@
+// Copyright [2020] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "gc.h"
 
 char *pointer_to_kv_in_log = NULL;
@@ -35,44 +49,47 @@ void move_kv_pairs_to_new_segment(volume_descriptor *volume_desc, db_descriptor 
 	}
 }
 
-int8_t find_deleted_kv_pairs_in_segment(volume_descriptor *volume_desc, db_descriptor *db_desc, char *log_segment,
+int8_t find_deleted_kv_pairs_in_segment(volume_descriptor *volume_desc, db_descriptor *db_desc, char *logsegment,
 					stack *marks)
 {
 	struct db_handle handle = { .volume_desc = volume_desc, .db_desc = db_desc };
 	struct kv_format *key;
 	struct value_format *value;
 	void *value_as_pointer;
-	void *find_value;
-	char *start_of_log_segment = log_segment;
+	//void *find_value;
+	uint64_t find_value_offt;
+	char *start_of_log_segment = logsegment;
 	uint64_t size_of_log_segment_checked = 0;
 	uint64_t log_data_without_metadata = LOG_DATA_OFFSET;
 	uint64_t remaining_space;
 	int key_value_size;
 	int garbage_collect_segment = 0;
 
-	key = (struct kv_format *)log_segment;
+	key = (struct kv_format *)logsegment;
 	key_value_size = sizeof(key->key_size) * 2;
 	marks->size = 0;
-	remaining_space = LOG_DATA_OFFSET - (uint64_t)(log_segment - start_of_log_segment);
+	remaining_space = LOG_DATA_OFFSET - (uint64_t)(logsegment - start_of_log_segment);
 
 	while (size_of_log_segment_checked < log_data_without_metadata && key->key_size != 0 && remaining_space >= 10) {
-		key = (struct kv_format *)log_segment;
-		value = (struct value_format *)(log_segment + VALUE_SIZE_OFFSET(key->key_size));
-		value_as_pointer = (log_segment + VALUE_SIZE_OFFSET(key->key_size));
-		find_value = find_key(&handle, key->key_buf, key->key_size);
+		key = (struct kv_format *)logsegment;
+		value = (struct value_format *)(logsegment + VALUE_SIZE_OFFSET(key->key_size));
+		value_as_pointer = (logsegment + VALUE_SIZE_OFFSET(key->key_size));
+		int level_id;
+		find_value_offt = find_kv_offt(&handle, key, &level_id);
+		void *find_value = bt_get_real_address(find_value_offt);
 
 		if (key->key_size != 0 && remaining_space >= 10 &&
 		    (find_value == NULL || value_as_pointer != find_value)) {
 			garbage_collect_segment = 1;
 		} else if (key->key_size != 0 && remaining_space >= 10 &&
 			   (find_value != NULL && value_as_pointer == find_value)) {
-			push_stack(marks, log_segment);
+			push_stack(marks, logsegment);
 		}
 
 		if (key->key_size != 0 && remaining_space >= 10) {
-			log_segment += key->key_size + value->value_size + key_value_size;
+			logsegment += key->key_size + value->value_size + key_value_size;
 			size_of_log_segment_checked += key->key_size + value->value_size + key_value_size;
-			remaining_space = LOG_DATA_OFFSET - (uint64_t)(log_segment - start_of_log_segment);
+			remaining_space = LOG_DATA_OFFSET - (uint64_t)(logsegment - start_of_log_segment);
 		} else
 			break;
 	}
@@ -134,7 +151,7 @@ void *gc_log_entries(void *v_desc)
 	stack *marks;
 	volume_descriptor *volume_desc = (volume_descriptor *)v_desc;
 	db_descriptor *db_desc = NULL;
-	NODE *region;
+	struct klist_node *region;
 	int rc;
 
 	marks = malloc(sizeof(stack));
@@ -169,7 +186,7 @@ void *gc_log_entries(void *v_desc)
 			pthread_exit(NULL);
 		}
 
-		region = get_first(volume_desc->open_databases);
+		region = klist_get_first(volume_desc->open_databases);
 
 		while (region != NULL) {
 			db_desc = (db_descriptor *)region->data;

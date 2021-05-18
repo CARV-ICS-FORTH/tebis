@@ -27,7 +27,7 @@ typedef enum kreon_op_status {
 #define TU_RDMA_CONN_PER_REGION 0 // 1 RDMA connection per region, 0 RDMA connection per server
 #define TU_RDMA_CONN_PER_SERVER (!TU_RDMA_CONN_PER_REGION)
 
-#define NUM_OF_CONNECTIONS_PER_SERVER 16
+#define NUM_OF_CONNECTIONS_PER_SERVER 4
 
 #define SIZEUINT32_T (sizeof(uint32_t))
 #define SIZEUINT32_T_2 (sizeof(uint32_t) << 1)
@@ -36,7 +36,7 @@ typedef enum kreon_op_status {
 #define TU_TAIL_SIZE (sizeof(uint32_t))
 #define TU_HEADER_TAIL_SIZE (TU_HEADER_SIZE + TU_TAIL_SIZE)
 
-#define RCO_DISABLE_REMOTE_COMPACTIONS 0
-#define RCO_BUILD_INDEX_AT_REPLICA 0
+#define RCO_DISABLE_REMOTE_COMPACTIONS 1
+#define RCO_BUILD_INDEX_AT_REPLICA 1
 #define RCO_EXPLICIT_IO 1
 #define REGIONS_HASH_BASED 0

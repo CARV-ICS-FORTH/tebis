@@ -94,7 +94,7 @@ static void krm_get_IP_Addresses(struct krm_server_desc *server)
 	return;
 }
 
-static void krm_free_msg(NODE *node)
+static void krm_free_msg(struct klist_node *node)
 {
 	struct krm_msg *msg = (struct krm_msg *)node->data;
 	free(msg);
@@ -353,7 +353,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 			log_fatal("entry missing for DataServer (which is me?) %s", region->primary.kreon_ds_hostname);
 			exit(EXIT_FAILURE);
 		}
-		region_map = (struct krm_leader_ds_region_map *)malloc(sizeof(struct krm_leader_ds_region_map));
+		region_map = (struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
 		region_map->lr_state.region = region;
 		region_map->lr_state.role = KRM_PRIMARY;
 		region_map->lr_state.status = KRM_OPENING;
@@ -378,7 +378,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 			exit(EXIT_FAILURE);
 		}
 		msg.epoch = dataserver->server_id.epoch;
-		region_map = (struct krm_leader_ds_region_map *)malloc(sizeof(struct krm_leader_ds_region_map));
+		region_map = (struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
 		region_map->lr_state.region = region;
 		region_map->lr_state.role = KRM_PRIMARY;
 		region_map->lr_state.status = KRM_OPENING;
@@ -416,7 +416,8 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 					  region->primary.kreon_ds_hostname);
 				exit(EXIT_FAILURE);
 			}
-			region_map = (struct krm_leader_ds_region_map *)malloc(sizeof(struct krm_leader_ds_region_map));
+			region_map =
+				(struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
 			region_map->lr_state.region = region;
 			region_map->lr_state.role = KRM_BACKUP;
 			region_map->lr_state.status = KRM_OPENING;
@@ -439,7 +440,8 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 				log_fatal("entry missing for DataServer %s", region->backups[i].kreon_ds_hostname);
 				exit(EXIT_FAILURE);
 			}
-			region_map = (struct krm_leader_ds_region_map *)malloc(sizeof(struct krm_leader_ds_region_map));
+			region_map =
+				(struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
 			region_map->lr_state.region = region;
 			region_map->lr_state.role = KRM_BACKUP;
 			region_map->lr_state.status = KRM_OPENING;
@@ -704,7 +706,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 		}
 		for (i = 0; i < mails->count; i++) {
 			mail = zku_concat_strings(3, s_desc->mail_path, KRM_SLASH, mails->data[i]);
-			msg = (struct krm_msg *)malloc(sizeof(struct krm_msg));
+			msg = (struct krm_msg *)calloc(1, sizeof(struct krm_msg));
 
 			buffer_len = sizeof(struct krm_msg);
 			rc = zoo_get(s_desc->zh, mail, 0, (char *)msg, &buffer_len, &stat);
@@ -715,7 +717,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 
 			//log_info("fetched mail %s for region %s", mail, msg->region.id);
 			pthread_mutex_lock(&s_desc->msg_list_lock);
-			add_last(s_desc->msg_list, msg, NULL);
+			klist_add_last(s_desc->msg_list, msg, NULL, NULL);
 			sem_post(&s_desc->wake_up);
 			pthread_mutex_unlock(&s_desc->msg_list_lock);
 			//log_info("Deleting %s", mail);
@@ -905,7 +907,7 @@ void *krm_metadata_server(void *args)
 	struct krm_server_desc *my_desc = (struct krm_server_desc *)args;
 	pthread_setname_np(pthread_self(), "meta_server");
 	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
-	struct String_vector *mail_msgs = malloc(sizeof(struct String_vector));
+	struct String_vector *mail_msgs = calloc(1, sizeof(struct String_vector));
 	memset(mail_msgs, 0x00, sizeof(struct String_vector));
 	struct Stat stat;
 	int rc;
@@ -934,7 +936,7 @@ void *krm_metadata_server(void *args)
 		switch (my_desc->state) {
 		case KRM_BOOTING: {
 			sem_init(&my_desc->wake_up, 0, 0);
-			my_desc->msg_list = init_list(krm_free_msg);
+			my_desc->msg_list = klist_init();
 			log_info("Booting kreonR server, my hostname is %s checking my presence "
 				 "at zookeeper %s",
 				 my_desc->name.kreon_ds_hostname, globals_get_zk_host());
@@ -987,7 +989,7 @@ void *krm_metadata_server(void *args)
 				log_info("updated my status %s RDMA_IP_addr %s", path, my_desc->name.RDMA_IP_addr);
 
 			free(path);
-			struct String_vector *leader = (struct String_vector *)malloc(sizeof(struct String_vector));
+			struct String_vector *leader = (struct String_vector *)calloc(1, sizeof(struct String_vector));
 			log_info("Ok I am part of the team now what is my role, Am I the leader?");
 			char *leader_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_LEADER_PATH);
 			rc = zoo_get_children(my_desc->zh, leader_path, 0, leader);
@@ -1020,7 +1022,7 @@ void *krm_metadata_server(void *args)
 			}
 			free(zk_path);
 			/*init ds_regions table*/
-			my_desc->ds_regions = (struct krm_ds_regions *)malloc(sizeof(struct krm_ds_regions));
+			my_desc->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
 			memset(my_desc->ds_regions, 0x00, sizeof(struct krm_ds_regions));
 			my_desc->state = KRM_CLEAN_MAILBOX;
 			break;
@@ -1114,7 +1116,7 @@ void *krm_metadata_server(void *args)
 				free(ds_name);
 
 				struct krm_leader_ds_map *dataserver =
-					(struct krm_leader_ds_map *)malloc(sizeof(struct krm_leader_ds_map));
+					(struct krm_leader_ds_map *)calloc(1, sizeof(struct krm_leader_ds_map));
 				dataserver->server_id = ds;
 				dataserver->hash_key =
 					djb2_hash((unsigned char *)ds.kreon_ds_hostname, strlen(ds.kreon_ds_hostname));
@@ -1324,10 +1326,10 @@ void *krm_metadata_server(void *args)
 			break;
 		}
 		case KRM_WAITING_FOR_MSG: {
-			NODE *node;
+			struct klist_node *node;
 
 			pthread_mutex_lock(&my_desc->msg_list_lock);
-			node = (NODE *)remove_first(my_desc->msg_list);
+			node = klist_remove_first(my_desc->msg_list);
 			pthread_mutex_unlock(&my_desc->msg_list_lock);
 			if (!node)
 				/*go to sleep*/
@@ -1338,7 +1340,7 @@ void *krm_metadata_server(void *args)
 				my_desc->state = KRM_PROCESSING_MSG;
 				krm_process_msg(my_desc, (struct krm_msg *)node->data);
 				free(node->data);
-				destroy_node(node);
+				free(node);
 				my_desc->state = KRM_WAITING_FOR_MSG;
 			}
 			break;

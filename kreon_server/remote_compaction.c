@@ -279,7 +279,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #endif
 
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		/*log_info("Nothing to do for non-replicated region %s", r_desc->region->id);*/
 		ret = 0;
 		goto exit;
 	}
@@ -952,11 +952,6 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 	}
 }
 
-static void rco_destroy_node(NODE *node)
-{
-	free(node->data);
-}
-
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
 {
 	pthread_mutex_lock(&db_map_lock);
@@ -989,7 +984,7 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 			log_fatal("Failed to initialize queue monitor");
 			exit(EXIT_FAILURE);
 		}
-		pool->worker_queue[i].task_queue = init_list(rco_destroy_node);
+		pool->worker_queue[i].task_queue = klist_init();
 		pool->worker_queue[i].my_id = i;
 		if (pthread_create(&pool->worker_queue[i].cnxt, NULL, rco_compaction_worker, &pool->worker_queue[i]) !=
 		    0) {
@@ -1038,7 +1033,7 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 	pthread_mutex_unlock(&pool->pool_lock);
 
 	pthread_mutex_lock(&pool->worker_queue[chosen_id].queue_lock);
-	add_last(pool->worker_queue[chosen_id].task_queue, compaction_task, NULL);
+	klist_add_last(pool->worker_queue[chosen_id].task_queue, compaction_task, NULL, NULL);
 	if (pool->worker_queue[chosen_id].sleeping) {
 		// log_info("guy is sleeping wake him up");
 		if (pthread_cond_broadcast(&pool->worker_queue[chosen_id].queue_monitor) != 0) {
@@ -1146,11 +1141,11 @@ static void *rco_compaction_worker(void *args)
 	pthread_setname_np(pthread_self(), "rco_worker");
 
 	while (1) {
-		NODE *node = NULL;
+		struct klist_node *node = NULL;
 		while (node == NULL) {
 			/*get something from the queue otherwise sleep*/
 			pthread_mutex_lock(&my_queue->queue_lock);
-			node = remove_first(my_queue->task_queue);
+			node = klist_remove_first(my_queue->task_queue);
 			if (node == NULL) {
 				my_queue->sleeping = 1;
 				if (pthread_cond_wait(&my_queue->queue_monitor, &my_queue->queue_lock) != 0) {
@@ -1169,7 +1164,7 @@ static void *rco_compaction_worker(void *args)
 			sem_post(t->sem);
 		} else {
 			pthread_mutex_lock(&my_queue->queue_lock);
-			add_last_node(my_queue->task_queue, node);
+			klist_add_last(my_queue->task_queue, node, NULL, NULL);
 			pthread_mutex_unlock(&my_queue->queue_lock);
 		}
 	}

@@ -15,10 +15,7 @@
 #define RWLOCK_RDLOCK(L) pthread_rwlock_rdlock(L)
 #define RWLOCK_UNLOCK(L) pthread_rwlock_unlock(L)
 
-/*DEBUG operation FLAGS*/
-#define DEBUG_ALLOCATOR_NO
-#define DEBUG_CLEANER_NO
-#define DEBUG_SNAPSHOT_NO
+#define DEBUG_BTREE 0
 
 #define MAX_DB_NAME_SIZE 64
 /*hierarchy of trees parameters*/
@@ -30,20 +27,14 @@
 
 /*for allocator.c*/
 #define DEV_NAME_MAX 512 /* Length of the device name */
-#define DATA_PER_BITMAP_BLOCK ((DEVICE_BLOCK_SIZE - 8) * 8) /*Data blocks addressed per bitmap block*/
-#define FREE_LOG_SIZE 512000 /*size in 4KB blocks of the log used for marking the free ops*/
-
-#define MAX_HANDLES 5090
-#define CLEAN_SIZE 500000
 
 #define SEC (1000000L)
 
-#define CLEAN_INTERVAL (10 * SEC)
+#define CLEAN_INTERVAL (1 * SEC)
 //#define COMMIT_KV_LOG_INTERVAL (500 * SEC)
 #define SNAPSHOT_INTERVAL (1500 * SEC)
 #define GC_INTERVAL (50 * SEC)
 
-#define WORD_SIZE 64
 #define BREAKPOINT asm volatile("int3;");
 
 #define KB (1024)
@@ -61,11 +52,13 @@
 
 #define SEGMENT_SIZE (2 * 1024 * 1024)
 #define MAX_SUPPORTED_KV_SIZE (SEGMENT_SIZE - sizeof(struct segment_header))
-#define GROWTH_FACTOR 4
+#define GROWTH_FACTOR 8
+//#define L0_SIZE 256000
 #define L0_SIZE 512000
 #define EXPLICIT_IO 1
+#define VALUE_LOG_EXPLICIT_IO 1
 #define ENABLE_BLOOM_FILTERS 0
-#define COMPACTION_UNIT_OF_WORK 131072
+#define COMPACTION_UNIT_OF_WORK 1
 #define ALIGNMENT 512
 #define PREFIX_SIZE 24
 /*Buffering related tunables*/

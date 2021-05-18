@@ -55,7 +55,7 @@ void get_callback(void *cnxt)
 static uint64_t reply_counter;
 }
 
-#define ZK_HOST "192.168.1.122"
+#define ZK_HOST "sith2.cluster.ics.forth.gr"
 #define ZK_PORT 2181
 #define FIELD_COUNT 10
 #define MAX_THREADS 128
@@ -222,54 +222,20 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
 	{
-		char buffer[1512];
-		int pos;
-		int total_length = 0;
-
-		pos = 0;
-		for (auto v : values) {
-			if (pos + v.first.length() + v.second.length() <= 1512) {
-				memcpy(buffer + pos, (char *)v.first.c_str(), v.first.length());
-				pos += v.first.length();
-				buffer[pos] = 0x20;
-				++pos;
-				memcpy(buffer + pos, (char *)v.second.c_str(), v.second.length());
-				pos += v.second.length();
-				buffer[pos] = 0x20;
-				++pos;
-			} else {
-				log_fatal("buffer overflow resize buffer\n");
-				exit(EXIT_FAILURE);
-			}
-		}
-		// ommit last space
-		pos -= 2;
-
-		if (krc_aput(key.length(), (void *)key.c_str(), pos, (void *)buffer, put_callback, &reply_counter) !=
-		    KRC_SUCCESS) {
-			log_fatal("Put failed for key %s", key.c_str());
-			exit(EXIT_FAILURE);
-		}
-		return 0;
+		return Insert(id, table, key, values);
 	}
 
 	int Insert(int id, const std::string &table /*ignored*/, const std::string &key, std::vector<KVPair> &values)
 	{
-		char buffer[1512];
+		char buffer[1512] = { 'a' };
 		int pos;
-		int i;
-		int type;
-		int total_length = 0;
-		int ops = 0;
 
 		pos = 0;
 		for (auto v : values) {
 			if (pos + v.first.length() + v.second.length() <= 1512) {
-				memcpy(buffer + pos, (char *)v.first.c_str(), v.first.length());
 				pos += v.first.length();
 				buffer[pos] = 0x20;
 				++pos;
-				memcpy(buffer + pos, (char *)v.second.c_str(), v.second.length());
 				pos += v.second.length();
 				buffer[pos] = 0x20;
 				++pos;
@@ -280,7 +246,6 @@ class kreonRAsyncClientDB : public YCSBDB {
 		}
 		/*ommit last space*/
 		pos -= 2;
-		total_length = key.length() + pos + 8;
 
 		if (krc_aput(key.length(), (void *)key.c_str(), pos, (void *)buffer, put_callback, &reply_counter) !=
 		    KRC_SUCCESS) {
