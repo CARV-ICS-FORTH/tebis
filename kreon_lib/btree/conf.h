@@ -58,7 +58,7 @@
 #define EXPLICIT_IO 1
 #define VALUE_LOG_EXPLICIT_IO 1
 #define ENABLE_BLOOM_FILTERS 0
-#define COMPACTION_UNIT_OF_WORK 131072
+#define COMPACTION_UNIT_OF_WORK 1
 #define ALIGNMENT 512
 #define PREFIX_SIZE 24
 /*Buffering related tunables*/

@@ -139,6 +139,8 @@ static void stop_readers_writers(struct volume_descriptor *volume_desc)
 		/*stop all writers clients and compaction threads*/
 		for (int level_id = 0; level_id < MAX_LEVELS; level_id++) {
 			RWLOCK_WRLOCK(&db_desc->levels[level_id].guard_of_level.rx_lock);
+		}
+		for (int level_id = 0; level_id < MAX_LEVELS; level_id++) {
 			/*spinning*/
 			spin_loop(&(db_desc->levels[level_id].active_writers), 0);
 		}
