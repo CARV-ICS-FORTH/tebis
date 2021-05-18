@@ -55,7 +55,7 @@ void get_callback(void *cnxt)
 static uint64_t reply_counter;
 }
 
-#define ZK_HOST "192.168.1.122"
+#define ZK_HOST "sith2.cluster.ics.forth.gr"
 #define ZK_PORT 2181
 #define FIELD_COUNT 10
 #define MAX_THREADS 128
@@ -230,25 +230,22 @@ class kreonRAsyncClientDB : public YCSBDB {
 		char buffer[1512] = { 'a' };
 		int pos;
 
-		//pos = 0;
-		//for (auto v : values) {
-		//if (pos + v.first.length() + v.second.length() <= 1512) {
-		//memcpy(buffer + pos, (char *)v.first.c_str(), v.first.length());
-		//pos += v.first.length();
-		//buffer[pos] = 0x20;
-		//++pos;
-		//memcpy(buffer + pos, (char *)v.second.c_str(), v.second.length());
-		//pos += v.second.length();
-		//buffer[pos] = 0x20;
-		//++pos;
-		//} else {
-		//log_fatal("buffer overflow resize buffer");
-		//exit(EXIT_FAILURE);
-		//}
-		//}
+		pos = 0;
+		for (auto v : values) {
+			if (pos + v.first.length() + v.second.length() <= 1512) {
+				pos += v.first.length();
+				buffer[pos] = 0x20;
+				++pos;
+				pos += v.second.length();
+				buffer[pos] = 0x20;
+				++pos;
+			} else {
+				log_fatal("buffer overflow resize buffer");
+				exit(EXIT_FAILURE);
+			}
+		}
 		/*ommit last space*/
-		//pos -= 2;
-		pos = 50;
+		pos -= 2;
 
 		if (krc_aput(key.length(), (void *)key.c_str(), pos, (void *)buffer, put_callback, &reply_counter) !=
 		    KRC_SUCCESS) {
