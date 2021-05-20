@@ -19,6 +19,7 @@
 #include <config.h>
 #include "conf.h"
 #include "../allocator/allocator.h"
+#include "../../utilities/asyncio.h"
 
 #include "stats.h"
 
@@ -319,6 +320,7 @@ typedef struct db_descriptor {
 typedef struct db_handle {
 	volume_descriptor *volume_desc;
 	db_descriptor *db_desc;
+	asyncio_ctx asyncio_handle;
 } db_handle;
 
 void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init);
