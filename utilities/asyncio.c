@@ -35,8 +35,10 @@ struct asyncio_ctx_s *asyncio_create_context()
 static int find_slot(struct asyncio_ctx_s *ctx)
 {
 	for (int i = 0; i < MAX_REQS; i++) {
-		if (ctx->requests[i].state == 0)
+		if (ctx->requests[i].state == 0) {
+			ctx->requests[i].state = -1;
 			return i;
+		}
 
 		// If the ctx->requests is in active state, then check if it has finished.
 		// Update the state based on the return valuew of aio_error().
@@ -92,16 +94,17 @@ void asyncio_post_write(struct asyncio_ctx_s *ctx, int fd, char *data, size_t si
 	// being set, that the program tries to call - which will then fail.
 	struct aiocb obj = { 0 };
 
+	ctx->requests[slot].buffer = NULL;
 	obj.aio_fildes = fd;
 	obj.aio_offset = offset;
-	posix_memalign((void **)&ctx->requests[slot].buffer, 512, size * sizeof(char));
-	memcpy(ctx->requests[slot].buffer, data, size);
-	obj.aio_buf = ctx->requests[slot].buffer;
+	/*posix_memalign((void **)&ctx->requests[slot].buffer, 512, size * sizeof(char));*/
+	/*memcpy(ctx->requests[slot].buffer, data, size);*/
+	obj.aio_buf = data;
 	obj.aio_nbytes = size;
 
-	ctx->requests[slot].state = EINPROGRESS;
 	ctx->requests[slot].aiocbp = obj;
 	check = aio_write(&ctx->requests[slot].aiocbp);
+	ctx->requests[slot].state = EINPROGRESS;
 
 	if (check) {
 		log_fatal("Failed to post AIO write");
