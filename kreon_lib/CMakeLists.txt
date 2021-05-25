@@ -26,7 +26,6 @@ file(
 # list(REMOVE_ITEM KREON_C_SOURCE_FILES
 list(APPEND KREON_C_SOURCE_FILES "${CMAKE_SOURCE_DIR}/utilities/spin_loop.c")
 list(APPEND KREON_C_SOURCE_FILES "${CMAKE_SOURCE_DIR}/utilities/list.c")
-list(APPEND KREON_C_SOURCE_FILES "${CMAKE_SOURCE_DIR}/utilities/asyncio.c")
 set_source_files_properties(
   KREON_C_SOURCE_FILES PROPERTIES COMPILE_FLAGS
                                   "${CMAKE_C_FLAGS_RELEASE} ${CMAKE_C_FLAGS}")
@@ -41,12 +40,12 @@ add_library(
   btree/btree.c
   btree/compaction_daemon.c
   btree/gc.c
+  btree/asyncio.c
   scanner/stack.c
   scanner/scanner.c
   scanner/min_max_heap.c
   ../utilities/spin_loop.c
-  ../utilities/list.c
-  ../utilities/asyncio.c)
+  ../utilities/list.c)
 
 add_library(
   kreonr-shared SHARED
@@ -56,12 +55,12 @@ add_library(
   btree/btree.c
   btree/compaction_daemon.c
   btree/gc.c
+  btree/asyncio.c
   scanner/stack.c
   scanner/min_max_heap.c
   scanner/scanner.c
   ../utilities/spin_loop.c
-  ../utilities/list.c
-  ../utilities/asyncio.c)
+  ../utilities/list.c)
 
 set_target_properties(kreonr PROPERTIES COMPILE_DEFINITIONS "KREONR")
 
