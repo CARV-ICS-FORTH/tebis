@@ -19,7 +19,7 @@
 #include <config.h>
 #include "conf.h"
 #include "../allocator/allocator.h"
-#include "../../utilities/asyncio.h"
+#include "asyncio.h"
 
 #include "stats.h"
 
