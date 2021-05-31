@@ -270,7 +270,7 @@ struct log_tail {
 	uint32_t IOs_completed_in_tail;
 	int fd;
 	// outstanding I/O requests
-	asyncio_ctx asyncio_handle;
+	struct asyncio_ctx *asyncio_handle;
 };
 
 typedef struct db_descriptor {

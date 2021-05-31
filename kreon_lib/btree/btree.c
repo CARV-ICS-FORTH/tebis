@@ -1275,7 +1275,7 @@ static void copy_kv_to_tail(struct log_ticket *ticket)
 	}
 }
 
-static void do_log_chunk_IO(struct log_ticket *ticket, asyncio_ctx asyncio_handle)
+static void do_log_chunk_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_handle)
 {
 	uint64_t offt_in_seg = ticket->log_offt % SEGMENT_SIZE;
 	uint32_t chunk_offt = offt_in_seg % LOG_TAIL_CHUNK_SIZE;
@@ -1317,7 +1317,7 @@ static void do_log_chunk_IO(struct log_ticket *ticket, asyncio_ctx asyncio_handl
 	}
 }
 
-static void do_log_IO(struct log_ticket *ticket, asyncio_ctx asyncio_handle)
+static void do_log_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_handle)
 {
 	uint64_t log_offt = ticket->log_offt;
 	uint32_t op_size = ticket->op_size;
