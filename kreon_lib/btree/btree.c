@@ -912,6 +912,7 @@ finish_init:
 		for (int j = 0; j < (SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE); ++j) {
 			db_desc->log_tail_buf[i]->bytes_written_in_log_chunk[j] = 0;
 		}
+		db_desc->log_tail_buf[i]->asyncio_handle = asyncio_create_context(SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE);
 	}
 
 	// Read last segment of db in memory
@@ -962,8 +963,6 @@ finish_init:
 		if (++a == 0)
 			a++;
 	}
-
-	handle->asyncio_handle = asyncio_create_context();
 
 	klist_add_first(volume_desc->open_databases, db_desc, db_name, NULL);
 	bt_recover_L0(handle);
@@ -1386,6 +1385,7 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 		req->metadata->segment_full_event = 1;
 
 		uint32_t curr_tail_id = handle->db_desc->curr_tail_id;
+		struct log_tail *curr_tail = handle->db_desc->log_tail_buf[curr_tail_id % LOG_TAIL_BUFS];
 
 		// pad with zeroes remaining bytes in segment
 		log_operation pad_op = { .metadata = NULL, .optype_tolog = paddingOp, .ins_req = NULL };
@@ -1401,7 +1401,7 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 		struct log_tail *next_tail = handle->db_desc->log_tail_buf[next_tail_id % LOG_TAIL_BUFS];
 
 		// wait until all asynchronous writes are complete
-		while (!asyncio_all_done(handle->asyncio_handle))
+		while (!asyncio_all_done(curr_tail->asyncio_handle))
 			;
 
 		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
@@ -1441,17 +1441,17 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 
 	if (segment_change) {
 		// do the padding IO as well
-		do_log_IO(&pad_ticket, handle->asyncio_handle);
+		do_log_IO(&pad_ticket, my_ticket.tail->asyncio_handle);
 		// check that the above IO has completed
-		while (!asyncio_all_done(handle->asyncio_handle))
-			;
+		/*while (!asyncio_all_done(handle->asyncio_handle))*/
+		/*	;*/
 		// Now time to retire
-		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
-		pad_ticket.tail->free = 1;
-		RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);
+		/*RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);*/
+		/*pad_ticket.tail->free = 1;*/
+		/*RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);*/
 	}
 	copy_kv_to_tail(&my_ticket);
-	do_log_IO(&my_ticket, handle->asyncio_handle);
+	do_log_IO(&my_ticket, my_ticket.tail->asyncio_handle);
 	uint64_t kv_dev_offt = my_ticket.tail->dev_segment_offt + (my_ticket.log_offt % SEGMENT_SIZE);
 	if (my_ticket.req->optype_tolog == deleteOp) {
 		//log_info("Delete size was %u",data_size.kv_size);

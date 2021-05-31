@@ -269,6 +269,8 @@ struct log_tail {
 	uint32_t free;
 	uint32_t IOs_completed_in_tail;
 	int fd;
+	// outstanding I/O requests
+	asyncio_ctx asyncio_handle;
 };
 
 typedef struct db_descriptor {
@@ -320,7 +322,6 @@ typedef struct db_descriptor {
 typedef struct db_handle {
 	volume_descriptor *volume_desc;
 	db_descriptor *db_desc;
-	asyncio_ctx asyncio_handle;
 } db_handle;
 
 void set_init_index_transfer(struct db_descriptor *db_desc, init_index_transfer idx_init);

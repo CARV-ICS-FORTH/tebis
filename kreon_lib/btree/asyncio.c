@@ -7,22 +7,14 @@
 #include "asyncio.h"
 #include "log.h"
 
-#define MAX_REQS 128
-// Application-defined structure for tracking I/O requests
-struct asyncio_ctx_s {
-	struct {
-		int state; // Status of request
-		char *buffer; // Internal buffer
-		struct aiocb aiocbp; // Asynchronous I/O control block
-	} requests[MAX_REQS];
-	pthread_mutex_t lock;
-};
-
 // Initialize the array of I/O requests for the asynchronous I/O
-struct asyncio_ctx_s *asyncio_create_context()
+struct asyncio_ctx_s *asyncio_create_context(int max_concurrent_requests)
 {
 	struct asyncio_ctx_s *ctx = malloc(sizeof(*ctx));
 	memset(ctx, 0, sizeof(*ctx));
+	ctx->requests = malloc(max_concurrent_requests * sizeof(*ctx->requests));
+	memset(ctx->requests, 0, max_concurrent_requests * sizeof(*ctx->requests));
+	ctx->len_requests = max_concurrent_requests;
 	pthread_mutex_init(&ctx->lock, NULL);
 	log_info("New AIO context created");
 	return ctx;
@@ -34,7 +26,7 @@ struct asyncio_ctx_s *asyncio_create_context()
 // the slots are active and allocated.
 static int find_slot(struct asyncio_ctx_s *ctx)
 {
-	for (int i = 0; i < MAX_REQS; i++) {
+	for (int i = 0; i < ctx->len_requests; i++) {
 		if (ctx->requests[i].state == 0) {
 			ctx->requests[i].state = -1;
 			return i;
@@ -120,7 +112,7 @@ void asyncio_post_write(struct asyncio_ctx_s *ctx, int fd, char *data, size_t si
 int asyncio_all_done(struct asyncio_ctx_s *ctx)
 {
 	pthread_mutex_lock(&ctx->lock);
-	for (int i = 0; i < MAX_REQS; i++) {
+	for (int i = 0; i < ctx->len_requests; i++) {
 		if (ctx->requests[i].state == EINPROGRESS) {
 			ctx->requests[i].state = aio_error(&ctx->requests[i].aiocbp);
 

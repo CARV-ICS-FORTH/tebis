@@ -3,10 +3,22 @@
 
 #include <aio.h>
 #include <stdint.h>
+// Structure for tracking I/O requests
+struct asyncio_request {
+	int state; // Status of request
+	char *buffer; // Internal buffer
+	struct aiocb aiocbp; // Asynchronous I/O control block
+};
+struct asyncio_ctx_s {
+	struct asyncio_request *requests;
+	int len_requests;
+	pthread_mutex_t lock;
+};
+
 typedef struct asyncio_ctx_s *asyncio_ctx;
 
 // Initialize the array of I/O requests for the asynchronous I/O
-asyncio_ctx asyncio_create_context(void);
+asyncio_ctx asyncio_create_context(int max_concurrent_requests);
 
 // Add new I/O request in the list
 // Arguments:
