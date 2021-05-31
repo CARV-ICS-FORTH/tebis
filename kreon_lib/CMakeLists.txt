@@ -40,6 +40,7 @@ add_library(
   btree/btree.c
   btree/compaction_daemon.c
   btree/gc.c
+  btree/asyncio.c
   scanner/stack.c
   scanner/scanner.c
   scanner/min_max_heap.c
@@ -54,6 +55,7 @@ add_library(
   btree/btree.c
   btree/compaction_daemon.c
   btree/gc.c
+  btree/asyncio.c
   scanner/stack.c
   scanner/min_max_heap.c
   scanner/scanner.c
@@ -69,10 +71,10 @@ add_library(${KREON_LIB_SHARED} SHARED ${KREON_C_SOURCE_FILES})
 set_property(TARGET ${KREON_LIB} PROPERTY POSITION_INDEPENDENT_CODE ON)
 set_property(TARGET ${KREON_LIB_SHARED} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(${KREON_LIB} log libbloom)
-target_link_libraries(${KREON_LIB_SHARED} log libbloom)
-target_link_libraries(kreonr log libbloom)
-target_link_libraries(kreonr-shared log libbloom)
+target_link_libraries(${KREON_LIB} log libbloom rt)
+target_link_libraries(${KREON_LIB_SHARED} log libbloom rt)
+target_link_libraries(kreonr log libbloom rt)
+target_link_libraries(kreonr-shared log libbloom rt)
 
 set_source_files_properties(allocator/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                              "-O0")

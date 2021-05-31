@@ -19,6 +19,7 @@
 #include <config.h>
 #include "conf.h"
 #include "../allocator/allocator.h"
+#include "asyncio.h"
 
 #include "stats.h"
 
@@ -268,6 +269,8 @@ struct log_tail {
 	uint32_t free;
 	uint32_t IOs_completed_in_tail;
 	int fd;
+	// outstanding I/O requests
+	struct asyncio_ctx *asyncio_handle;
 };
 
 typedef struct db_descriptor {

@@ -912,6 +912,7 @@ finish_init:
 		for (int j = 0; j < (SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE); ++j) {
 			db_desc->log_tail_buf[i]->bytes_written_in_log_chunk[j] = 0;
 		}
+		db_desc->log_tail_buf[i]->asyncio_handle = asyncio_create_context(SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE);
 	}
 
 	// Read last segment of db in memory
@@ -1274,7 +1275,7 @@ static void copy_kv_to_tail(struct log_ticket *ticket)
 	}
 }
 
-static void do_log_chunk_IO(struct log_ticket *ticket)
+static void do_log_chunk_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_handle)
 {
 	uint64_t offt_in_seg = ticket->log_offt % SEGMENT_SIZE;
 	uint32_t chunk_offt = offt_in_seg % LOG_TAIL_CHUNK_SIZE;
@@ -1296,10 +1297,6 @@ static void do_log_chunk_IO(struct log_ticket *ticket)
 	if (!do_IO)
 		return;
 
-	// log_info("Checking if all data for chunk id %u are there currently are %u",
-	// chunk_id,
-	// Can I set new segment for the others to proceed?
-	//	 ticket->tail->bytes_written_in_log_chunk[chunk_id]);
 	// wait until all pending bytes are written
 	wait_for_value(&ticket->tail->bytes_written_in_log_chunk[chunk_id], LOG_TAIL_CHUNK_SIZE);
 	// do the IO finally
@@ -1308,46 +1305,19 @@ static void do_log_chunk_IO(struct log_ticket *ticket)
 		total_bytes_written = 0;
 	else
 		total_bytes_written = sizeof(struct segment_header);
-	ssize_t bytes_written = 0;
 	uint32_t size = LOG_TAIL_CHUNK_SIZE;
-	// log_info("IO time, start %llu size %llu segment dev_offt %llu offt in seg
-	// %llu", total_bytes_written, size,
-	//	 ticket->tail->dev_segment_offt, ticket->IO_start_offt);
-	while (total_bytes_written < size) {
-		bytes_written =
-			pwrite(ticket->tail->fd, &ticket->tail->buf[ticket->IO_start_offt + total_bytes_written],
-			       size - total_bytes_written,
-			       ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
-		if (bytes_written == -1) {
-			log_fatal("Failed to write LOG_CHUNK reason follows");
-			perror("Reason");
-			exit(EXIT_FAILURE);
-		}
-		total_bytes_written += bytes_written;
-	}
-	__sync_fetch_and_add(&ticket->tail->IOs_completed_in_tail, 1);
+	asyncio_post_write(asyncio_handle, ticket->tail->fd,
+			   &ticket->tail->buf[ticket->IO_start_offt + total_bytes_written], size - total_bytes_written,
+			   ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
 
-	assert(ticket->tail->IOs_completed_in_tail <= num_chunks);
-#if 0
-	if (chunk_id == num_chunks - 1) {
-		// log_info("Resetting segment start %llu end %llu ...",
-		// ticket->tail->start, ticket->tail->end);
-		// Wait for all chunk IOs to finish to characterize it free
-		spin_loop(&ticket->tail->IOs_completed_in_tail, num_chunks);
-
-		memset(ticket->tail->bytes_written_in_log_chunk, 0x00,
-		       sizeof(ticket->tail->bytes_written_in_log_chunk));
-		ticket->tail->dev_segment_offt = 0;
-		ticket->tail->start = 0;
-		ticket->tail->end = 0;
-		while (!__sync_bool_compare_and_swap(&ticket->tail->IOs_completed_in_tail,num_chunks,0));
-		while (!__sync_bool_compare_and_swap(&ticket->tail->free, 0, 1))
-			;
+	if ((ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written) % 512 != 0) {
+		log_info("offset %llu is misaligned (should be aligned to 512 B)",
+			 ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
+		assert((ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written) % 512 == 0);
 	}
-#endif
 }
 
-static void do_log_IO(struct log_ticket *ticket)
+static void do_log_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_handle)
 {
 	uint64_t log_offt = ticket->log_offt;
 	uint32_t op_size = ticket->op_size;
@@ -1359,7 +1329,7 @@ static void do_log_IO(struct log_ticket *ticket)
 			ticket->op_size = LOG_TAIL_CHUNK_SIZE;
 		else
 			ticket->op_size = remaining;
-		do_log_chunk_IO(ticket);
+		do_log_chunk_IO(ticket, asyncio_handle);
 		remaining -= ticket->op_size;
 		c_log_offt += ticket->op_size;
 	}
@@ -1415,6 +1385,7 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 		req->metadata->segment_full_event = 1;
 
 		uint32_t curr_tail_id = handle->db_desc->curr_tail_id;
+		struct log_tail *curr_tail = handle->db_desc->log_tail_buf[curr_tail_id % LOG_TAIL_BUFS];
 
 		// pad with zeroes remaining bytes in segment
 		log_operation pad_op = { .metadata = NULL, .optype_tolog = paddingOp, .ins_req = NULL };
@@ -1425,28 +1396,16 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 
 		copy_kv_to_tail(&pad_ticket);
 
-		// log_info("Resetting segment start %llu end %llu ...",
-		// ticket->tail->start, ticket->tail->end);
 		// Wait for all chunk IOs to finish to characterize it free
 		uint32_t next_tail_id = ++curr_tail_id;
 		struct log_tail *next_tail = handle->db_desc->log_tail_buf[next_tail_id % LOG_TAIL_BUFS];
 
-		// if (next_tail->free)
-		//	num_chunks = 0;
+		// wait until all asynchronous writes are complete
+		while (!asyncio_all_done(curr_tail->asyncio_handle))
+			;
 
-		wait_for_value(&next_tail->IOs_completed_in_tail, num_chunks);
 		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
 		wait_for_value(&next_tail->pending_readers, 0);
-		// int warn_print = 1;
-		// warn_print = 1;
-		// while (next_tail->pending_readers) {
-		//	if (warn_print) {
-		// log_warn("Still pending readers for DB: %s not ready yet maybe increase "
-		//	 "LOG_TAIL_BUFS from %d?",
-		//	 handle->db_desc->db_name, LOG_TAIL_BUFS);
-		//		warn_print = 0;
-		//	}
-		//}
 
 		handle->db_desc->KV_log_size += available_space_in_log;
 
@@ -1482,15 +1441,17 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 
 	if (segment_change) {
 		// do the padding IO as well
-		do_log_IO(&pad_ticket);
-		wait_for_value(&pad_ticket.tail->IOs_completed_in_tail, num_chunks);
+		do_log_IO(&pad_ticket, my_ticket.tail->asyncio_handle);
+		// check that the above IO has completed
+		/*while (!asyncio_all_done(handle->asyncio_handle))*/
+		/*	;*/
 		// Now time to retire
-		RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);
-		pad_ticket.tail->free = 1;
-		RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);
+		/*RWLOCK_WRLOCK(&handle->db_desc->log_tail_buf_lock);*/
+		/*pad_ticket.tail->free = 1;*/
+		/*RWLOCK_UNLOCK(&handle->db_desc->log_tail_buf_lock);*/
 	}
 	copy_kv_to_tail(&my_ticket);
-	do_log_IO(&my_ticket);
+	do_log_IO(&my_ticket, my_ticket.tail->asyncio_handle);
 	uint64_t kv_dev_offt = my_ticket.tail->dev_segment_offt + (my_ticket.log_offt % SEGMENT_SIZE);
 	if (my_ticket.req->optype_tolog == deleteOp) {
 		//log_info("Delete size was %u",data_size.kv_size);
