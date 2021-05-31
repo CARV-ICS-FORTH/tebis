@@ -9,16 +9,14 @@ struct asyncio_request {
 	char *buffer; // Internal buffer
 	struct aiocb aiocbp; // Asynchronous I/O control block
 };
-struct asyncio_ctx_s {
+struct asyncio_ctx {
 	struct asyncio_request *requests;
 	int len_requests;
 	pthread_mutex_t lock;
 };
 
-typedef struct asyncio_ctx_s *asyncio_ctx;
-
 // Initialize the array of I/O requests for the asynchronous I/O
-asyncio_ctx asyncio_create_context(int max_concurrent_requests);
+struct asyncio_ctx *asyncio_create_context(int max_concurrent_requests);
 
 // Add new I/O request in the list
 // Arguments:
@@ -27,12 +25,12 @@ asyncio_ctx asyncio_create_context(int max_concurrent_requests);
 //	data   - Data to be transfered to the device
 //	size   - Size of the data
 //	offset - Write the data to the specific offset in the file
-void asyncio_post_write(asyncio_ctx ctx, int fd, char *data, size_t size, uint64_t offset);
+void asyncio_post_write(struct asyncio_ctx *ctx, int fd, char *data, size_t size, uint64_t offset);
 
 // Traverse tthe array to check if all the i/o requests have been completed. We
 // check the state of the i/o request and update the state of each request.
 // Return 1 if all the requests are completed succesfully
 // Return 0, otherwise
-int asyncio_all_done(asyncio_ctx ctx);
+int asyncio_all_done(struct asyncio_ctx *ctx);
 
 #endif // __ASYNCIO_H__

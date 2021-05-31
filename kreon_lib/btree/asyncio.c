@@ -8,12 +8,18 @@
 #include "log.h"
 
 // Initialize the array of I/O requests for the asynchronous I/O
-struct asyncio_ctx_s *asyncio_create_context(int max_concurrent_requests)
+struct asyncio_ctx *asyncio_create_context(int max_concurrent_requests)
 {
-	struct asyncio_ctx_s *ctx = malloc(sizeof(*ctx));
-	memset(ctx, 0, sizeof(*ctx));
-	ctx->requests = malloc(max_concurrent_requests * sizeof(*ctx->requests));
-	memset(ctx->requests, 0, max_concurrent_requests * sizeof(*ctx->requests));
+	struct asyncio_ctx *ctx = calloc(1, sizeof(*ctx));
+	if (!ctx) {
+		log_fatal("Could not allocate memory");
+		exit(EXIT_FAILURE);
+	}
+	ctx->requests = calloc(max_concurrent_requests, sizeof(*ctx->requests));
+	if (!ctx->requests) {
+		log_fatal("Could not allocate memory");
+		exit(EXIT_FAILURE);
+	}
 	ctx->len_requests = max_concurrent_requests;
 	pthread_mutex_init(&ctx->lock, NULL);
 	log_info("New AIO context created");
@@ -24,7 +30,7 @@ struct asyncio_ctx_s *asyncio_create_context(int max_concurrent_requests)
 // request.
 // Return the 'index' of the available slot in the array, or return '-1' if all
 // the slots are active and allocated.
-static int find_slot(struct asyncio_ctx_s *ctx)
+static int find_slot(struct asyncio_ctx *ctx)
 {
 	for (int i = 0; i < ctx->len_requests; i++) {
 		if (ctx->requests[i].state == 0) {
@@ -68,7 +74,7 @@ static int find_slot(struct asyncio_ctx_s *ctx)
 //	size   - Size of the data
 //	offset - Write the data to the specific offset in the file
 //
-void asyncio_post_write(struct asyncio_ctx_s *ctx, int fd, char *data, size_t size, uint64_t offset)
+void asyncio_post_write(struct asyncio_ctx *ctx, int fd, char *data, size_t size, uint64_t offset)
 {
 	int check; // Check status
 	int slot; // Find available slot for the request
@@ -109,7 +115,7 @@ void asyncio_post_write(struct asyncio_ctx_s *ctx, int fd, char *data, size_t si
 // check the state of the i/o request and update the state of each request.
 // Return 1 if all the requests are completed succesfully
 // Return 0, otherwise
-int asyncio_all_done(struct asyncio_ctx_s *ctx)
+int asyncio_all_done(struct asyncio_ctx *ctx)
 {
 	pthread_mutex_lock(&ctx->lock);
 	for (int i = 0; i < ctx->len_requests; i++) {
