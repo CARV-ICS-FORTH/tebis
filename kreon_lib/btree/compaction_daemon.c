@@ -377,6 +377,19 @@ static void comp_close_write_cursor(struct comp_level_write_cursor *c)
 
 		comp_write_segment(c->segment_buf[i], c->dev_offt[i], sizeof(struct segment_header), SEGMENT_SIZE,
 				   c->fd);
+		// Call send_idx callback to send the index to this region's replicas
+		if (c->handle->db_desc->send_idx && i <= c->tree_height) {
+			//log_info("Closing cursor for level %u height %u", c->level_id, i);
+			if (i != c->tree_height)
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
+								(struct segment_header *)c->segment_buf[i],
+								SEGMENT_SIZE, c->level_id, NULL);
+			else
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[i],
+								(struct segment_header *)c->segment_buf[i],
+								SEGMENT_SIZE, c->level_id,
+								(struct node_header *)(MAPPED + c->root_offt));
+		}
 		// log_info("Dumped buffer %u at dev_offt %llu",i,c->dev_offt[i]);
 	}
 #if 0
@@ -404,6 +417,12 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 			if (remaining_space > 0) {
 				*(uint32_t *)(&c->segment_buf[0][c->segment_offt[0] % SEGMENT_SIZE]) = paddedSpace;
 				c->segment_offt[0] += remaining_space;
+			}
+			// Send to replica
+			if (c->handle->db_desc->send_idx) {
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[0],
+								(struct segment_header *)c->segment_buf[0],
+								SEGMENT_SIZE, c->level_id, NULL);
 			}
 			comp_write_segment(c->segment_buf[0], c->dev_offt[0], sizeof(struct segment_header),
 					   SEGMENT_SIZE, c->fd);
@@ -463,6 +482,11 @@ static void comp_get_space(struct comp_level_write_cursor *c, uint32_t height, n
 
 			comp_write_segment(c->segment_buf[height], c->dev_offt[height], sizeof(struct segment_header),
 					   SEGMENT_SIZE, c->fd);
+			if (c->handle->db_desc->send_idx) {
+				(*c->handle->db_desc->send_idx)((uint64_t)c->handle->db_desc, c->dev_offt[height],
+								(struct segment_header *)c->segment_buf[height],
+								SEGMENT_SIZE, c->level_id, NULL);
+			}
 
 			//log_info("Dumped index %d segment buffer", height);
 			/*get space from allocator*/
@@ -666,6 +690,10 @@ void *compaction_daemon(void *args)
 			int L1_tree = 0;
 			if (level_1->tree_status[L1_tree] == NO_SPILLING &&
 			    level_1->level_size[L1_tree] < level_1->max_level_size) {
+				// Flush replica logs
+				if (handle->db_desc->is_in_replicated_mode && handle->db_desc->fl != NULL) {
+					(*handle->db_desc->fl)((void *)handle);
+				}
 				/*mark them as spilling L0*/
 				level_0->tree_status[L0_tree] = SPILLING_IN_PROGRESS;
 				/*mark them as spilling L1*/
@@ -862,6 +890,11 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 	comp_init_write_cursor(merged_level, &handle, comp_req->dst_level, FD);
 
+	if (handle.db_desc->idx_init) {
+		(*handle.db_desc->idx_init)((uint64_t)handle.db_desc, comp_req->dst_level);
+		log_info("Informed my replicas of DB: %s for remote compaction!", handle.db_desc->db_name);
+	}
+
 	uint64_t local_spilled_keys = 0;
 
 	if (comp_req->src_level == 0) {
@@ -997,6 +1030,10 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	}
 	free(m_heap);
 	comp_close_write_cursor(merged_level);
+	if (handle.db_desc->destroy_rdma_buf) {
+		(*handle.db_desc->destroy_rdma_buf)((uint64_t)handle.db_desc, comp_req->dst_level);
+		log_info("Destoyed buffer successfully for DB %s!", handle.db_desc->db_name);
+	}
 
 	merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1] =
 		(struct node_header *)bt_get_real_address(merged_level->root_offt);

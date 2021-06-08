@@ -231,6 +231,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	return 0;
 #endif
 
+	/*log_info("Send index to replica");*/
 	int ret = 0;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
@@ -1108,8 +1109,9 @@ void rco_build_index(struct rco_build_index_task *task)
 			}
 			pthread_mutex_unlock(&db_desc->client_barrier_lock);
 		}
-		//log_info("Adding index entry for key %u:%s offset %llu log end %llu",
-		//key->size, key->key, log_offt, task->log_end);
+		/*log_info("Level 0 size %d", db_desc->levels[0].level_size[active_tree]);*/
+		/*log_info("Adding index entry for key %u:%s offset %llu log end %llu",*/
+		/*		key->size, key->key, log_offt, task->log_end);*/
 		remaining -= (sizeof(struct rco_key) + key->size);
 		_insert_key_value(&ins_req);
 		value = (struct rco_value *)((uint64_t)key + sizeof(struct rco_key) + key->size);
@@ -1124,7 +1126,8 @@ void rco_build_index(struct rco_build_index_task *task)
 		}
 		if (remaining >= sizeof(struct rco_key) && key->size == 0) {
 			break;
-		} else
+		}
+		if (remaining < sizeof(struct rco_key))
 			break;
 	}
 	//log_info("Done parsing segment");
