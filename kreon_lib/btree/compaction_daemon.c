@@ -1359,7 +1359,7 @@ void *compaction(void *_comp_req)
 	}
 #endif
 
-	snapshot(comp_req->volume_desc);
+	/*snapshot(comp_req->volume_desc);*/
 	db_desc->levels[comp_req->src_level].tree_status[comp_req->src_tree] = NO_SPILLING;
 	db_desc->levels[comp_req->dst_level].tree_status[0] = NO_SPILLING;
 
