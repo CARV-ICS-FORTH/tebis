@@ -43,7 +43,7 @@
 //#define USE_MLOCK
 #define __NR_mlock2 284
 
-#define ALLOW_RAW_VOLUMES 0
+#define ALLOW_RAW_VOLUMES 1
 #define MIN_VOLUME_SIZE (16 * 1024 * 1024 * 1024L)
 #define _FILE_OFFSET_BITS 64
 //#define USE_MLOCK
