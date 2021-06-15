@@ -216,28 +216,30 @@ static void di_free_index_buffer(struct krm_region_desc *r_desc, uint32_t level_
 	return;
 }
 
-void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_region_desc *r_desc,
+void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id)
 {
 	//First try to decode the segment, leaves can be done on the fly
-	uint32_t *type = (uint32_t *)((uint64_t)seg + sizeof(struct segment_header));
+	uint32_t *type = (uint32_t *)((uint64_t)memory_segment + sizeof(struct segment_header));
 	switch (*type) {
 	case leafNode:
 	case leafRootNode: {
-		struct leaf_node *l_node = (struct leaf_node *)((uint64_t)seg + sizeof(struct segment_header));
+		struct leaf_node *l_node =
+			(struct leaf_node *)((uint64_t)memory_segment + sizeof(struct segment_header));
 		//Allocate a segment where we will place the segment after its decoding
 
-		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
-		struct segment_header *seg =
+		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
+		struct segment_header *disk_segment =
 			get_segment_for_explicit_IO(r_desc->db->volume_desc, &r_desc->db->db_desc->levels[level_id], 1);
 		// add mapping to level's hash table
-		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
+		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
+
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = primary_seg_offt;
-		e->my_seg = (uint64_t)seg - MAPPED;
+		e->my_seg = (uint64_t)disk_segment - MAPPED;
 		HASH_ADD_PTR(r_desc->replica_index_map[level_id], master_seg, e);
 
-		assert(l_node->header.numberOfEntriesInNode <= leaf_order);
+		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
 		uint32_t decoded_bytes = sizeof(struct segment_header);
 		while (decoded_bytes < SEGMENT_SIZE) {
 			if (l_node->header.type == paddedSpace) {
@@ -251,7 +253,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 		}
 		assert(decoded_bytes == SEGMENT_SIZE);
 		/*Now write the buffer to storage and add the hash mapping*/
-		di_write_segment(r_desc, (char *)seg, primary_seg_offt, FD, level_id);
+		di_write_segment(r_desc, (char *)memory_segment, primary_seg_offt, FD, level_id);
 		//check if we can decode previous halted tasks
 		for (int i = 1; i < MAX_HEIGHT; i++) {
 			if (r_desc->index_buffer[level_id][i]) {
@@ -271,15 +273,16 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 	}
 	case internalNode:
 	case rootNode: {
-		struct segment_header *disk_seg =
+		struct segment_header *disk_segment =
 			get_segment_for_explicit_IO(r_desc->db->volume_desc, &r_desc->db->db_desc->levels[level_id], 1);
 		// add mapping to level's hash table
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = primary_seg_offt;
-		e->my_seg = (uint64_t)disk_seg - MAPPED;
+		e->my_seg = (uint64_t)disk_segment - MAPPED;
 		HASH_ADD_PTR(r_desc->replica_index_map[level_id], master_seg, e);
 
-		struct index_node *idx = (struct index_node *)((uint64_t)seg + sizeof(struct segment_header));
+		struct index_node *idx =
+			(struct index_node *)((uint64_t)memory_segment + sizeof(struct segment_header));
 		uint32_t height = idx->header.height;
 		if (height < 1 || height >= MAX_HEIGHT) {
 			log_fatal("Corrupted height %u", height);
@@ -318,7 +321,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 
 		r_desc->index_buffer[level_id][height]->state = DI_INDEX_NODE_FIRST_IN;
 
-		r_desc->index_buffer[level_id][height]->data = (char *)seg;
+		r_desc->index_buffer[level_id][height]->data = (char *)memory_segment;
 		r_desc->index_buffer[level_id][height]->allocated = 0;
 
 		if (!di_rewrite_index_node(r_desc->index_buffer[level_id][height])) {
@@ -338,7 +341,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_re
 			//for(uint32_t i=rounds-1;i<=0;i--){
 			//	dst[i] = src[i];
 			//}
-			memcpy(dst, seg, SEGMENT_SIZE);
+			memcpy(dst, memory_segment, SEGMENT_SIZE);
 			r_desc->index_buffer[level_id][height]->allocated = 1;
 			r_desc->index_buffer[level_id][height]->data = (char *)dst;
 			//raise(SIGINT);

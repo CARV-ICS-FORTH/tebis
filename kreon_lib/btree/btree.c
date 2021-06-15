@@ -716,14 +716,15 @@ db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_na
 
 	MUTEX_LOCK(&init_lock);
 	if (leaf_order == -1) {
-		/*calculate max leaf,index order*/
-		leaf_order = (LEAF_NODE_SIZE - sizeof(node_header)) / (sizeof(uint64_t) + PREFIX_SIZE);
-		while (leaf_order % 2 != 0)
-			--leaf_order;
-		index_order = (INDEX_NODE_SIZE - sizeof(node_header)) / (2 * sizeof(uint64_t));
-		index_order -= 2; /*more space for extra pointer, and for rebalacing (merge)*/
-		while (index_order % 2 != 1)
-			--index_order;
+		//leaf_order = (LEAF_NODE_SIZE - sizeof(node_header)) / (sizeof(uint64_t) + PREFIX_SIZE);
+		//while (leaf_order % 2 != 0)
+		//	--leaf_order;
+		leaf_order = LN_LENGTH;
+		//index_order = (INDEX_NODE_SIZE - sizeof(node_header)) / (2 * sizeof(uint64_t));
+		//index_order -= 2; /*more space for extra pointer, and for rebalacing (merge)*/
+		//while (index_order % 2 != 1)
+		//	--index_order;
+		index_order = IN_LENGTH;
 
 		if ((LEAF_NODE_SIZE - sizeof(node_header)) % 8 != 0) {
 			log_fatal("Misaligned node header for leaf nodes, scans will not work");
@@ -1372,7 +1373,7 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 	else
 		available_space_in_log = 0;
 
-	uint32_t num_chunks = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
+	//uint32_t num_chunks = SEGMENT_SIZE / LOG_TAIL_CHUNK_SIZE;
 	int segment_change = 0;
 	if (available_space_in_log < data_size.kv_size) {
 		// fill info for kreon master here
@@ -2689,7 +2690,7 @@ release_and_retry:
 			else
 				father_order = index_order;
 			assert(father->epoch > volume_desc->dev_catalogue->epoch);
-			assert(father->numberOfEntriesInNode < father_order);
+			assert(father->numberOfEntriesInNode <= father_order);
 		}
 		if (son->numberOfEntriesInNode >= order) {
 			/*Overflow split*/
