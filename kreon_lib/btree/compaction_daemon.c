@@ -898,7 +898,8 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	uint64_t local_spilled_keys = 0;
 
 	if (comp_req->src_level == 0) {
-		snapshot(comp_req->volume_desc);
+		bt_flush_log_tail_chunk(&handle);
+		//snapshot(comp_req->volume_desc);
 		level_src = _init_spill_buffer_scanner(&handle, src_root, NULL);
 	} else {
 		if (posix_memalign((void **)&l_src, ALIGNMENT, sizeof(struct comp_level_read_cursor)) != 0) {
