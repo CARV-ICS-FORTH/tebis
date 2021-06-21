@@ -35,6 +35,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 	/*init zookeeper connection*/
+	log_info("Connecting to zookeeper server: %s", argv[1]);
 	zhandle_t *zh = zookeeper_init(argv[1], zk_watcher, 15000, 0, 0, 0);
 	wait_for_value((uint32_t *)&is_connected, 1);
 
@@ -70,7 +71,7 @@ int main(int argc, char *argv[])
 	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGIONS_PATH, "/", argv[2]);
 	int rc = zoo_create(zh, zk_path, (char *)&region, sizeof(struct krm_region), &ZOO_OPEN_ACL_UNSAFE, 0, NULL, 0);
 	if (rc != ZOK) {
-		log_fatal("failed to create region %s", argv[3]);
+		log_fatal("failed to create region %s with status %d", argv[3], rc);
 		exit(EXIT_FAILURE);
 	}
 	free(zk_path);

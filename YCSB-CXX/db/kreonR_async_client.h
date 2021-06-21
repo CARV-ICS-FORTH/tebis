@@ -55,8 +55,6 @@ void get_callback(void *cnxt)
 static uint64_t reply_counter;
 }
 
-#define ZK_HOST "sith2.cluster.ics.forth.gr"
-#define ZK_PORT 2181
 #define FIELD_COUNT 10
 #define MAX_THREADS 128
 using std::cout;
@@ -66,6 +64,8 @@ extern std::unordered_map<std::string, int> ops_per_server;
 int pending_requests[MAX_THREADS];
 int served_requests[MAX_THREADS];
 int num_of_batch_operations_per_thread[MAX_THREADS];
+extern std::string zk_host;
+extern int zk_port;
 
 namespace ycsbc
 {
@@ -88,8 +88,8 @@ class kreonRAsyncClientDB : public YCSBDB {
 	{
 		struct timeval start;
 
-		if (krc_init(ZK_HOST, ZK_PORT) != KRC_SUCCESS) {
-			log_fatal("Failed to init client at zookeeper host %s port %d", ZK_HOST, ZK_PORT);
+		if (krc_init((char *)zk_host.c_str(), zk_port) != KRC_SUCCESS) {
+			log_fatal("Failed to init client at zookeeper host %s port %d", zk_host.c_str(), zk_port);
 			exit(EXIT_FAILURE);
 		}
 		cu_num = 0;
@@ -114,7 +114,7 @@ class kreonRAsyncClientDB : public YCSBDB {
     public:
 	void Init()
 	{
-		krc_start_async_thread(4, 2048);
+		krc_start_async_thread(4, 1024);
 	}
 	void Close()
 	{
@@ -246,7 +246,6 @@ class kreonRAsyncClientDB : public YCSBDB {
 		}
 		/*ommit last space*/
 		pos -= 2;
-
 		if (krc_aput(key.length(), (void *)key.c_str(), pos, (void *)buffer, put_callback, &reply_counter) !=
 		    KRC_SUCCESS) {
 			log_fatal("Put failed for key %s", key.c_str());
