@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 ZOO_BIN=/home1/private/gesalous/zookeeper-3.4.10/bin
 CREATE_REGIONS=./create_regions.sh
 ACL=ZOO_ACL_UNSAFE
@@ -13,20 +13,21 @@ MAILBOX_PATH=$ROOT_PATH/mailbox
 REGION_PATH=$ROOT_PATH/regions
 ZK_HOST=127.0.0.1:2181
 
-if [ "$#" -ne 2 ]; then
-	echo "wrong number of args ./mkfs_kreonR.sh <path to hosts file> <path to regions file>"
+if [ "$#" -ne 3 ]; then
+	echo "wrong number of args ./mkfs_kreonR.sh <path to hosts file> <path to regions file> <zookeeper_host:zookeeper_port> "
 	exit
 fi
+ZK_HOST="$3"
 echo "Deleting previous metadata of kreonR"
-$ZOO_BIN/zkCli.sh rmr "$ROOT_PATH"
+$ZOO_BIN/zkCli.sh -server "$ZK_HOST" rmr "$ROOT_PATH"
 
 echo "Creating root path $ROOT_PATH"
-$ZOO_BIN/zkCli.sh create $ROOT_PATH $ACL
+$ZOO_BIN/zkCli.sh -server "$ZK_HOST" create $ROOT_PATH $ACL
 
 echo "creating new structures"
-$ZOO_BIN/zkCli.sh create $SERVERS_PATH $ACL
+$ZOO_BIN/zkCli.sh -server "$ZK_HOST" create $SERVERS_PATH $ACL
 echo "creating mailbox structures"
-$ZOO_BIN/zkCli.sh create $MAILBOX_PATH $ACL
+$ZOO_BIN/zkCli.sh -server "$ZK_HOST" create $MAILBOX_PATH $ACL
 
 echo "Reading host file $HOST_FILE"
 while IFS= read -r line; do
@@ -38,24 +39,24 @@ while IFS= read -r line; do
 	else
 		server=$(echo "$line" | awk '{print $1}')
 		echo "Adding host $server to group"
-		#"$ZOO_BIN"/zkCli.sh create "$SERVERS_PATH/$server" "$ACL"
+		#"$ZOO_BIN"/zkCli.sh -server create "$SERVERS_PATH/$server" "$ACL"
 		../../build/kreon_server/create_server_node "$ZK_HOST" "$server"
 		echo "and its mailbox"
-		"$ZOO_BIN"/zkCli.sh create "$MAILBOX_PATH/$server" "$ACL"
+		"$ZOO_BIN"/zkCli.sh -server "$ZK_HOST" create "$MAILBOX_PATH/$server" "$ACL"
 	fi
 done <"$HOST_FILE"
 
 LEADER=$(grep leader "$HOST_FILE" | awk '{print $1}')
 
 echo "Leader is $LEADER"
-"$ZOO_BIN"/zkCli.sh create "$LEADER_PATH" "$ACL"
-"$ZOO_BIN"/zkCli.sh create "$LEADER_PATH/$LEADER" "$ACL"
+"$ZOO_BIN"/zkCli.sh -server "$ZK_HOST" create "$LEADER_PATH" "$ACL"
+"$ZOO_BIN"/zkCli.sh -server "$ZK_HOST" create "$LEADER_PATH/$LEADER" "$ACL"
 
-"$ZOO_BIN"/zkCli.sh create "$ALIVE_LEADER_PATH" "$ACL"
-"$ZOO_BIN"/zkCli.sh create "$ALIVE_DATASERVERS_PATH" "$ACL"
+"$ZOO_BIN"/zkCli.sh -server "$ZK_HOST" create "$ALIVE_LEADER_PATH" "$ACL"
+"$ZOO_BIN"/zkCli.sh -server "$ZK_HOST" create "$ALIVE_DATASERVERS_PATH" "$ACL"
 
 echo "Creating regions path"
-$ZOO_BIN/zkCli.sh create $REGION_PATH $ACL
+$ZOO_BIN/zkCli.sh -server "$ZK_HOST" create $REGION_PATH $ACL
 
 echo "Done kreonR metadata initialized successfully"
 
@@ -63,7 +64,7 @@ echo "Checking if regions file exists"
 FILE="$REGIONS_FILE"
 if [ -f "$FILE" ]; then
 	echo "regions file exist, creating regions"
-	"$CREATE_REGIONS" 127.0.0.1:2181 "$FILE"
+	"$CREATE_REGIONS" "$ZK_HOST" "$FILE"
 	echo "regions created successfully :-)"
 	exit
 else
