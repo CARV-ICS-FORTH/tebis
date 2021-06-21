@@ -48,6 +48,8 @@ Measurements *tail = nullptr;
 std::string outf("ops.txt");
 std::string explan_filename("execution_plan.txt");
 std::string results_directory("RESULTS");
+std::string zk_host("localhost");
+int zk_port = -1;
 #ifdef KREON_DISTRIBUTED
 std::unordered_map<std::string, int> ops_per_server;
 #endif
@@ -417,6 +419,24 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 			}
 
 			db_num = std::atoi(argv[argindex]);
+			argindex++;
+		} else if (strcmp(argv[argindex], "-zk_host") == 0) {
+			argindex++;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+
+			zk_host = std::string(argv[argindex]);
+			argindex++;
+		} else if (strcmp(argv[argindex], "-zk_port") == 0) {
+			argindex++;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+
+			zk_port = std::atoi(argv[argindex]);
 			argindex++;
 		} else if (strcmp(argv[argindex], "-e") == 0) {
 			argindex++;
