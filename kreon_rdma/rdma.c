@@ -155,7 +155,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case PUT_REQUEST:
 	case GET_REQUEST:
 	case MULTI_GET_REQUEST:
-	case PUT_OFFT_REQUEST:
 	case DELETE_REQUEST:
 	case TEST_REQUEST:
 		c_buf = conn->send_circular_buf;
@@ -167,7 +166,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case PUT_REPLY:
 	case GET_REPLY:
 	case MULTI_GET_REPLY:
-	case PUT_OFFT_REPLY:
 	case DELETE_REPLY:
 		c_buf = conn->recv_circular_buf;
 		ack_arrived = KR_REP_DONT_CARE;
@@ -511,7 +509,6 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case PUT_REQUEST:
 		case GET_REQUEST:
 		case MULTI_GET_REQUEST:
-		case PUT_OFFT_REQUEST:
 		case DELETE_REQUEST:
 		case TEST_REQUEST:
 		case TEST_REQUEST_FETCH_PAYLOAD:
@@ -526,7 +523,6 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case PUT_REPLY:
 		case GET_REPLY:
 		case MULTI_GET_REPLY:
-		case PUT_OFFT_REPLY:
 		case DELETE_REPLY:
 		case TEST_REPLY:
 		case TEST_REPLY_FETCH_PAYLOAD:
