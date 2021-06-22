@@ -336,7 +336,8 @@ krc_ret_code krc_put_with_offset(uint32_t key_size, void *key, uint32_t offset, 
 }
 #endif
 
-krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *value)
+static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_size, void *value,
+				     int is_update_if_exists)
 {
 	msg_header *req_header;
 	msg_put_key *put_key;
@@ -356,9 +357,14 @@ krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *valu
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 
-	_krc_get_rpc_pair(conn, &req_header, PUT_REQUEST, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
-			  PUT_REPLY, sizeof(msg_put_rep));
-	//req_header = allocate_rdma_message(conn, key_size + val_size + (2 * sizeof(uint32_t)), PUT_REQUEST);
+	if (is_update_if_exists)
+		_krc_get_rpc_pair(conn, &req_header, PUT_IF_EXISTS_REQUEST,
+				  key_size + val_size + (2 * sizeof(uint32_t)), &rep_header, PUT_REPLY,
+				  sizeof(msg_put_rep));
+	else
+		_krc_get_rpc_pair(conn, &req_header, PUT_REQUEST, key_size + val_size + (2 * sizeof(uint32_t)),
+				  &rep_header, PUT_REPLY, sizeof(msg_put_rep));
+
 	put_key = (msg_put_key *)((uint64_t)req_header + sizeof(msg_header));
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
 	put_key->key_size = key_size;
@@ -401,6 +407,16 @@ krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *valu
 	_zero_rendezvous_locations_l(rep_header, req_header->reply_length);
 	client_free_rpc_pair(conn, rep_header);
 	return KRC_SUCCESS;
+}
+
+krc_ret_code krc_put_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value)
+{
+	return krc_internal_put(key_size, key, val_size, value, 1);
+}
+
+krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *value)
+{
+	return krc_internal_put(key_size, key, val_size, value, 0);
 }
 
 #if 0
@@ -1128,7 +1144,8 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	pthread_mutex_unlock(&spinner->queue[id]->queue_lock);
 }
 
-krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context)
+static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
+				      void *context, int is_update_if_exists)
 {
 	msg_header *req_header;
 	msg_put_key *put_key;
@@ -1145,8 +1162,11 @@ krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *val
 
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
-	_krc_get_rpc_pair(conn, &req_header, PUT_REQUEST, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
+
+	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
+	_krc_get_rpc_pair(conn, &req_header, req_type, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
 			  PUT_REPLY, sizeof(msg_put_rep));
+
 	put_key = (msg_put_key *)((uint64_t)req_header + sizeof(msg_header));
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
 	put_key->key_size = key_size;
@@ -1156,7 +1176,6 @@ krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *val
 	memcpy(put_value->value, value, val_size);
 
 	/*Now the reply part*/
-	//rep_header = allocate_rdma_message(conn, sizeof(msg_put_rep), PUT_REPLY);
 	rep_header->receive = 0;
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
 	put_rep->status = KR_REP_PENDING;
@@ -1171,6 +1190,16 @@ krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *val
 
 	krc_send_async_request(conn, req_header, rep_header, t, context, NULL, NULL);
 	return KRC_SUCCESS;
+}
+
+krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context)
+{
+	return krc_internal_aput(key_size, key, val_size, value, t, context, 0);
+}
+
+krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context)
+{
+	return krc_internal_aput(key_size, key, val_size, value, t, context, 1);
 }
 
 static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
@@ -1206,20 +1235,10 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 		req->start_time = now;
 	}
 	size_t elapsed_sec = now.tv_sec - req->start_time.tv_sec;
-	/*if (elapsed_sec > 10 && _krc_send_heartbeat(req->conn->rdma_cm_id) != KREON_SUCCESS) {*/
-#if 0
-	if (elapsed_sec > 10) {
-		req->start_time = now;
-		if (req->reply->receive == TU_RDMA_REGULAR_MSG) {
-			log_info("pay_len = %d, padding_and_tail = %d", req->reply->pay_len,
-				 req->reply->padding_and_tail);
-		} else {
-			log_info("Message header has not arrived");
-		}
-		/*log_fatal("Kreon dataserver has failed!");*/
-		/*exit(EXIT_FAILURE);*/
+	if (elapsed_sec > 10 && _krc_send_heartbeat(req->conn->rdma_cm_id) != KREON_SUCCESS) {
+		log_fatal("Kreon dataserver has failed!");
+		exit(EXIT_FAILURE);
 	}
-#endif
 	return false;
 }
 
@@ -1338,7 +1357,6 @@ static void *krc_reply_checker(void *args)
 					exit(EXIT_FAILURE);
 				}
 				__sync_fetch_and_add(&replies_arrived, 1);
-				//assert(req->id == next_id);
 				//assert(req->id == next_id);
 				//++next_id;
 			}

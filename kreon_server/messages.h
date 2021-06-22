@@ -17,6 +17,7 @@
 
 enum message_type {
 	PUT_REQUEST = 1,
+	PUT_IF_EXISTS_REQUEST,
 	PUT_REPLY,
 	GET_REQUEST,
 	GET_REPLY,

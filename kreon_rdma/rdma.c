@@ -153,6 +153,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	uint8_t reset_rendezvous = 0;
 	switch (message_type) {
 	case PUT_REQUEST:
+	case PUT_IF_EXISTS_REQUEST:
 	case GET_REQUEST:
 	case MULTI_GET_REQUEST:
 	case DELETE_REQUEST:
