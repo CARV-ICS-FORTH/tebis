@@ -254,6 +254,7 @@ krc_ret_code krc_init(char *zookeeper_ip, int zk_port)
 	return KRC_SUCCESS;
 }
 
+#if 0
 krc_ret_code krc_put_with_offset(uint32_t key_size, void *key, uint32_t offset, uint32_t val_size, void *value)
 {
 	msg_header *req_header;
@@ -333,6 +334,7 @@ krc_ret_code krc_put_with_offset(uint32_t key_size, void *key, uint32_t offset, 
 	client_free_rpc_pair(conn, rep_header);
 	return KRC_SUCCESS;
 }
+#endif
 
 krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *value)
 {

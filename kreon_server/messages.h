@@ -126,6 +126,7 @@ typedef struct msg_put_rep {
 #endif /* DEBUG_RESET_RENDEZVOUS */
 } msg_put_rep;
 
+#if 0
 /*update related*/
 typedef struct msg_put_offt_req {
 	uint64_t offset;
@@ -136,6 +137,7 @@ typedef struct msg_put_offt_rep {
 	uint32_t status;
 	uint64_t new_value_size;
 } msg_put_offt_rep;
+#endif
 
 typedef struct msg_delete_req {
 	uint32_t key_size;
