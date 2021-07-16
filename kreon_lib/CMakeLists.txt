@@ -82,9 +82,13 @@ set_source_files_properties(allocator/spin_loop.c PROPERTIES COMPILE_FLAGS
 # mkfs for kreon volumes
 add_executable(
   mkfs.kreon
-  allocator/mkfs_Eutropia.c allocator/allocator.c
-  allocator/persistent_operations.c btree/segment_allocator.c
-  ../utilities/spin_loop.c ../utilities/list.c)
+  allocator/mkfs_Eutropia.c
+  allocator/allocator.c
+  allocator/persistent_operations.c
+  btree/segment_allocator.c
+  ../utilities/spin_loop.c
+  ../utilities/list.c
+  btree/asyncio.c)
 
 target_link_libraries(mkfs.kreon log libbloom)
 
