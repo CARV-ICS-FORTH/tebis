@@ -80,6 +80,10 @@ int served_requests[MAX_THREADS];
 int num_of_batch_operations_per_thread[MAX_THREADS];
 extern std::string zk_host;
 extern int zk_port;
+extern int regions_total;
+#ifdef COUNT_REQUESTS_PER_REGION
+extern int *region_requests;
+#endif
 
 namespace ycsbc
 {
@@ -95,7 +99,6 @@ class kreonRAsyncClientDB : public YCSBDB {
 	pthread_mutex_t mutex_num;
 	std::string custom_workload;
 	char **region_prefixes_map;
-	int regions_total;
 
     public:
 	kreonRAsyncClientDB(int num, utils::Properties &props)
@@ -115,7 +118,7 @@ class kreonRAsyncClientDB : public YCSBDB {
 		gettimeofday(&start, NULL);
 		tinit = start.tv_sec + (start.tv_usec / 1000000.0);
 		custom_workload = props.GetProperty("workloadType", "undefined");
-		if (custom_workload.compare("undefined") != 0) {
+		if (custom_workload.compare("undefined") == 0) {
 			std::cerr << "Error: missing argument -w" << std::endl;
 			exit(EXIT_FAILURE);
 		}
@@ -130,12 +133,16 @@ class kreonRAsyncClientDB : public YCSBDB {
 		// The prefix is necessary to make sure that the key that will be sent to
 		// the server will match the region's range
 		region_prefixes_map = new char *[regions_total];
+#ifdef COUNT_REQUESTS_PER_REGION
+		region_requests = new int[regions_total]();
+#endif
 		char first = 'A';
 		char second = 'A';
 		for (int i = 0; i < regions_total; ++i) {
-			region_prefixes_map[i] = new char[2];
+			region_prefixes_map[i] = new char[3];
 			region_prefixes_map[i][0] = first;
 			region_prefixes_map[i][1] = second;
+			region_prefixes_map[i][2] = '\0';
 			if (first == 'Z') {
 				std::cerr << "Error: exceeded maximum supported regions for this benchmark (576)"
 					  << std::endl;
@@ -199,11 +206,14 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 		int region_id = djb2_hash((unsigned char *)key.c_str(), key.length()) % regions_total;
 		std::string prefix_key = std::string(region_prefixes_map[region_id]) + key;
+#ifdef COUNT_REQUESTS_PER_REGION
+		__sync_fetch_and_add(&region_requests[region_id], 1);
+#endif
 		enum krc_ret_code code = krc_aget(prefix_key.length(), (char *)prefix_key.c_str(), &g->buf_size, g->buf,
 						  get_callback, g);
 		if (code != KRC_SUCCESS) {
 			log_fatal("problem with key %s", key.c_str());
-			//exit(EXIT_FAILURE);
+			exit(EXIT_FAILURE);
 		}
 
 #if 0 //VALUE_CHECK
@@ -275,8 +285,9 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
 	{
+#if 1
 		return Insert(id, table, key, values);
-#if 0
+#else
 		static std::string value3(1000, 'a');
 		static std::string value2(100, 'a');
 		static std::string value(5, 'a');
@@ -319,7 +330,7 @@ class kreonRAsyncClientDB : public YCSBDB {
 	{
 		static std::string value3(1000, 'a');
 		static std::string value2(100, 'a');
-		static std::string value(5, 'a');
+		static std::string value(10, 'a');
 		int y = kv_count++ % 10;
 
 		const char *value_buf = NULL;
@@ -346,6 +357,9 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 		int region_id = djb2_hash((unsigned char *)key.c_str(), key.length()) % regions_total;
 		std::string prefix_key = std::string(region_prefixes_map[region_id]) + key;
+#ifdef COUNT_REQUESTS_PER_REGION
+		__sync_fetch_and_add(&region_requests[region_id], 1);
+#endif
 		if (krc_aput(prefix_key.length(), (void *)prefix_key.c_str(), value_size, (void *)value_buf,
 			     put_callback, &reply_counter) != KRC_SUCCESS) {
 			log_fatal("Put failed for key %s", key.c_str());

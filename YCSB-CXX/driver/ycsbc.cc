@@ -52,6 +52,10 @@ std::string zk_host("localhost");
 int zk_port = -1;
 #ifdef KREON_DISTRIBUTED
 std::unordered_map<std::string, int> ops_per_server;
+int regions_total;
+#ifdef COUNT_REQUESTS_PER_REGION
+int *region_requests;
+#endif
 #endif
 
 void UsageMessage(const char *command);
@@ -359,6 +363,12 @@ int main(const int argc, const char *argv[])
 			     << " Throughput: " << ((double)kv.second) / (double)(end_time.tv_sec - start_time.tv_sec)
 			     << std::endl;
 		}
+#ifdef COUNT_REQUESTS_PER_REGION
+		ofil << "Region | Requests" << std::endl;
+		for (int i = 0; i < regions_total; ++i) {
+			ofil << i << " | " << region_requests[i] << std::endl;
+		}
+#endif
 		ofil << "End time: " << timestring << std::endl;
 #else
 		tmp = stop_stats + results_directory + slash + a;
