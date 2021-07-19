@@ -52,6 +52,10 @@ std::string zk_host("localhost");
 int zk_port = -1;
 #ifdef KREON_DISTRIBUTED
 std::unordered_map<std::string, int> ops_per_server;
+int regions_total;
+#ifdef COUNT_REQUESTS_PER_REGION
+int *region_requests;
+#endif
 #endif
 
 void UsageMessage(const char *command);
@@ -359,6 +363,12 @@ int main(const int argc, const char *argv[])
 			     << " Throughput: " << ((double)kv.second) / (double)(end_time.tv_sec - start_time.tv_sec)
 			     << std::endl;
 		}
+#ifdef COUNT_REQUESTS_PER_REGION
+		ofil << "Region | Requests" << std::endl;
+		for (int i = 0; i < regions_total; ++i) {
+			ofil << i << " | " << region_requests[i] << std::endl;
+		}
+#endif
 		ofil << "End time: " << timestring << std::endl;
 #else
 		tmp = stop_stats + results_directory + slash + a;
@@ -488,6 +498,22 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 			}
 			outf = std::string(argv[argindex]);
 			argindex++;
+		} else if (strcmp(argv[argindex], "-w") == 0) {
+			++argindex;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+			props.SetProperty("workloadType", argv[argindex]);
+			++argindex;
+		} else if (strcmp(argv[argindex], "-r") == 0) {
+			++argindex;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+			props.SetProperty("totalRegions", argv[argindex]);
+			++argindex;
 		} else {
 			cout << "Unknown option " << argv[argindex] << endl;
 			exit(0);
@@ -512,6 +538,8 @@ void UsageMessage(const char *command)
 	cout << "  -insertStart     Set counter start value for key generation during load" << endl;
 	cout << "  -clientProcesses Set to the number of client processes (default = 1)" << endl;
 	cout << "  -outFile         Set name of ycsb log file (default = ops.txt" << endl;
+	cout << "  -w               Set workload type (s, m, l, sd, md or ld)" << endl;
+	cout << "  -r               Set number of regions (max = 576)" << endl;
 }
 
 inline bool StrStartWith(const char *str, const char *pre)

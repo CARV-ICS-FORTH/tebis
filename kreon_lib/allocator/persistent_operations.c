@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <signal.h>
 #include <sys/mman.h>
 #include <errno.h>
 #include "allocator.h"
@@ -19,6 +20,8 @@
 #include "../btree/segment_allocator.h"
 #include <assert.h>
 #include <log.h>
+#include <execinfo.h>
+#include "../btree/asyncio.h"
 
 #if 0
 /*persists the KV-log of a DB, not thread safe!*/
@@ -101,7 +104,7 @@ void bt_flush_log_tail_chunk(struct db_handle *hd)
 {
 	uint64_t chunk_size = hd->db_desc->KV_log_size % LOG_TAIL_CHUNK_SIZE;
 	if (!chunk_size) {
-		log_info("Nothing to flush for log of DB: %s already flushed", hd->db_desc->db_name);
+		/*log_info("Nothing to flush for log of DB: %s already flushed", hd->db_desc->db_name);*/
 		return;
 	}
 	uint64_t start_offt = hd->db_desc->KV_log_size - chunk_size;
@@ -116,6 +119,11 @@ void bt_flush_log_tail_chunk(struct db_handle *hd)
 		total_bytes_written = sizeof(struct segment_header);
 	ssize_t bytes_written = 0;
 	uint32_t size = LOG_TAIL_CHUNK_SIZE;
+
+	// Wait for all outstanding IOs to complete before writing the last log tail chunk
+	while (!asyncio_all_done(tail->asyncio_handle))
+		;
+
 	/*log_info("Flushing log tail log size %llu chunk id %llu start %llu size %llu", hd->db_desc->KV_log_size,*/
 	/*chunk_id, total_bytes_written, chunk_size);*/
 	while (total_bytes_written < size) {
@@ -123,8 +131,7 @@ void bt_flush_log_tail_chunk(struct db_handle *hd)
 			pwrite(tail->fd, &tail->buf[start_offt + total_bytes_written], size - total_bytes_written,
 			       tail->dev_segment_offt + start_offt + total_bytes_written);
 		if (bytes_written == -1) {
-			log_fatal("Failed to write LOG_CHUNK reason follows");
-			perror("Reason");
+			log_fatal("Failed to write LOG_CHUNK: %s", strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 		total_bytes_written += bytes_written;
