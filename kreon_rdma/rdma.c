@@ -542,6 +542,10 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 			context = msg_ctx;
 			break;
 		}
+		default:
+			assert(0);
+			log_fatal("Unhandled message type %d", msg->type);
+			exit(EXIT_FAILURE);
 		}
 	} else {
 		context = (void *)msg_ctx;
@@ -1444,8 +1448,10 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				case I_AM_CLIENT:
 				case RESET_RENDEZVOUS:
 					/*client staff, app will decide when staff arrives*/
+					assert(0);
 					free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
 									MESSAGE_SEGMENT_SIZE);
+					reset_circular_buffer(conn->send_circular_buf);
 					break;
 
 				case CHANGE_CONNECTION_PROPERTIES_REQUEST:

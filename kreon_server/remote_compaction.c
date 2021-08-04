@@ -123,7 +123,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	// Ask from replicas to register a buffer for this procedure
 	// SEND_GET_BUFFER_MSG: XXX TODO XXX add support for > 1 replicas
 	uint32_t request_size = sizeof(struct msg_replica_index_get_buffer_req);
-	uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_req);
+	uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_rep);
 	struct sc_msg_pair rpc_pair;
 	do {
 		rpc_pair = sc_allocate_rpc_pair(r_conn, request_size, reply_size, REPLICA_INDEX_GET_BUFFER_REQ);
@@ -147,7 +147,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 	__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 	// Wait for reply header
-	wait_for_value(&rpc_pair.request->receive, TU_RDMA_REGULAR_MSG);
+	wait_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc_pair.reply;
 	uint32_t *tail =
@@ -633,7 +633,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				break;
 			}
 			uint32_t request_size = sizeof(struct msg_replica_index_get_buffer_req);
-			uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_req);
+			uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_rep);
 			task->rpc[task->replica_id_cnt][0].rdma_buf =
 				sc_allocate_rpc_pair(task->conn[task->replica_id_cnt], request_size, reply_size,
 						     REPLICA_INDEX_GET_BUFFER_REQ);

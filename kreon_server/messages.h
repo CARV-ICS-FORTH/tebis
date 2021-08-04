@@ -8,9 +8,12 @@
 #include <inttypes.h>
 #include <semaphore.h>
 #include <time.h>
+#include <assert.h>
 #include "conf.h"
 #define MSG_MAX_REGION_KEY_SIZE 256
 #define MAX_REPLICA_INDEX_BUFFERS 8
+
+#define MESSAGE_SEGMENT_SIZE 128
 
 enum message_type {
 	PUT_REQUEST = 1,
@@ -100,7 +103,10 @@ typedef struct msg_header {
 	/*groups related messages. 0 for independent*/
 	uint64_t session_id;
 	uint32_t receive;
-} msg_header;
+} __attribute__((packed, aligned(MESSAGE_SEGMENT_SIZE))) msg_header;
+
+static_assert(MESSAGE_SEGMENT_SIZE == sizeof(struct msg_header),
+	      "Message segment size has to be equal to the size of the messae header");
 
 /*put related*/
 typedef struct msg_put_key {
