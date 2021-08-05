@@ -2135,12 +2135,14 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 				free(current);
 			}
+			/*
 			if (fsync(FD) != 0) {
 				log_fatal("Failed to sync file!");
 				perror("Reason:\n");
 				exit(EXIT_FAILURE);
 			}
 			snapshot(r_desc->db->volume_desc);
+			*/
 		}
 
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +

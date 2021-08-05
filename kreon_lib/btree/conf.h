@@ -60,7 +60,7 @@
 #define ENABLE_BLOOM_FILTERS 0
 #define COMPACTION_UNIT_OF_WORK 1
 #define ALIGNMENT 512
-#define PREFIX_SIZE 24
+#define PREFIX_SIZE 12
 /*Buffering related tunables*/
 #define AGGRESIVE_FREE_POLICY
 #define TO_SPILL_KEYS 16384
