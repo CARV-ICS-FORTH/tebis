@@ -971,6 +971,11 @@ static void *server_spinning_thread_kernel(void *args)
 * outsize of the rdma_memory_regions->remote_memory_buffer
 * */
 				_update_rendezvous_location(conn, message_size);
+#ifdef DEBUG_RESET_RENDEZVOUS
+				extern unsigned detected_operations;
+				if (conn->type == SERVER_TO_CLIENT_CONNECTION)
+					__sync_fetch_and_add(&detected_operations, 1);
+#endif /* DEBUG_RESET_RENDEZVOUS */
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
@@ -2471,6 +2476,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				task->reply_msg->local_offset = (uint64_t)task->msg->reply;
 				task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 				msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+#ifdef DEBUG_RESET_RENDEZVOUS
+				put_rep->key_hash = djb2_hash((unsigned char *)task->key->key, task->key->key_size);
+#endif /* DEBUG_RESET_RENDEZVOUS */
 				put_rep->status = KREON_SUCCESS;
 			} else {
 				log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32

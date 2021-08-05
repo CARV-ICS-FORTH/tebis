@@ -1396,6 +1396,7 @@ void *poll_cq(void *arg)
 				for (i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;
+					assert(wc[i].status == IBV_WC_SUCCESS);
 					if (msg_ctx && msg_ctx->on_completion_callback) {
 						memcpy(&msg_ctx->wc, &wc[i], sizeof(struct ibv_wc));
 						msg_ctx->on_completion_callback(msg_ctx);

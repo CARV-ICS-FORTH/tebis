@@ -120,7 +120,10 @@ typedef struct msg_put_value {
 } msg_put_value;
 
 typedef struct msg_put_rep {
-	volatile uint32_t status;
+	uint32_t status;
+#ifdef DEBUG_RESET_RENDEZVOUS
+	uint64_t key_hash;
+#endif /* DEBUG_RESET_RENDEZVOUS */
 } msg_put_rep;
 
 /*update related*/
