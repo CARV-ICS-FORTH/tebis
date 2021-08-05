@@ -778,10 +778,9 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
 	for (int i = 0; i < DS_POOL_NUM; i++) {
-		struct krm_work_task *task;
-		task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-		if (task != NULL) {
-			assert(task->r_desc != NULL);
+		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		while (task) {
+			assert(task->r_desc);
 			// log_info("Rescheduling task");
 			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
 			if (rc == KREON_FAILURE) {
@@ -789,6 +788,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
+			task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
 		}
 	}
 }
