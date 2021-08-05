@@ -73,7 +73,7 @@ typedef struct prefix_table {
 } prefix_table;
 
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
-#define DS_POOL_NUM 1 // 4
+#define DS_POOL_NUM 4
 
 struct ds_task_buffer_pool {
 	pthread_mutex_t tbp_lock;

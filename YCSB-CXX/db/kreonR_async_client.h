@@ -29,6 +29,7 @@
 extern "C" {
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
 #include "../../kreon_lib/btree/btree.h"
+#include "../../utilities/queue.h"
 #include <log.h>
 
 __thread int kv_count = 0;
@@ -171,7 +172,7 @@ class kreonRAsyncClientDB : public YCSBDB {
     public:
 	void Init()
 	{
-		krc_start_async_thread(4, 1024);
+		krc_start_async_thread(16, UTILS_QUEUE_CAPACITY);
 	}
 
 	void Close()
