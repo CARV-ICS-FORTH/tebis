@@ -532,9 +532,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case TEST_REPLY_FETCH_PAYLOAD:
 			context = NULL;
 			break;
-		default: {
+		case RESET_RENDEZVOUS: {
 			/*rest I care*/
-			assert(0);
 			struct rdma_message_context *msg_ctx = malloc(sizeof(struct rdma_message_context));
 			client_rdma_init_message_context(msg_ctx, msg);
 			msg_ctx->on_completion_callback = on_completion_server;
