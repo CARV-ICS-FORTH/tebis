@@ -52,6 +52,9 @@ static uint32_t sum_operations()
 	return sum;
 }
 
+#ifdef DEBUG_RESET_RENDEZVOUS
+unsigned detected_operations = 0;
+#endif /* DEBUG_RESET_RENDEZVOUS */
 static void *stats_reporter_thread(void *args)
 {
 	pthread_setname_np(pthread_self(), "stats_reporter");
@@ -68,11 +71,14 @@ static void *stats_reporter_thread(void *args)
 		seconds_passed += STATS_SLEEP_DURATION_TIMESPEC.tv_sec;
 
 		ops_at_curr_second = sum_operations();
-		printf("%lu Sec %.2f Ops/sec\n", seconds_passed,
+#ifdef DEBUG_RESET_RENDEZVOUS
+		printf("%lu Sec %u Detected %u Completed %.2f Ops/sec\n", seconds_passed, detected_operations,
+		       ops_at_curr_second,
 		       (ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
-		fprintf(Stats_output_file, "%lu Sec %.2f Ops/sec\n", seconds_passed,
-			(ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
-		fflush(Stats_output_file);
+#else
+		printf("%lu Sec %u Completed %.2f Ops/sec\n", seconds_passed, ops_at_curr_second,
+		       (ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
+#endif /* DEBUG_RESET_RENDEZVOUS */
 		ops_at_last_second = ops_at_curr_second;
 	} while (!stat_reporter_thread_exit);
 

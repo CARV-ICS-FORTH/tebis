@@ -102,7 +102,7 @@ void *utils_queue_push(utils_queue_s *q, void *data)
 
 	i = b & (UTILS_QUEUE_CAPACITY - 1);
 	q->entries[i] = data;
-	/*__sync_synchronize();*/
+	__sync_synchronize();
 	q->bottom = b + 1;
 	/* printf("b=%u t=%u\n", ++b, t);
 	 * assert(((b >> 7) == (t >> 7)) || ((b & (UTILS_QUEUE_CAPACITY-1)) <= (t & (UTILS_QUEUE_CAPACITY)))); */

@@ -73,7 +73,7 @@ typedef struct prefix_table {
 } prefix_table;
 
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
-#define DS_POOL_NUM 1 // 4
+#define DS_POOL_NUM 4
 
 struct ds_task_buffer_pool {
 	pthread_mutex_t tbp_lock;
@@ -778,10 +778,9 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
 	for (int i = 0; i < DS_POOL_NUM; i++) {
-		struct krm_work_task *task;
-		task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-		if (task != NULL) {
-			assert(task->r_desc != NULL);
+		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		while (task) {
+			assert(task->r_desc);
 			// log_info("Rescheduling task");
 			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
 			if (rc == KREON_FAILURE) {
@@ -789,6 +788,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
+			task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
 		}
 	}
 }
@@ -971,6 +971,11 @@ static void *server_spinning_thread_kernel(void *args)
 * outsize of the rdma_memory_regions->remote_memory_buffer
 * */
 				_update_rendezvous_location(conn, message_size);
+#ifdef DEBUG_RESET_RENDEZVOUS
+				extern unsigned detected_operations;
+				if (conn->type == SERVER_TO_CLIENT_CONNECTION)
+					__sync_fetch_and_add(&detected_operations, 1);
+#endif /* DEBUG_RESET_RENDEZVOUS */
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
@@ -2130,12 +2135,14 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 				free(current);
 			}
+			/*
 			if (fsync(FD) != 0) {
 				log_fatal("Failed to sync file!");
 				perror("Reason:\n");
 				exit(EXIT_FAILURE);
 			}
 			snapshot(r_desc->db->volume_desc);
+			*/
 		}
 
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -2471,6 +2478,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				task->reply_msg->local_offset = (uint64_t)task->msg->reply;
 				task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 				msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+#ifdef DEBUG_RESET_RENDEZVOUS
+				put_rep->key_hash = djb2_hash((unsigned char *)task->key->key, task->key->key_size);
+#endif /* DEBUG_RESET_RENDEZVOUS */
 				put_rep->status = KREON_SUCCESS;
 			} else {
 				log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32

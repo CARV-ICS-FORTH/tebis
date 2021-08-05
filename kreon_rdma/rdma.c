@@ -532,9 +532,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case TEST_REPLY_FETCH_PAYLOAD:
 			context = NULL;
 			break;
-		default: {
+		case RESET_RENDEZVOUS: {
 			/*rest I care*/
-			assert(0);
 			struct rdma_message_context *msg_ctx = malloc(sizeof(struct rdma_message_context));
 			client_rdma_init_message_context(msg_ctx, msg);
 			msg_ctx->on_completion_callback = on_completion_server;
@@ -542,6 +541,10 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 			context = msg_ctx;
 			break;
 		}
+		default:
+			assert(0);
+			log_fatal("Unhandled message type %d", msg->type);
+			exit(EXIT_FAILURE);
 		}
 	} else {
 		context = (void *)msg_ctx;
@@ -1393,6 +1396,7 @@ void *poll_cq(void *arg)
 				for (i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;
+					assert(wc[i].status == IBV_WC_SUCCESS);
 					if (msg_ctx && msg_ctx->on_completion_callback) {
 						memcpy(&msg_ctx->wc, &wc[i], sizeof(struct ibv_wc));
 						msg_ctx->on_completion_callback(msg_ctx);
@@ -1444,8 +1448,10 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				case I_AM_CLIENT:
 				case RESET_RENDEZVOUS:
 					/*client staff, app will decide when staff arrives*/
+					assert(0);
 					free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
 									MESSAGE_SEGMENT_SIZE);
+					reset_circular_buffer(conn->send_circular_buf);
 					break;
 
 				case CHANGE_CONNECTION_PROPERTIES_REQUEST:

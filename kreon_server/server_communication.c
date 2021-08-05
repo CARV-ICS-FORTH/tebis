@@ -85,14 +85,31 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
            * allocate receive buffer first and then send buffer.
            */
 	/*first allocate the receive buffer, aka where we expect the reply*/
+retry_allocate_reply:
 	rep.stat = allocate_space_from_circular_buffer(conn->recv_circular_buf, actual_reply_size, &addr);
+	switch (rep.stat) {
+	case ALLOCATION_IS_SUCCESSFULL:
+	case BITMAP_RESET:
+		break;
+	case NOT_ENOUGH_SPACE_AT_THE_END:
+		reset_circular_buffer(conn->recv_circular_buf);
+		goto retry_allocate_reply;
+		break;
+	case SPACE_NOT_READY_YET:
+		goto exit;
+	}
+
+	rep.reply = (struct msg_header *)addr;
+
+retry_allocate_request:
+	rep.stat = allocate_space_from_circular_buffer(conn->send_circular_buf, actual_request_size, &addr);
 	switch (rep.stat) {
 	case NOT_ENOUGH_SPACE_AT_THE_END: {
 		log_info("Sending reset rendezvous message");
 		char *addr;
 		struct msg_header *msg;
 		/*inform remote side that to reset the rendezvous*/
-		if (allocate_space_from_circular_buffer(conn->recv_circular_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
+		if (allocate_space_from_circular_buffer(conn->send_circular_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
 		    ALLOCATION_IS_SUCCESSFULL) {
 			log_fatal("cannot send reset rendezvous");
 			exit(EXIT_FAILURE);
@@ -105,38 +122,33 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 
 		msg->receive = RESET_RENDEZVOUS;
 		msg->type = RESET_RENDEZVOUS;
-		msg->local_offset = addr - conn->recv_circular_buf->memory_region;
-		msg->remote_offset = addr - conn->recv_circular_buf->memory_region;
+		msg->local_offset = addr - conn->send_circular_buf->memory_region;
+		msg->remote_offset = addr - conn->send_circular_buf->memory_region;
 		// log_info("Sending to remote offset %llu\n", msg->remote_offset);
 		msg->ack_arrived = 0; // maybe?
 		msg->request_message_local_addr = NULL;
 		msg->reply = NULL;
 		msg->reply_length = 0;
-		__send_rdma_message(conn, msg, NULL);
-		goto exit;
+		client_send_rdma_message(conn, msg);
+		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, MESSAGE_SEGMENT_SIZE);
+		reset_circular_buffer(conn->send_circular_buf);
+		goto retry_allocate_request;
 	}
-	case ALLOCATION_IS_SUCCESSFULL:
-		break;
-	default:
-		goto exit;
-	}
-
-	rep.reply = (struct msg_header *)addr;
-
-	rep.stat = allocate_space_from_circular_buffer(conn->send_circular_buf, actual_request_size, &addr);
-	if (rep.stat != ALLOCATION_IS_SUCCESSFULL) {
+	case SPACE_NOT_READY_YET:
 		/*rollback previous allocation*/
 		free_space_from_circular_buffer(conn->recv_circular_buf, (char *)rep.reply, actual_reply_size);
 		conn->recv_circular_buf->last_addr =
 			(char *)((uint64_t)conn->recv_circular_buf->last_addr - actual_reply_size);
 		conn->recv_circular_buf->remaining_space += actual_reply_size;
 		goto exit;
+	case ALLOCATION_IS_SUCCESSFULL:
+	case BITMAP_RESET:
+		break;
 	}
+
 	rep.request = (struct msg_header *)addr;
 	/*init the headers*/
-	goto init_messages;
 
-init_messages : {
 	struct msg_header *msg;
 	struct circular_buffer *c_buf;
 	uint32_t payload_size;
@@ -190,7 +202,6 @@ init_messages : {
 		msg_type = rep_type;
 		++i;
 	}
-}
 
 	rep.request->reply = (char *)((uint64_t)rep.reply - (uint64_t)conn->recv_circular_buf->memory_region);
 	rep.request->reply_length = sizeof(msg_header) + rep.reply->pay_len + rep.reply->padding_and_tail;

@@ -1043,17 +1043,30 @@ void krc_scan_close(krc_scannerp sp)
 	return;
 }
 
+static unsigned operation_count = 0, replies_arrived = 0;
 krc_ret_code krc_close()
 {
 	if (rep_checker_stat == KRC_REPLY_CHECKER_RUNNING) {
 		/*wait to flush outstanding requests from all queues*/
 		int num_empty_queues = 0;
+		log_info("Waiting for outstanding requests...");
+		bool print = true;
+		struct timespec start, current;
+		clock_gettime(CLOCK_MONOTONIC, &start);
 		while (num_empty_queues != spinner->num_queues) {
 			num_empty_queues = 0;
+			unsigned outstanding = 0;
 			for (int i = 0; i < spinner->num_queues; i++) {
+				outstanding += spinner->queue[i]->outstanding_requests;
 				if (spinner->queue[i]->outstanding_requests == 0) {
 					++num_empty_queues;
 				}
+			}
+			clock_gettime(CLOCK_MONOTONIC, &current);
+			if (print && current.tv_sec - start.tv_sec > 5) {
+				log_info("%d: Operation count = %u, replies = %u, outstanding = %u", getpid(),
+					 operation_count, replies_arrived, outstanding);
+				print = false;
 			}
 		}
 
@@ -1073,7 +1086,6 @@ krc_ret_code krc_close()
 }
 
 /*new functions for asynchronous client related to #57*/
-
 static inline void krc_send_async_request(struct connection_rdma *conn, struct msg_header *req_header,
 					  struct msg_header *rep_header, callback t, void *context, uint32_t *buf_size,
 					  char *buf)
@@ -1103,11 +1115,13 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	req->wc_checked = false;
 	client_rdma_init_message_context(&req->msg_ctx, req->request);
 	req->msg_ctx.on_completion_callback = on_completion_client;
+	/*log_info("Sending request to %llu", req_header->remote_offset);*/
 	if (__send_rdma_message(req->conn, req->request, &req->msg_ctx) != KREON_SUCCESS) {
 		log_fatal("failed to send message");
 		exit(EXIT_FAILURE);
 	}
 	__sync_fetch_and_add(&spinner->queue[id]->outstanding_requests, 1);
+	__sync_fetch_and_add(&operation_count, 1);
 	req->is_valid = 1;
 	pthread_mutex_unlock(&spinner->queue[id]->queue_lock);
 }
@@ -1163,9 +1177,13 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 	assert(req->reply);
 	// Check WC
 	if (!req->wc_checked) {
-		if (!sem_trywait(&req->msg_ctx.wait_for_completion))
+		if (!sem_trywait(&req->msg_ctx.wait_for_completion)) {
 			req->wc_checked = true;
-		else
+			if (req->msg_ctx.wc.status != IBV_WC_SUCCESS) {
+				log_fatal("RDMA write operation failed!");
+				exit(EXIT_FAILURE);
+			}
+		} else
 			return false;
 	}
 
@@ -1186,12 +1204,20 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 		req->start_time = now;
 	}
 	size_t elapsed_sec = now.tv_sec - req->start_time.tv_sec;
-	if (elapsed_sec > 10 && _krc_send_heartbeat(req->conn->rdma_cm_id) != KREON_SUCCESS) {
+	/*if (elapsed_sec > 10 && _krc_send_heartbeat(req->conn->rdma_cm_id) != KREON_SUCCESS) {*/
+#if 0
+	if (elapsed_sec > 10) {
 		req->start_time = now;
-		log_fatal("Kreon dataserver has failed!");
-		exit(EXIT_FAILURE);
+		if (req->reply->receive == TU_RDMA_REGULAR_MSG) {
+			log_info("pay_len = %d, padding_and_tail = %d", req->reply->pay_len,
+				 req->reply->padding_and_tail);
+		} else {
+			log_info("Message header has not arrived");
+		}
+		/*log_fatal("Kreon dataserver has failed!");*/
+		/*exit(EXIT_FAILURE);*/
 	}
-
+#endif
 	return false;
 }
 
@@ -1254,9 +1280,20 @@ static void *krc_reply_checker(void *args)
 					continue;
 
 				switch (req->reply->type) {
-				case PUT_REPLY:
+				case PUT_REPLY: {
+					/*log_info("check reply");*/
+#ifdef DEBUG_RESET_RENDEZVOUS
+					msg_put_key *key =
+						(msg_put_key *)((char *)req->request + sizeof(struct msg_header));
+					uint64_t key_hash = djb2_hash((unsigned char *)key->key, key->key_size);
+					msg_put_rep *put_rep =
+						(msg_put_rep *)((char *)req->reply + sizeof(struct msg_header));
+					assert(key_hash == put_rep->key_hash);
+#endif /* DEBUG_RESET_RENDEZVOUS */
+					/*log_info("check reply done");*/
 					//you should check ret code
 					break;
+				}
 				case GET_REPLY: {
 					/*uint32_t size = TU_HEADER_SIZE + req->reply->pay_len +*/
 					/*req->reply->padding_and_tail;*/
@@ -1291,13 +1328,14 @@ static void *krc_reply_checker(void *args)
 				_zero_rendezvous_locations_l(req->reply, req->request->reply_length);
 				krc_free_rpc_buffers(req->conn, req->request, req->reply);
 				req->conn = NULL;
-				//memset(req, 0x00, sizeof(struct krc_async_req));
+				memset(req, 0, sizeof(struct krc_async_req));
 				req->is_valid = 0;
 				__sync_fetch_and_sub(&spinner->queue[i]->outstanding_requests, 1);
 				if (utils_queue_push(&spinner->queue[i]->avail_buffers, req) == NULL) {
 					log_fatal("Failed to return buffer!");
 					exit(EXIT_FAILURE);
 				}
+				__sync_fetch_and_add(&replies_arrived, 1);
 				//assert(req->id == next_id);
 				//assert(req->id == next_id);
 				//++next_id;
