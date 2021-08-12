@@ -29,8 +29,9 @@
 #include "timer.h"
 #include "client.h"
 #include "core_workload.h"
-#define COMPUTE_TAIL
-#ifdef COMPUTE_TAIL
+#define COMPUTE_TAIL_ASYNC
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
+const char *Op2Str[] = { "LOAD", "READ", "UPDATE", "INSERT", "SCAN", "READMODIFYWRITE" };
 #include "Measurements.hpp"
 #endif
 
@@ -41,7 +42,7 @@ using namespace std;
 unsigned priv_thread_count;
 int db_num = 1;
 ofstream ofil;
-#ifdef COMPUTE_TAIL
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 Measurements *tail = nullptr;
 #endif
 
@@ -172,7 +173,7 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::atomic_bool cancellation_token(false);
 	std::vector<uint64_t> ops_data;
 
-#ifdef COMPUTE_TAIL
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail = new Measurements(num_threads);
 	tail->ResetStatistics();
 #endif
@@ -209,7 +210,7 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 	reporter.join();
 	std::cout << "Executed " << sum << " operations." << std::endl;
 
-#ifdef COMPUTE_TAIL
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);
 	//delete tail;
 	tail = nullptr;
@@ -225,7 +226,7 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::atomic_bool cancellation_token(false);
 	std::vector<uint64_t> ops_data;
 
-#ifdef COMPUTE_TAIL
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail = new Measurements(num_threads);
 	tail->ResetStatistics();
 #endif
@@ -261,7 +262,7 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 	reporter.join();
 	std::cout << "Executed " << sum << " operations." << std::endl;
 
-#ifdef COMPUTE_TAIL
+#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);
 	//delete tail;
 	tail = nullptr;
