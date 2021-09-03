@@ -43,7 +43,8 @@ krc_ret_code krc_init(char *zookeeper_ip, int zk_port);
 krc_ret_code krc_close(void);
 
 krc_ret_code krc_put(uint32_t key_size, void *key, uint32_t val_size, void *value);
-krc_ret_code krc_put_with_offset(uint32_t key_size, void *key, uint32_t offset, uint32_t val_size, void *value);
+krc_ret_code krc_put_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value);
+//krc_ret_code krc_put_with_offset(uint32_t key_size, void *key, uint32_t offset, uint32_t val_size, void *value);
 //krc_value *krc_get(uint32_t key_size, void *key, uint32_t reply_length, uint32_t *error_code);
 //krc_value *krc_get_with_offset(uint32_t key_size, void *key, uint32_t offset, uint32_t size, uint32_t *error_code);
 krc_ret_code krc_get(uint32_t key_size, char *key, char **buffer, uint32_t *size, uint32_t offset);
@@ -64,4 +65,6 @@ void krc_scan_close(krc_scannerp sc);
 uint8_t krc_start_async_thread(int num_queues, int bufs_per_queue);
 typedef void (*callback)(void *);
 krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context);
+krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
+				void *context);
 krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context);

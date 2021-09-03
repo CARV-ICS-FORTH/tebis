@@ -8,7 +8,7 @@
 #define LATENCY_ARRAY_LEN 100000
 
 enum Op { LOAD = 0, READ = 1, UPDATE = 2, INSERT = 3, SCAN = 4, READMODIFYWRITE = 5, MAXOPS = 6 };
-const char *Op2Str[] = { "LOAD", "READ", "UPDATE", "INSERT", "SCAN", "READMODIFYWRITE" };
+extern const char *Op2Str[];
 
 class OperationStatistics {
     public:

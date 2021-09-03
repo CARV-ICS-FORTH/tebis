@@ -16,6 +16,7 @@
 #include <atomic>
 #include <functional>
 #include <unordered_map>
+#include <time.h>
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -25,6 +26,11 @@
 
 #include "../core/properties.h"
 #include "workload_gen.h"
+// FIXME definition of COMPUTE_TAIL(_ASYNC) should be done in cmake
+#define COMPUTE_TAIL_ASYNC
+#ifdef COMPUTE_TAIL_ASYNC
+#include "../core/Measurements.hpp"
+#endif
 
 extern "C" {
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
@@ -33,6 +39,41 @@ extern "C" {
 #include <log.h>
 
 __thread int kv_count = 0;
+
+typedef void (*op_callback_function)(void *);
+
+#ifdef COMPUTE_TAIL_ASYNC
+struct compute_tail_callback_args {
+	struct timespec start;
+	int id;
+	Op opcode;
+	void *op_callback_args;
+	op_callback_function op_callback;
+};
+
+void timespec_diff(struct timespec *start, struct timespec *stop, struct timespec *result)
+{
+	if ((stop->tv_nsec - start->tv_nsec) < 0) {
+		result->tv_sec = stop->tv_sec - start->tv_sec - 1;
+		result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000;
+	} else {
+		result->tv_sec = stop->tv_sec - start->tv_sec;
+		result->tv_nsec = stop->tv_nsec - start->tv_nsec;
+	}
+
+	return;
+}
+
+void compute_tail_callback(void *args)
+{
+	extern Measurements *tail;
+	struct compute_tail_callback_args *ar = (struct compute_tail_callback_args *)args;
+	struct timespec end, diff;
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	timespec_diff(&ar->start, &end, &diff);
+	tail->addLatency(ar->id, ar->opcode, 1000000 * diff.tv_sec + diff.tv_nsec / 1000);
+}
+#endif
 
 void put_callback(void *cnxt)
 {
@@ -210,8 +251,20 @@ class kreonRAsyncClientDB : public YCSBDB {
 #ifdef COUNT_REQUESTS_PER_REGION
 		__sync_fetch_and_add(&region_requests[region_id], 1);
 #endif
+		op_callback_function callback = get_callback;
+		void *callback_args = g;
+#ifdef COMPUTE_TAIL_ASYNC
+		struct compute_tail_callback_args *args = new struct compute_tail_callback_args;
+		args->id = id;
+		args->opcode = (enum Op)1; // Op::READ
+		args->op_callback_args = (void *)g;
+		args->op_callback = get_callback;
+		callback = compute_tail_callback;
+		callback_args = args;
+		clock_gettime(CLOCK_MONOTONIC, &args->start);
+#endif
 		enum krc_ret_code code = krc_aget(prefix_key.length(), (char *)prefix_key.c_str(), &g->buf_size, g->buf,
-						  get_callback, g);
+						  callback, callback_args);
 		if (code != KRC_SUCCESS) {
 			log_fatal("problem with key %s", key.c_str());
 			exit(EXIT_FAILURE);
@@ -286,9 +339,6 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
 	{
-#if 1
-		return Insert(id, table, key, values);
-#else
 		static std::string value3(1000, 'a');
 		static std::string value2(100, 'a');
 		static std::string value(5, 'a');
@@ -318,13 +368,24 @@ class kreonRAsyncClientDB : public YCSBDB {
 
 		int region_id = djb2_hash((unsigned char *)key.c_str(), key.length()) % regions_total;
 		std::string prefix_key = std::string(region_prefixes_map[region_id]) + key;
+		op_callback_function callback = put_callback;
+		void *callback_args = &reply_counter;
+#ifdef COMPUTE_TAIL_ASYNC
+		struct compute_tail_callback_args *args = new struct compute_tail_callback_args;
+		args->id = id;
+		args->opcode = (enum Op)2; // Op::Update
+		args->op_callback_args = (void *)&reply_counter;
+		args->op_callback = put_callback;
+		callback = compute_tail_callback;
+		callback_args = args;
+		clock_gettime(CLOCK_MONOTONIC, &args->start);
+#endif
 		if (krc_aput_if_exists(prefix_key.length(), (void *)prefix_key.c_str(), value_size, (void *)value_buf,
-				       put_callback, &reply_counter) != KRC_SUCCESS) {
+				       callback, callback_args) != KRC_SUCCESS) {
 			log_fatal("Put failed for key %s", key.c_str());
 			exit(EXIT_FAILURE);
 		}
 		return 0;
-#endif
 	}
 
 	int Insert(int id, const std::string &table /*ignored*/, const std::string &key, std::vector<KVPair> &values)
@@ -361,8 +422,20 @@ class kreonRAsyncClientDB : public YCSBDB {
 #ifdef COUNT_REQUESTS_PER_REGION
 		__sync_fetch_and_add(&region_requests[region_id], 1);
 #endif
-		if (krc_aput(prefix_key.length(), (void *)prefix_key.c_str(), value_size, (void *)value_buf,
-			     put_callback, &reply_counter) != KRC_SUCCESS) {
+		op_callback_function callback = put_callback;
+		void *callback_args = &reply_counter;
+#ifdef COMPUTE_TAIL_ASYNC
+		struct compute_tail_callback_args *args = new struct compute_tail_callback_args;
+		args->id = id;
+		args->opcode = (enum Op)3; // Op::INSERT
+		args->op_callback_args = (void *)&reply_counter;
+		args->op_callback = put_callback;
+		callback = compute_tail_callback;
+		callback_args = args;
+		clock_gettime(CLOCK_MONOTONIC, &args->start);
+#endif
+		if (krc_aput(prefix_key.length(), (void *)prefix_key.c_str(), value_size, (void *)value_buf, callback,
+			     callback_args) != KRC_SUCCESS) {
 			log_fatal("Put failed for key %s", key.c_str());
 			exit(EXIT_FAILURE);
 		}

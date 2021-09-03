@@ -2427,10 +2427,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		break;
 	}
 	case PUT_REQUEST:
+	case PUT_IF_EXISTS_REQUEST:
 
-		/* retrieve region handle for the corresponding key, find_region
-* initiates internally rdma connections if needed
-*/
+		//retrieve region handle for the corresponding key, find_region
+		//initiates internally rdma connections if needed
 		if (task->key == NULL) {
 			task->key = (msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
 			task->value =
@@ -2444,6 +2444,15 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				exit(EXIT_FAILURE);
 			}
 			task->r_desc = (void *)r_desc;
+
+			if (task->msg->type == PUT_IF_EXISTS_REQUEST) {
+				int level_id;
+				if (find_kv_offt(r_desc->db, &task->key, &level_id)) {
+					log_warn("Key %s in update_if_exists for region %s not found!", task->key,
+						 r_desc->region->id);
+					exit(EXIT_FAILURE);
+				}
+			}
 		}
 
 		if (!init_replica_connections(mydesc, task))
