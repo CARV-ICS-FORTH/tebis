@@ -309,11 +309,11 @@ Git commit message template
 
 
 # Using cgroups to Limit Available Memory
-You can use `cgroups` to limit the memory available to a process by running the 
+You can use `cgroups` to limit the memory available to a process by running the
 process using `systemd-run`. In addition to memory allocations, pages in the Linux
 kernel's buffer cache count towards the `cgroups` memory limit. Example usage:
 ```
 # systemd-run --unit=unit0 --scope --slice=slice0 --property MemoryLimit=16G <command>
 ```
-Starting a `systemd` unit requires root privileges. The above example will limit the 
-memory available to a command (including pages in the buffer cache) to 16GB.
+Starting a `systemd` unit requires root privileges. The above example will limit
+the memory available to a command (including pages in the buffer cache) to 16GB.
