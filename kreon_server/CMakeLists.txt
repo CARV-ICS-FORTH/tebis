@@ -15,8 +15,7 @@ set_source_files_properties(../utilities/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                                 "-O0")
 
 set(CMAKE_EXE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lzookeeper_mt -lrt"
-)
+    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lrt")
 add_definitions(-DKREONR)
 
 add_library(
@@ -82,15 +81,17 @@ add_executable(
   server_communication.c
   ../kreon_rdma/rdma.c
   stats.c)
-target_link_libraries(kreon_server kreon_rdma kreonr log)
+add_dependencies(kreon_server cjson)
+target_link_libraries(kreon_server kreon_rdma kreonr log ${Zookeeper_LIBRARY}
+                      ${cjson_LIBRARY})
 
 add_executable(create_region create_region.c zk_utils.c
                              ../utilities/spin_loop.c)
-target_link_libraries(create_region log)
+target_link_libraries(create_region log ${Zookeeper_LIBRARY})
 
 add_executable(create_server_node create_server_node.c zk_utils.c
                                   ../utilities/spin_loop.c)
-target_link_libraries(create_server_node log)
+target_link_libraries(create_server_node log ${Zookeeper_LIBRARY})
 
 # add_executable( create_regions create_regions.c create_regions_utils.c
 # zk_string_vector.c network_data.c regions.c globals.c ../utilities/queue.c

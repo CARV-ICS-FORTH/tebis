@@ -34,11 +34,17 @@ target_link_libraries(test_circular_buffer log)
 # Targets with dependencies to Zookeeper should be added in this if block
 if(Zookeeper_LIBRARY)
   add_executable(test_krc_api test_krc_api.c)
-  target_link_libraries(test_krc_api kreon_client kreon_rdma kreonr log)
+  target_link_libraries(
+    test_krc_api
+    kreon_client
+    kreon_rdma
+    kreonr
+    log
+    ${Zookeeper_LIBRARY}
+    ${cjson_LIBRARY})
   set_target_properties(
     test_krc_api
-    PROPERTIES
-      LINK_FLAGS
-      "-Wl,-no-as-needed -pthread -lm -lzookeeper_mt -lnuma -lrdmacm -libverbs"
-      COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
+    PROPERTIES LINK_FLAGS
+               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
+               COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
 endif()

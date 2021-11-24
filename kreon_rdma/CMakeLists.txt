@@ -17,7 +17,7 @@ if(CMAKE_BUILD_TYPE EQUAL "Release")
 endif()
 
 set(CMAKE_SHARED_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lzookeeper_mt")
+    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm")
 
 add_library(
   kreon_rdma STATIC
