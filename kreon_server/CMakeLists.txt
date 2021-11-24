@@ -37,6 +37,7 @@ add_library(
   ../kreon_rdma_client/kreon_rdma_client.c
   zk_utils.c
   djb2.c)
+add_dependencies(kreon_client cjson)
 
 add_library(
   kreon_client-shared
@@ -57,6 +58,7 @@ add_library(
   ../kreon_rdma_client/kreon_rdma_client.c
   zk_utils.c
   djb2.c)
+add_dependencies(kreon_client-shared cjson)
 
 add_executable(
   kreon_server

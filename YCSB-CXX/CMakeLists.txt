@@ -19,6 +19,7 @@ if(Zookeeper_LIBRARY)
     libbloom
     ${Zookeeper_LIBRARY}
     ${cjson_LIBRARY})
+  add_dependencies(ycsb-blocking-kreon cjson)
   set_target_properties(
     ycsb-blocking-kreon
     PROPERTIES LINK_FLAGS
@@ -28,7 +29,6 @@ if(Zookeeper_LIBRARY)
   add_executable(
     ycsb-async-kreon db/db_factory_async_kreonR.cc core/core_workload.cc
                      driver/ycsbc.cc ../kreon_server/globals.c)
-
   add_dependencies(ycsb-async-kreon cjson)
   target_link_libraries(
     ycsb-async-kreon

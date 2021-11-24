@@ -6,6 +6,7 @@ set(CMAKE_EXE_LINKER_FLAGS
     "-Wl,--no-as-needed -lm -lrt -pthread -lnuma -libverbs -lrdmacm")
 
 add_executable(throughput_bench throughput_bench.c ../kreon_server/globals.c)
+add_dependencies(throughput_bench cjson)
 target_link_libraries(
   throughput_bench
   kreon_client
@@ -17,6 +18,7 @@ target_link_libraries(
 
 add_executable(latency_bench throughput_bench.c ../kreon_server/globals.c
                              ../utilities/latency_monitor.c)
+add_dependencies(latency_bench cjson)
 target_link_libraries(
   latency_bench
   kreon_client

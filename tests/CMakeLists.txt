@@ -42,6 +42,7 @@ if(Zookeeper_LIBRARY)
     log
     ${Zookeeper_LIBRARY}
     ${cjson_LIBRARY})
+  add_dependencies(test_krc_api cjson)
   set_target_properties(
     test_krc_api
     PROPERTIES LINK_FLAGS
