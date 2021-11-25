@@ -5,7 +5,7 @@ import os
 import sys
 
 host = "https://carvgit.ics.forth.gr"
-token = base64.b32decode(os.environ["CID_TOKEN"])
+token = str(base64.b32decode(os.environ["CID_TOKEN"]).decode("utf-8"))
 project = os.environ["CI_PROJECT_PATH"]
 branch = os.environ["CI_BUILD_REF_NAME"]
 commit_sha = os.environ["CI_COMMIT_SHA"]
