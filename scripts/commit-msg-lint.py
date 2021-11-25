@@ -14,9 +14,9 @@ user_email = os.environ["GITLAB_USER_EMAIL"]
 pipeline_id = os.environ["CI_PIPELINE_ID"]
 
 with gitlab.Gitlab(host, private_token=token) as gl:
-    kreon = gl.projects.get(project)
-    commits = kreon.commits.list(ref_name=branch)
-    master_commits = kreon.commits.list(ref_name="master")
+    tebis = gl.projects.get(project)
+    commits = tebis.commits.list(ref_name=branch)
+    master_commits = tebis.commits.list(ref_name="master")
     new_commits = []
 
     for c in commits:
