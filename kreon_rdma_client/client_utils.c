@@ -9,6 +9,7 @@
 #include "../kreon_server/djb2.h"
 #include "client_utils.h"
 #include <log.h>
+#include <cJSON.h>
 
 static int cu_is_connected = 0;
 static zhandle_t *cu_zh = NULL;
@@ -30,7 +31,7 @@ static void _cu_zk_watcher(zhandle_t *zkh, int type, int state, const char *path
 	}
 }
 
-static uint8_t _cu_insert_region(struct cu_regions *regions, struct cu_region_desc *c_region)
+static uint8_t cu_insert_region(struct cu_regions *regions, struct cu_region_desc *c_region)
 {
 	int64_t ret;
 	int start_idx = 0;
@@ -92,8 +93,48 @@ exit:
 	return rc;
 }
 
-uint8_t _cu_fetch_region_table()
+static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_name *dst)
 {
+	char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
+	struct Stat stat;
+	char buffer[2048];
+	int buffer_len = 2048;
+	int rc = zoo_get(cu_zh, server_path, 0, buffer, &buffer_len, &stat);
+	free(server_path);
+	if (rc != ZOK)
+		return -1;
+
+	// Parse json string with server's krm_server_name struct
+	cJSON *server_json = cJSON_ParseWithLength(buffer, buffer_len);
+	if (!cJSON_IsObject(server_json)) {
+		cJSON_Delete(server_json);
+		return -1;
+	}
+
+	cJSON *hostname = cJSON_GetObjectItem(server_json, "hostname");
+	cJSON *dataserver_name_retrieved = cJSON_GetObjectItem(server_json, "dataserver_name");
+	cJSON *rdma_ip = cJSON_GetObjectItem(server_json, "rdma_ip_addr");
+	cJSON *epoch = cJSON_GetObjectItem(server_json, "epoch");
+	cJSON *leader = cJSON_GetObjectItem(server_json, "leader");
+	if (!cJSON_IsString(hostname) || !cJSON_IsString(dataserver_name_retrieved) || !cJSON_IsString(rdma_ip) ||
+	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
+		cJSON_Delete(server_json);
+		return -1;
+	}
+	strncpy(dst->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
+	strncpy(dst->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
+	dst->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
+	strncpy(dst->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE);
+	dst->epoch = cJSON_GetNumberValue(epoch);
+	strncpy(dst->kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE);
+
+	cJSON_Delete(server_json);
+	return 0;
+}
+
+static uint8_t cu_fetch_region_table(void)
+{
+	// FIXME rewrite to work with the new json string format
 	struct cu_region_desc r_desc;
 	char *region = NULL;
 	struct Stat stat;
@@ -107,37 +148,77 @@ uint8_t _cu_fetch_region_table()
 	memset(&client_regions, 0x00, sizeof(struct cu_regions));
 	/*get regions and fix table*/
 	char *regions_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_REGIONS_PATH);
-	struct String_vector *regions = (struct String_vector *)malloc(sizeof(struct String_vector));
-	int rc = zoo_get_children(cu_zh, regions_path, 0, regions);
+	struct String_vector regions;
+	int rc = zoo_get_children(cu_zh, regions_path, 0, &regions);
 	if (rc != ZOK) {
 		log_warn("Can't fetch regions from zookeeper path %s error code %s", regions_path, zku_op2String(rc));
 		ret = 0;
 		goto exit;
 	}
 	int i;
-	int buffer_len = sizeof(struct krm_region);
 	client_regions.num_regions = 0;
-	for (i = 0; i < regions->count; i++) {
-		/*iterate old mails and delete them*/
-		region = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGIONS_PATH, KRM_SLASH, regions->data[i]);
-
-		buffer_len = sizeof(struct krm_msg);
-		rc = zoo_get(cu_zh, region, 0, (char *)&r_desc.region, &buffer_len, &stat);
+	// Iterate region entries to build the region table
+	char region_json_string[2048];
+	memset(region_json_string, 0, sizeof(region_json_string));
+	for (int i = 0; i < regions.count; i++) {
+		char *region_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGIONS_PATH, KRM_SLASH, regions.data[i]);
+		int region_json_string_length = sizeof(region_json_string);
+		rc = zoo_get(cu_zh, region_path, 0, region_json_string, &region_json_string_length, &stat);
 		if (rc != ZOK) {
-			log_warn("Failed to fetch region info %s with code %s", region, zku_op2String(rc));
-			ret = 0;
-			goto exit;
+			log_fatal("Failed to retrieve region %s from Zookeeper", region_path);
+			exit(EXIT_FAILURE);
+		} else if (stat.dataLength > sizeof(region_json_string)) {
+			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
+				  "Json region entry length is %d and buffer size is %d",
+				  stat.dataLength, sizeof(region_json_string));
+			exit(EXIT_FAILURE);
 		}
-		_cu_insert_region(&client_regions, &r_desc);
-		free(region);
-		region = NULL;
+		cJSON *region_json = cJSON_ParseWithLength(region_json_string, region_json_string_length);
+		if (cJSON_IsInvalid(region_json)) {
+			log_fatal("Failed to parse json string %s of region %s", region_json_string, region_path);
+			exit(EXIT_FAILURE);
+		}
+		cJSON *id = cJSON_GetObjectItem(region_json, "id");
+		cJSON *min_key = cJSON_GetObjectItem(region_json, "min_key");
+		cJSON *max_key = cJSON_GetObjectItem(region_json, "max_key");
+		cJSON *primary = cJSON_GetObjectItem(region_json, "primary");
+		cJSON *backups = cJSON_GetObjectItem(region_json, "backups");
+		cJSON *status = cJSON_GetObjectItem(region_json, "status");
+		if (!cJSON_IsString(id) || !cJSON_IsString(min_key) || !cJSON_IsString(max_key) ||
+		    !cJSON_IsString(primary) || !cJSON_IsArray(backups) || !cJSON_IsNumber(status)) {
+			log_fatal("Failed to parse json string of region %s", region_path);
+			exit(EXIT_FAILURE);
+		}
+		struct krm_region r;
+		strncpy(r.id, cJSON_GetStringValue(id), KRM_MAX_REGION_ID_SIZE);
+		strncpy(r.min_key, cJSON_GetStringValue(min_key), KRM_MAX_KEY_SIZE);
+		if (!strcmp(r.min_key, "-oo")) {
+			memset(r.min_key, 0, KRM_MAX_KEY_SIZE);
+			r.min_key_size = 1;
+		} else {
+			r.min_key_size = strlen(r.min_key);
+		}
+		strncpy(r.max_key, cJSON_GetStringValue(max_key), KRM_MAX_KEY_SIZE);
+		r.max_key_size = strlen(r.max_key);
+		r.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
+		// Find primary's krm_server_name struct
+		int rc = cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary);
+		if (rc != 0) {
+			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
+			exit(EXIT_FAILURE);
+		}
+
+		r_desc.region = r;
+		cu_insert_region(&client_regions, &r_desc);
+
+		cJSON_Delete(region_json);
+		free(region_path);
 	}
 exit:
 
 	if (!region)
 		free(region);
 	free(regions_path);
-	free(regions);
 	ret = 1;
 	return ret;
 }
@@ -167,7 +248,7 @@ uint8_t cu_init(char *zookeeper_ip, int zk_port)
 	free(zk_host_port);
 	cu_zh = zookeeper_init(globals_get_zk_host(), _cu_zk_watcher, 15000, 0, 0, 0);
 	wait_for_value((uint32_t *)&cu_is_connected, 1);
-	_cu_fetch_region_table();
+	cu_fetch_region_table();
 	return 1;
 }
 
@@ -230,7 +311,7 @@ struct cu_region_desc *cu_get_first_region(void)
 	return &cli_regions->r_desc[0];
 }
 
-static void _cu_add_conn_for_server(struct krm_server_name *server, uint64_t hash_key)
+static void cu_add_conn_for_server(struct krm_server_name *server, uint64_t hash_key)
 {
 	char *host = server->RDMA_IP_addr;
 	//log_info("Connection to RDMA IP %s", server->RDMA_IP_addr);
@@ -267,22 +348,19 @@ retry:
 		HASH_FIND_PTR(client_regions.root_cps, &hash_key, cps);
 		if (cps == NULL) {
 			/*Refresh your knowledge about the server*/
-			struct Stat stat;
-			char *primary = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH,
-							   r_desc->region.primary.kreon_ds_hostname);
-
-			int buffer_len = sizeof(struct krm_server_name);
-			int rc = zoo_get(cu_zh, primary, 0, (char *)&r_desc->region.primary, &buffer_len, &stat);
-			if (rc != ZOK) {
-				log_warn("Failed to refresh server info %s with code %s", primary, zku_op2String(rc));
-				free(primary);
+			// FIXME fix for new json format. refactor code in cu_fetch_region_table into a function
+			int rc = cu_fetch_zk_server_entry(r_desc->region.primary.kreon_ds_hostname,
+							  &r_desc->region.primary);
+			if (rc) {
+				log_warn("Failed to refresh server info %s from zookeeper",
+					 r_desc->region.primary.kreon_ds_hostname);
 				//++client_regions.lc_conn.c2;
 				pthread_mutex_unlock(&client_regions.conn_lock);
 				return NULL;
 			}
 			//log_info("RDMA addr = %s", r_desc->region.primary.RDMA_IP_addr);
 			++client_regions.lc_conn.c1;
-			_cu_add_conn_for_server(&r_desc->region.primary, hash_key);
+			cu_add_conn_for_server(&r_desc->region.primary, hash_key);
 			++client_regions.lc_conn.c2;
 		}
 		pthread_mutex_unlock(&client_regions.conn_lock);
@@ -291,7 +369,7 @@ retry:
 	return cps->connections[seed % globals_get_connections_per_server()];
 }
 
-void cu_close_open_connections()
+void cu_close_open_connections(void)
 {
 	struct cu_conn_per_server *current = NULL;
 	struct cu_conn_per_server *tmp = NULL;

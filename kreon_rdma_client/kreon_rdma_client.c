@@ -57,7 +57,8 @@ struct krc_scanner {
 static char neg_infinity[1] = { 0 };
 static char *pos_infinity = "+oo";
 
-ZooLogLevel logLevel = ZOO_LOG_LEVEL_ERROR;
+/*extern ZooLogLevel logLevel;*/
+/*logLevel = ZOO_LOG_LEVEL_ERROR;*/
 
 static int krc_lib_init = 0;
 static pthread_mutex_t lib_lock = PTHREAD_MUTEX_INITIALIZER;

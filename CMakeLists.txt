@@ -45,9 +45,27 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/innerout/libbloom
   GIT_TAG cmake)
 
+# Using FetchContent_Declare results in build failed because both 'json-c' and
+# 'log' have a target called 'uninstall'
+ExternalProject_Add(
+  cjson
+  GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+  GIT_TAG v1.7.15
+  SOURCE_DIR _deps/cjson-src
+  BINARY_DIR _deps/cjson-build
+  CMAKE_ARGS -DENABLE_CJSON_TEST=OFF -DBUILD_SHARED_LIBS=OFF
+             -DCMAKE_INSTALL_PREFIX=.
+  # BUILD_COMMAND is invoked in BINARY_DIR, hence the '--build .'
+)
+ExternalProject_Get_Property(cjson BINARY_DIR)
+ExternalProject_Get_Property(cjson SOURCE_DIR)
+include_directories(${SOURCE_DIR})
+set(cjson_LIBRARY ${BINARY_DIR}/libcjson.a)
+
 FetchContent_GetProperties(uthash)
 FetchContent_GetProperties(log)
 FetchContent_GetProperties(libbloom)
+FetchContent_GetProperties(cjson)
 
 if(NOT uthash_POPULATED)
   FetchContent_Populate(uthash)
@@ -74,7 +92,7 @@ find_path(Zookeeper_INCLUDE_DIR zookeeper.h /usr/local/include /usr/include
           /usr/include/zookeeper)
 find_library(
   Zookeeper_LIBRARY
-  NAMES zookeeper_mt
+  NAMES libzookeeper_mt.a
   PATHS ${Zookeeper_LIB_PATHS})
 
 if(NOT Zookeeper_INCLUDE_DIR)
@@ -87,7 +105,7 @@ endif()
 if(NOT Zookeeper_LIBRARY)
   message("Could not find zookeeper lib needs >= 3.4.5")
 else()
-  message("Zookeeper headers at ${Zookeeper_LIBRARY}")
+  message("Zookeeper library at ${Zookeeper_LIBRARY}")
 endif()
 
 # Paths set(ZK_C_LIB "/home1/public/mvard/zookeeper_c")
@@ -105,15 +123,14 @@ endif()
 
 include_directories(${CMAKE_BINARY_DIR})
 set(CMAKE_C_FLAGS_RELEASE "-std=gnu11 -Wall")
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -g ")
+set(CMAKE_C_FLAGS_DEBUG
+    "${CMAKE_C_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
 set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -g")
+set(CMAKE_CXX_FLAGS_DEBUG
+    "${CMAKE_CXX_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
 
-# set(CMAKE_C_FLAGS "-fsanitize=address -fsanitize=leak -static-libasan
-# ${CMAKE_C_FLAGS}") set(CMAKE_CXX_FLAGS "-fsanitize=address -fsanitize=leak
-# -static-libasan ${CMAKE_CXX_FLAGS}") set(CMAKE_C_FLAGS "-fsanitize=leak
-# -static-libasan ${CMAKE_C_FLAGS}") set(CMAKE_CXX_FLAGS "-fsanitize=leak
-# -static-libasan ${CMAKE_CXX_FLAGS}")
+# set(CMAKE_C_FLAGS "-fsanitize=address -static-libasan") set(CMAKE_CXX_FLAGS
+# "-fsanitize=address -static-libasan")
 
 if(Zookeeper_LIBRARY)
   add_subdirectory(kreon_rdma)
