@@ -27,7 +27,7 @@
 #include "../core/properties.h"
 #include "workload_gen.h"
 // FIXME definition of COMPUTE_TAIL(_ASYNC) should be done in cmake
-#define COMPUTE_TAIL_ASYNC
+//#define COMPUTE_TAIL_ASYNC
 #ifdef COMPUTE_TAIL_ASYNC
 #include "../core/Measurements.hpp"
 #endif
