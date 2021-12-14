@@ -49,12 +49,11 @@ int main(int argc, char *argv[])
 	uint32_t error_code;
 
 	if (argc != 2) {
-		log_fatal("Wrong format test_krc_api <zookeeper_host> (assumes port 2181)");
+		log_fatal("Usage: %s zookeeper_host:zookeeper_port", argv[0]);
 		exit(EXIT_FAILURE);
 	}
-	strcpy(ZOOKEEPER, argv[1]);
 
-	if (krc_init(ZOOKEEPER, 2181) != KRC_SUCCESS) {
+	if (krc_init(argv[1]) != KRC_SUCCESS) {
 		log_fatal("Failed to init library");
 		exit(EXIT_FAILURE);
 	}

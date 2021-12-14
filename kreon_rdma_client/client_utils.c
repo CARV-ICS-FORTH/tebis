@@ -155,7 +155,6 @@ static uint8_t cu_fetch_region_table(void)
 		ret = 0;
 		goto exit;
 	}
-	int i;
 	client_regions.num_regions = 0;
 	// Iterate region entries to build the region table
 	char region_json_string[2048];
@@ -223,29 +222,18 @@ exit:
 	return ret;
 }
 
-uint8_t cu_init(char *zookeeper_ip, int zk_port)
+uint8_t cu_init(char *zookeeper_host)
 {
 	LIBRARY_MODE = CLIENT_MODE;
 	pthread_mutex_init(&client_regions.r_lock, NULL);
 	pthread_mutex_init(&client_regions.conn_lock, NULL);
 	globals_create_rdma_channel();
-	/*channel related initializations*/
-	//struct channel_rdma *channel = globals_get_rdma_channel();
-
-	//channel->spinning_num_th = 1;
-
-	/**/
 	client_regions.lc.c1 = 0;
 	client_regions.lc.c2 = 0;
 	client_regions.lc_conn.c1 = 0;
 	client_regions.lc_conn.c2 = 0;
-	char *zk_host_port = malloc(strlen(zookeeper_ip) + 16);
-	strcpy(zk_host_port, zookeeper_ip);
-	*(char *)(zk_host_port + strlen(zookeeper_ip)) = ':';
-	sprintf(zk_host_port + strlen(zookeeper_ip) + 1, "%d", zk_port);
-	//log_info("Initializing, connectiong to zookeeper at %s", zk_host_port);
-	globals_set_zk_host(zk_host_port);
-	free(zk_host_port);
+	/*log_info("Initializing, connectiong to zookeeper at %s", zk_host_port);*/
+	globals_set_zk_host(zookeeper_host);
 	cu_zh = zookeeper_init(globals_get_zk_host(), _cu_zk_watcher, 15000, 0, 0, 0);
 	wait_for_value((uint32_t *)&cu_is_connected, 1);
 	cu_fetch_region_table();

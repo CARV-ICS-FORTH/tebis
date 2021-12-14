@@ -228,26 +228,12 @@ static int _krc_wait_for_message_reply(struct msg_header *req, struct connection
 	return KREON_SUCCESS;
 }
 
-krc_ret_code krc_init(char *zookeeper_ip, int zk_port)
+krc_ret_code krc_init(char *zookeeper_host)
 {
 	if (!krc_lib_init) {
 		pthread_mutex_lock(&lib_lock);
 		if (!krc_lib_init) {
-			cu_init(zookeeper_ip, zk_port);
-			//char *zk_host_port = malloc(strlen(zookeeper_ip) + 16);
-			//strcpy(zk_host_port, zookeeper_ip);
-			//*(char *)(zk_host_port + strlen(zookeeper_ip)) = ':';
-			//sprintf(zk_host_port + strlen(zookeeper_ip) + 1, "%d", zk_port);
-			//log_info("Initializing, connectiong to zookeeper at %s", zk_host_port);
-			//globals_set_zk_host(zk_host_port);
-			//free(zk_host_port);
-			//old school
-			//client_regions = Allocate_Init_Client_Regions();
-			//while (client_regions->num_regions_connected < 1) {
-			//	log_warn("No regions yet");
-			//	sleep(1);
-			//}
-
+			cu_init(zookeeper_host);
 			krc_lib_init = 1;
 		}
 		pthread_mutex_unlock(&lib_lock);

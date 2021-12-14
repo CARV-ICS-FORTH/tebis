@@ -49,7 +49,6 @@ Measurements *tail = nullptr;
 std::string outf("ops.txt");
 std::string explan_filename("execution_plan.txt");
 std::string results_directory("RESULTS");
-std::string zk_host("localhost");
 int zk_port = -1;
 #ifdef KREON_DISTRIBUTED
 std::unordered_map<std::string, int> ops_per_server;
@@ -431,23 +430,14 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 
 			db_num = std::atoi(argv[argindex]);
 			argindex++;
-		} else if (strcmp(argv[argindex], "-zk_host") == 0) {
+		} else if (strcmp(argv[argindex], "-zookeeper") == 0) {
 			argindex++;
 			if (argindex >= argc) {
 				UsageMessage(argv[0]);
 				exit(-1);
 			}
 
-			zk_host = std::string(argv[argindex]);
-			argindex++;
-		} else if (strcmp(argv[argindex], "-zk_port") == 0) {
-			argindex++;
-			if (argindex >= argc) {
-				UsageMessage(argv[0]);
-				exit(-1);
-			}
-
-			zk_port = std::atoi(argv[argindex]);
+			props.SetProperty("zookeeperEndpoint", argv[argindex]);
 			argindex++;
 		} else if (strcmp(argv[argindex], "-e") == 0) {
 			argindex++;
@@ -524,6 +514,7 @@ void UsageMessage(const char *command)
 	cout << "Usage: " << command << " [options]" << endl;
 	cout << "Options:" << endl;
 	cout << "  -threads n       Execute using n threads (default: 1)." << endl;
+	cout << "  -zookeeper       Zookeeper endpoint" << endl;
 	cout << "  -dbnum n         Number of distinct databases (default: 1)." << endl;
 	cout << "  -e file          Define the execution plan file (default: execution_plan.txt). For sample format check ep_proposed.txt"
 	     << endl;

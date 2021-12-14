@@ -122,8 +122,6 @@ extern std::unordered_map<std::string, int> ops_per_server;
 int pending_requests[MAX_THREADS];
 int served_requests[MAX_THREADS];
 int num_of_batch_operations_per_thread[MAX_THREADS];
-extern std::string zk_host;
-extern int zk_port;
 #ifdef COUNT_REQUESTS_PER_REGION
 extern int *region_requests;
 #endif
@@ -132,13 +130,10 @@ namespace ycsbc
 {
 class kreonRAsyncClientDB : public YCSBDB {
     private:
-	int db_num;
 	int field_count;
 	std::vector<db_handle *> dbs;
 	double tinit, t1, t2;
 	struct timeval tim;
-	long long how_many = 0;
-	int cu_num;
 	pthread_mutex_t mutex_num;
 	std::string custom_workload;
 	char **region_prefixes_map;
@@ -146,17 +141,17 @@ class kreonRAsyncClientDB : public YCSBDB {
 
     public:
 	kreonRAsyncClientDB(int num, utils::Properties &props)
-		: db_num(num), field_count(std::stoi(props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY,
-								       CoreWorkload::FIELD_COUNT_DEFAULT))),
+		: field_count(std::stoi(
+			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT))),
 		  dbs()
 	{
 		struct timeval start;
 
-		if (krc_init((char *)zk_host.c_str(), zk_port) != KRC_SUCCESS) {
-			log_fatal("Failed to init client at zookeeper host %s port %d", zk_host.c_str(), zk_port);
+		std::string zookeeper = props.GetProperty("zookeeperEndpoint", "localhost:2181");
+		if (krc_init((char *)zookeeper.c_str()) != KRC_SUCCESS) {
+			log_fatal("Failed to init client at zookeeper host %s", zookeeper.c_str());
 			exit(EXIT_FAILURE);
 		}
-		cu_num = 0;
 		reply_counter = 0;
 		pthread_mutex_init(&mutex_num, NULL);
 		gettimeofday(&start, NULL);

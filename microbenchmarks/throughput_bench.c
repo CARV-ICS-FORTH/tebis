@@ -273,24 +273,10 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 #endif
-	char *tokens[2];
-	char *zookeeper_host;
-	int zookeeper_port;
-
-	tokens[0] = strtok(Zookeeper_service, ":");
-	tokens[1] = strtok(NULL, ":");
-
-	if (!tokens[0] || !tokens[1]) {
-		fprintf(stderr, "Error: %s is not a valid service address\n", Zookeeper_service);
-		exit(EXIT_FAILURE);
-	}
-	zookeeper_host = tokens[0];
-	zookeeper_port = strtol(tokens[1], NULL, 10);
-
 	print_parameters(conf_file);
 	print_parameters(stdout);
 
-	krc_init(zookeeper_host, zookeeper_port);
+	krc_init(Zookeeper_service);
 	srand(time(NULL));
 
 	Sent_messages = (int *)malloc(Threads * sizeof(int));
