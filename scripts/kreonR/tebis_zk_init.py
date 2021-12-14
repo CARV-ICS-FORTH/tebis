@@ -53,6 +53,7 @@ def main():
     zk.start()
     if zk.state != KazooState.CONNECTED:
         print("E: Cannot connect to host " + zk_host, file=sys.stderr)
+    print("Connected to Zookeeper server " + zk_host)
 
     # Cleanup existing data
     zk.delete(ROOT_PATH, -1, recursive=True)
@@ -68,6 +69,7 @@ def main():
     zk.create(ALIVE_DATASERVERS_PATH, acl=OPEN_ACL_UNSAFE)
 
     # Create server nodes
+    print("Creating server metadata...")
     leader = None
     with open(hosts_file, "r") as hosts:
         hosts_file_lines = hosts.readlines()
@@ -106,6 +108,7 @@ def main():
     zk.create(LEADER_PATH + "/" + leader, acl=OPEN_ACL_UNSAFE)
 
     # Create regions
+    print("Creating region metadata...")
     with open(regions_file, "r") as regions:
         regions_file_lines = regions.readlines()
         regions_file_lines = list(
@@ -140,6 +143,7 @@ def main():
             )
 
     zk.stop()
+    print("Zookeeper metadata created successfully")
     sys.exit(0)
 
 
