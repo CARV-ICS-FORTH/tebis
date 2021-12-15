@@ -91,8 +91,10 @@ def main():
             zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
             # build/kreon_server/create_server_node zk_host cols[0]
             server_path = SERVERS_PATH + "/" + cols[0]
+            hostname, port = cols[0].split(":")
             server_name = {
-                "hostname": cols[0].split("-")[0],
+                "hostname": hostname,
+                "port": port,
                 "dataserver_name": cols[0],
                 "leader": "",
                 "RDMA_IP_addr": "",

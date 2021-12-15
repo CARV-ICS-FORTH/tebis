@@ -974,7 +974,7 @@ void *krm_metadata_server(void *args)
 		exit(EXIT_FAILURE);
 	}
 	/*now fix your kreon hostname*/
-	sprintf(my_desc->name.kreon_ds_hostname, "%s-%d", my_desc->name.hostname, my_desc->RDMA_port);
+	sprintf(my_desc->name.kreon_ds_hostname, "%s:%d", my_desc->name.hostname, my_desc->RDMA_port);
 	krm_get_IP_Addresses(my_desc);
 	char *mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, my_desc->name.kreon_ds_hostname);
