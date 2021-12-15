@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include "../kreon_rdma/rdma.h"
+
 char *globals_get_RDMA_IP_filter(void);
 void globals_set_RDMA_IP_filter(char *RDMA_IP_filter);
 
@@ -24,8 +25,5 @@ uint64_t globals_get_dev_size(void);
 void globals_create_rdma_channel(void);
 void globals_set_rdma_channel(struct channel_rdma *channel);
 struct channel_rdma *globals_get_rdma_channel(void);
-
-void globals_set_mount_point(char *mount_point);
-char *globals_get_mount_point(void);
 
 void globals_init_volume(void);

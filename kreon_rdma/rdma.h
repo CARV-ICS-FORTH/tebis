@@ -55,8 +55,6 @@
 #define SPINNING_NUM_TH 8 // was 1
 #define SPINNING_NUM_TH_CLI 8 // 4
 
-#define DEFAULT_DEV_IBV "mlx4_0"
-
 #define MAX_WR 4096
 #define MAX_WR_LESS_ONE (MAX_WR - 1)
 
@@ -277,12 +275,12 @@ typedef struct connection_rdma {
 	int idconn;
 } connection_rdma;
 
-void crdma_init_generic_create_channel(struct channel_rdma *channel);
+void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_devname);
 void crdma_init_client_connection(struct connection_rdma *conn, const char *host, const char *port,
 				  struct channel_rdma *channel);
 void crdma_init_server_channel(struct channel_rdma *channel);
 struct channel_rdma *crdma_server_create_channel(void);
-struct channel_rdma *crdma_client_create_channel(void);
+struct channel_rdma *crdma_client_create_channel(char *ib_devname);
 uint32_t crdma_free_RDMA_conn(struct connection_rdma **ardma_conn);
 
 struct connection_rdma *crdma_client_create_connection_list_hosts(struct channel_rdma *channel, char **hosts,
@@ -334,5 +332,5 @@ void _zero_rendezvous_locations(msg_header *msg);
 void _update_rendezvous_location(struct connection_rdma *conn, int message_size);
 
 /*for starting a separate channel for each numa server*/
-struct ibv_context *open_ibv_device(char *devname);
+struct ibv_context *get_rdma_device_context(char *devname);
 void *poll_cq(void *arg);

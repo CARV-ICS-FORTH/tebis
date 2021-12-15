@@ -176,8 +176,6 @@ void *socket_thread(void *args)
 	log_info("Starting listener for new rdma connections thread at port %d", rdma_port);
 	sem_init(&memory_steal_sem, 0, 1); // sem_wait when using backup_region,
 	// spinning_thread will sem_post
-	/*backup_region = mrpool_allocate_memory_region(channel->static_pool);*/
-	/*assert(backup_region);*/
 
 	struct ibv_qp_init_attr qp_init_attr;
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
@@ -200,15 +198,15 @@ void *socket_thread(void *args)
 		exit(EXIT_FAILURE);
 	}
 
-	struct rdma_cm_id *rdma_cm_id;
-	ret = rdma_create_ep(&rdma_cm_id, res, NULL, NULL);
+	struct rdma_cm_id *listen_id;
+	ret = rdma_create_ep(&listen_id, res, NULL, NULL);
 	if (ret) {
 		log_fatal("rdma_create_ep: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
 	// Listen for incoming connections on available RDMA devices
-	ret = rdma_listen(rdma_cm_id, 0); // called with backlog = 0
+	ret = rdma_listen(listen_id, 0); // called with backlog = 0
 	if (ret) {
 		log_fatal("rdma_listen: %s", strerror(errno));
 		exit(EXIT_FAILURE);
@@ -217,7 +215,7 @@ void *socket_thread(void *args)
 	while (1) {
 		// Block until a new connection request arrives
 		struct rdma_cm_id *request_id, *new_conn_id;
-		ret = rdma_get_request(rdma_cm_id, &request_id);
+		ret = rdma_get_request(listen_id, &request_id);
 		if (ret) {
 			log_fatal("rdma_get_request: %s", strerror(errno));
 			exit(EXIT_FAILURE);
@@ -297,70 +295,6 @@ void *socket_thread(void *args)
 			log_fatal("bad connection type %d", conn->type);
 			exit(EXIT_FAILURE);
 		}
-#if 0
-		memory_region * mr, *other_half, *halved_mr;
-		connection_rdma *candidate = NULL;
-		if (conn->type == SERVER_TO_CLIENT_CONNECTION && !conn->rdma_memory_regions) { /*{{{*/
-			// Run out of memory, need to steal from a connection
-			// FIXME Need to figure out how destroying these half memory regions will work since
-			// calling free on the second half buffer will fail. I'm not sure ibv_dereg_mr will
-			// work either
-			DPRINT("Run out of memory regions!\n");
-			candidate = find_memory_steal_candidate(channel->spin_list[0]);
-			assert(candidate);
-
-			sem_wait(&memory_steal_sem);
-			// changed from NULL to something != NULL
-			assert(backup_region);
-			mr = (struct memory_region *)backup_region;
-			backup_region = NULL;
-
-			halved_mr = (memory_region *)malloc(sizeof(memory_region));
-			halved_mr->mrpool = mr->mrpool;
-			halved_mr->memory_region_length = mr->memory_region_length / 2;
-
-			halved_mr->local_memory_region = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-			memcpy(halved_mr->local_memory_region, mr->local_memory_region, sizeof(memory_region));
-			halved_mr->local_memory_region->length = halved_mr->memory_region_length;
-			halved_mr->local_memory_buffer = mr->local_memory_buffer;
-			assert(halved_mr->local_memory_buffer == halved_mr->local_memory_region->addr);
-
-			halved_mr->remote_memory_region = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-			memcpy(halved_mr->remote_memory_region, mr->remote_memory_region, sizeof(memory_region));
-			halved_mr->remote_memory_region->length = halved_mr->memory_region_length;
-			halved_mr->remote_memory_buffer = mr->remote_memory_buffer;
-			assert(halved_mr->remote_memory_buffer == halved_mr->remote_memory_region->addr);
-
-			candidate->next_rdma_memory_regions = halved_mr;
-
-			other_half = (memory_region *)malloc(sizeof(memory_region));
-			other_half->mrpool = mr->mrpool;
-			other_half->memory_region_length = mr->memory_region_length / 2;
-
-			other_half->local_memory_region = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-			memcpy(other_half->local_memory_region, mr->local_memory_region, sizeof(memory_region));
-			other_half->local_memory_region->addr += other_half->memory_region_length;
-			other_half->local_memory_region->length = other_half->memory_region_length;
-			other_half->local_memory_buffer = mr->local_memory_buffer + other_half->memory_region_length;
-			assert(other_half->local_memory_buffer == other_half->local_memory_region->addr);
-
-			other_half->remote_memory_region = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-			memcpy(other_half->remote_memory_region, mr->remote_memory_region, sizeof(memory_region));
-			other_half->remote_memory_region->addr += other_half->memory_region_length;
-			other_half->remote_memory_region->length = other_half->memory_region_length;
-			other_half->remote_memory_buffer = mr->remote_memory_buffer + other_half->memory_region_length;
-			assert(other_half->remote_memory_buffer == other_half->remote_memory_region->addr);
-			DPRINT("SERVER: length = %llu\n", (LLU)other_half->memory_region_length);
-
-			conn->rdma_memory_regions = other_half;
-
-			// TODO replace assign_job_to_worker with __stop_client. Add new mr info in the
-			// stop client message's payload
-			// assign_job_to_worker(candidate->channel, candidate, (msg_header*)577, 0, -1);
-			__stop_client(candidate);
-			candidate = NULL;
-		} /*}}}*/
-#endif
 		assert(conn->rdma_memory_regions);
 
 		struct ibv_mr *send_mr = rdma_reg_msgs(new_conn_id, conn->rdma_memory_regions->remote_memory_region,
@@ -401,8 +335,6 @@ void *socket_thread(void *args)
 		}
 		conn->sleeping_workers = 0;
 
-		// conn->pending_sent_messages = 0;
-		// conn->pending_received_messages = 0;
 		conn->offset = 0;
 		conn->worker_id = -1;
 #ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
@@ -410,19 +342,13 @@ void *socket_thread(void *args)
 #else
 		pthread_spin_init(&conn->buffer_lock, PTHREAD_PROCESS_PRIVATE);
 #endif
-		/*add connection to its spinner*/
-		// conn->idconn = -1; // what?
-		// if (next_spinner_to_submit_conn >= my_server->spinner)
-		//	next_spinner_to_submit_conn = 0;
-		// struct ds_spinning_thread *spinner =
-		// &my_server->spinner[next_spinner_to_submit_conn];
+		// Add connection to spinner's connection list
 		pthread_mutex_lock(&my_server->spinner.conn_list_lock);
-		/*gesalous new policy*/
 		add_last_in_simple_concurrent_list(my_server->spinner.conn_list, conn);
 		conn->responsible_spin_list = my_server->spinner.conn_list;
 		conn->responsible_spinning_thread_id = my_server->spinner.spinner_id;
-
 		pthread_mutex_unlock(&my_server->spinner.conn_list_lock);
+
 		log_info("Built new connection successfully for Server at port %d", rdma_port);
 	}
 	return NULL;
@@ -2897,228 +2823,192 @@ static void sigint_handler(int signo)
 int main(int argc, char *argv[])
 {
 	char *device_name;
-	char *mount_point;
-	int num_of_numa_servers = 0;
+	int num_of_numa_servers = 1;
 	int next_argv;
-	if (argc >= 6) {
-		// argv[0] program name don't care
-		// dev name
-		next_argv = 1;
-		device_name = argv[next_argv];
-		globals_set_dev(device_name);
-		++next_argv;
-		// mount point
-		mount_point = argv[next_argv];
-		globals_set_mount_point(mount_point);
-		++next_argv;
-		// zookeeper
-		globals_set_zk_host(argv[next_argv]);
-		++next_argv;
-		// RDMA subnet
-		globals_set_RDMA_IP_filter(argv[next_argv]);
-		++next_argv;
-		num_of_numa_servers = argc - next_argv;
-
-		/*time to allocate the root server*/
-		root_server = (struct ds_root_server *)malloc(sizeof(struct ds_root_server) +
-							      (num_of_numa_servers * sizeof(struct ds_root_server *)));
-		root_server->num_of_numa_servers = num_of_numa_servers;
-		int server_idx = 0;
-		// now servers <RDMA port, spinning thread, workers>
-		for (int i = next_argv; i < argc; i++) {
-			cpu_set_t numa_node_affinity;
-			CPU_ZERO(&numa_node_affinity);
-
-			int rdma_port;
-			int spinning_thread_id;
-			int workers_id[MAX_CORES_PER_NUMA];
-			int num_workers;
-			char *token;
-			char *saveptr = NULL;
-			char *rest = argv[i];
-			// RDMA port of server
-			token = strtok_r(rest, ",", &saveptr);
-			if (token == NULL) {
-				log_fatal("RDMA port missing in server configuration");
-				exit(EXIT_FAILURE);
-			}
-			char *ptr;
-			rdma_port = strtol(token, &ptr, 10);
-			log_info("Server %d rdma port: %d", server_idx, rdma_port);
-			// Spinning thread of server
-			token = strtok_r(NULL, ",", &saveptr);
-			if (token == NULL) {
-				log_fatal("Spinning thread id missing in server configuration");
-				exit(EXIT_FAILURE);
-			}
-			spinning_thread_id = strtol(token, &ptr, 10);
-			log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
-
-			CPU_SET(spinning_thread_id, &numa_node_affinity);
-			// now the worker ids
-			int idx = 0;
-			num_workers = 0;
-			token = strtok_r(NULL, ",", &saveptr);
-			while (token != NULL) {
-				++num_workers;
-				workers_id[idx] = strtol(token, &ptr, 10);
-				CPU_SET(workers_id[idx], &numa_node_affinity);
-				++idx;
-				token = strtok_r(NULL, ",", &saveptr);
-			}
-			if (num_workers == 0) {
-				log_fatal("No workers specified for Server %d", server_idx);
-				exit(EXIT_FAILURE);
-			}
-			// Double the workers, mirror workers are for server tasks
-			num_workers *= 2;
-
-			// now we have all info to allocate ds_numa_server, pin,
-			// and inform the root server
-
-			struct ds_numa_server *server = (struct ds_numa_server *)malloc(
-				sizeof(struct ds_numa_server) + (num_workers * sizeof(struct ds_worker_thread)));
-
-			// But first let's build each numa server's RDMA channel*/
-			/*RDMA channel staff*/
-			server->channel = (struct channel_rdma *)malloc(sizeof(struct channel_rdma));
-			if (server->channel == NULL) {
-				log_fatal("malloc failed could do not get memory for channel");
-				exit(EXIT_FAILURE);
-			}
-			server->channel->sockfd = 0;
-			server->channel->context = open_ibv_device(DEFAULT_DEV_IBV);
-
-			server->channel->comp_channel = ibv_create_comp_channel(server->channel->context);
-			if (server->channel->comp_channel == 0) {
-				log_fatal("building context reason follows:");
-				perror("Reason: \n");
-				exit(EXIT_FAILURE);
-			}
-
-			server->channel->pd = ibv_alloc_pd(server->channel->context);
-			server->channel->nconn = 0;
-			server->channel->nused = 0;
-			server->channel->connection_created = NULL;
-
-			/*Creating the thread in charge of the completion channel*/
-			if (pthread_create(&server->poll_cq_cnxt, NULL, poll_cq, server->channel) != 0) {
-				log_fatal("Failed to create poll_cq thread reason follows:");
-				perror("Reason: \n");
-				exit(EXIT_FAILURE);
-			}
-			// int status =
-			//	pthread_setaffinity_np(server->poll_cq_cnxt, sizeof(cpu_set_t),
-			//&numa_node_affinity);
-			// if (status != 0) {
-			//	log_fatal("failed to pin poll_cq thread");
-			//	exit(EXIT_FAILURE);
-			//}
-			log_info("Started and set affinity for poll_cq thread of server %d "
-				 "at port %d",
-				 server->server_id, server->rdma_port);
-
-			server->channel->dynamic_pool =
-				mrpool_create(server->channel->pd, -1, DYNAMIC, MEM_REGION_BASE_SIZE);
-			server->channel->spinning_th = 0; // what?
-			server->channel->spinning_conn = 0; // what?
-			server->channel->spinning_num_th = num_of_spinning_threads; // what?
-			// Lock for the conn_list what?
-			pthread_mutex_init(&server->channel->spin_conn_lock, NULL);
-			// channels done
-
-			server->spinner.num_workers = num_workers;
-			server->spinner.spinner_id = spinning_thread_id;
-			server->spinner.root_server_id = server_idx;
-			server->meta_server.root_server_id = server_idx;
-			server->rdma_port = rdma_port;
-			server->meta_server.ld_regions = NULL;
-			server->meta_server.dataservers_map = NULL;
-
-			server->meta_server.RDMA_port = rdma_port;
-			for (int j = 0; j < num_workers; j++)
-				server->spinner.worker[j].worker_id = j; // workers_id[j];
-			root_server->numa_servers[server_idx] = server;
-			++server_idx;
-		}
-	} else {
-		log_fatal("Error! usage: ./kreon_server <device name> <mount "
-			  "point> <zk_host:zk_port> <RDMA_IP_subnet> <server(s) vector>\n "
+	if (argc != 5) {
+		log_fatal("Error! usage: ./kreon_server <device name>"
+			  " <zk_host:zk_port> <RDMA subnet> <server(s) vector>\n "
 			  " where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
 			  "id>,<worker id 1>,<worker id 2>,...,<worker id N>\"");
 		exit(EXIT_FAILURE);
 	}
-	/**
-* list of chain reaction: main fires socket threads (one per server) and
-* then
-* spinners.
-* Spinners finally fire up their workers
-**/
-	for (int i = 0; i < root_server->num_of_numa_servers; i++) {
-		struct ds_numa_server *server = root_server->numa_servers[i];
-		pthread_mutex_init(&server->spinner.conn_list_lock, NULL);
-		server->spinner.conn_list = init_simple_concurrent_list();
-		// unused
-		server->spinner.idle_conn_list = init_simple_concurrent_list();
+	// argv[0] program name don't care
+	// dev name
+	next_argv = 1;
+	device_name = argv[next_argv];
+	globals_set_dev(device_name);
+	++next_argv;
+	// zookeeper
+	globals_set_zk_host(argv[next_argv]);
+	++next_argv;
+	// RDMA subnet
+	globals_set_RDMA_IP_filter(argv[next_argv]);
+	++next_argv;
 
-		server->spinner.next_worker_to_submit_job = 0;
+	/*time to allocate the root server*/
+	root_server = (struct ds_root_server *)malloc(sizeof(struct ds_root_server) +
+						      (num_of_numa_servers * sizeof(struct ds_root_server *)));
+	root_server->num_of_numa_servers = num_of_numa_servers;
+	int server_idx = 0;
+	// now servers <RDMA port, spinning thread, workers>
+	int rdma_port;
+	int spinning_thread_id;
+	int workers_id[MAX_CORES_PER_NUMA];
+	int num_workers;
+	char *token;
+	char *strtok_saveptr = NULL;
+	char *rest = argv[next_argv];
+	// RDMA port of server
+	token = strtok_r(rest, ",", &strtok_saveptr);
+	if (token == NULL) {
+		log_fatal("RDMA port missing in server configuration");
+		exit(EXIT_FAILURE);
+	}
+	char *ptr;
+	rdma_port = strtol(token, &ptr, 10);
+	log_info("Server %d rdma port: %d", server_idx, rdma_port);
+	// Spinning thread of server
+	token = strtok_r(NULL, ",", &strtok_saveptr);
+	if (token == NULL) {
+		log_fatal("Spinning thread id missing in server configuration");
+		exit(EXIT_FAILURE);
+	}
+	spinning_thread_id = strtol(token, &ptr, 10);
+	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
-		if (pthread_create(&server->socket_thread_cnxt, NULL, socket_thread, (void *)server) != 0) {
-			log_fatal("failed to spawn socket thread  for Server: %d reason follows:", server->server_id);
-			perror("Reason: \n");
-			exit(EXIT_FAILURE);
-		}
-		// Now pin it in the numa node! Important step so allocations used by
-		// spinner and workers to be
-		// in the same numa node
+	// now the worker ids
+	num_workers = 0;
+	token = strtok_r(NULL, ",", &strtok_saveptr);
+	while (token != NULL) {
+		workers_id[num_workers++] = strtol(token, &ptr, 10);
+		token = strtok_r(NULL, ",", &strtok_saveptr);
+	}
+	if (num_workers == 0) {
+		log_fatal("No workers specified for Server %d", server_idx);
+		exit(EXIT_FAILURE);
+	}
+	// Double the workers, mirror workers are for server tasks
+	num_workers *= 2;
 
-		cpu_set_t numa_node_affinity;
-		CPU_ZERO(&numa_node_affinity);
-		CPU_SET(server->spinner.spinner_id, &numa_node_affinity);
-		for (int k = 0; k < server->spinner.num_workers; k++)
-			CPU_SET(server->spinner.worker[k].worker_id, &numa_node_affinity);
-		int status = pthread_setaffinity_np(root_server->numa_servers[i]->socket_thread_cnxt, sizeof(cpu_set_t),
-						    &numa_node_affinity);
-		if (status != 0) {
-			log_fatal("failed to pin socket thread for server %d at port %d", server->server_id,
-				  server->rdma_port);
-			exit(EXIT_FAILURE);
-		}
+	// now we have all info to allocate ds_numa_server, pin,
+	// and inform the root server
 
-		log_info("Started socket thread successfully for Server %d", server->server_id);
+	struct ds_numa_server *server = (struct ds_numa_server *)malloc(
+		sizeof(struct ds_numa_server) + (num_workers * sizeof(struct ds_worker_thread)));
 
-		log_info("Starting spinning thread for Server %d", root_server->numa_servers[i]->server_id);
-		if (pthread_create(&server->spinner_cnxt, NULL, server_spinning_thread_kernel, &server->spinner) != 0) {
-			log_fatal("Failed to create spinner thread for Server: %d", server->server_id);
-			exit(EXIT_FAILURE);
-		}
+	// But first let's build each numa server's RDMA channel*/
+	/*RDMA channel staff*/
+	server->channel = (struct channel_rdma *)malloc(sizeof(struct channel_rdma));
+	if (server->channel == NULL) {
+		log_fatal("malloc failed could do not get memory for channel");
+		exit(EXIT_FAILURE);
+	}
+	server->channel->sockfd = 0;
+	server->channel->context = get_rdma_device_context(NULL);
 
-		// spinning thread pin staff
-		log_info("Pinning spinning thread of Server: %d at port %d at core %d", server->server_id,
-			 server->rdma_port, server->spinner.spinner_id);
-		cpu_set_t spinning_thread_affinity_mask;
-		CPU_ZERO(&spinning_thread_affinity_mask);
-		CPU_SET(server->spinner.spinner_id, &spinning_thread_affinity_mask);
-		status =
-			pthread_setaffinity_np(server->spinner_cnxt, sizeof(cpu_set_t), &spinning_thread_affinity_mask);
-		if (status != 0) {
-			log_fatal("failed to pin spinning thread");
-			exit(EXIT_FAILURE);
-		}
-		log_info("Pinned successfully spinning thread of Server: %d at port %d at "
-			 "core %d",
-			 server->server_id, server->rdma_port, server->spinner.spinner_id);
-
-		root_server->numa_servers[i]->meta_server.root_server_id = i;
-		log_info("Initializing kreonR metadata server");
-		if (pthread_create(&root_server->numa_servers[i]->meta_server_cnxt, NULL, krm_metadata_server,
-				   &root_server->numa_servers[i]->meta_server)) {
-			log_fatal("Failed to start metadata_server");
-			exit(EXIT_FAILURE);
-		}
+	server->channel->comp_channel = ibv_create_comp_channel(server->channel->context);
+	if (server->channel->comp_channel == 0) {
+		log_fatal("building context reason follows:");
+		perror("Reason: \n");
+		exit(EXIT_FAILURE);
 	}
 
-	stats_init(root_server->num_of_numa_servers, root_server->numa_servers[0]->spinner.num_workers);
+	server->channel->pd = ibv_alloc_pd(server->channel->context);
+	server->channel->nconn = 0;
+	server->channel->nused = 0;
+	server->channel->connection_created = NULL;
+
+	/*Creating the thread in charge of the completion channel*/
+	if (pthread_create(&server->poll_cq_cnxt, NULL, poll_cq, server->channel) != 0) {
+		log_fatal("Failed to create poll_cq thread reason follows:");
+		perror("Reason: \n");
+		exit(EXIT_FAILURE);
+	}
+
+	server->channel->dynamic_pool = mrpool_create(server->channel->pd, -1, DYNAMIC, MEM_REGION_BASE_SIZE);
+	server->channel->spinning_th = 0; // what?
+	server->channel->spinning_conn = 0; // what?
+	server->channel->spinning_num_th = num_of_spinning_threads; // what?
+	// Lock for the conn_list what?
+	pthread_mutex_init(&server->channel->spin_conn_lock, NULL);
+	// channels done
+
+	server->spinner.num_workers = num_workers;
+	server->spinner.spinner_id = spinning_thread_id;
+	server->spinner.root_server_id = server_idx;
+	server->meta_server.root_server_id = server_idx;
+	server->rdma_port = rdma_port;
+	server->meta_server.ld_regions = NULL;
+	server->meta_server.dataservers_map = NULL;
+
+	server->meta_server.RDMA_port = rdma_port;
+	for (int j = 0; j < num_workers; j++)
+		server->spinner.worker[j].worker_id = j; // workers_id[j];
+	root_server->numa_servers[server_idx] = server;
+
+	/*
+	 * list of chain reaction: main fires socket threads (one per server) and
+	 * then spinners. Spinners finally fire up their workers
+	 */
+	server = root_server->numa_servers[0];
+	pthread_mutex_init(&server->spinner.conn_list_lock, NULL);
+	server->spinner.conn_list = init_simple_concurrent_list();
+	// unused
+	server->spinner.idle_conn_list = init_simple_concurrent_list();
+
+	server->spinner.next_worker_to_submit_job = 0;
+
+	if (pthread_create(&server->socket_thread_cnxt, NULL, socket_thread, (void *)server) != 0) {
+		log_fatal("failed to spawn socket thread  for Server: %d reason follows:", server->server_id);
+		perror("Reason: \n");
+		exit(EXIT_FAILURE);
+	}
+	// Now pin it in the numa node! Important step so allocations used by
+	// spinner and workers to be
+	// in the same numa node
+
+	cpu_set_t numa_node_affinity;
+	CPU_ZERO(&numa_node_affinity);
+	CPU_SET(server->spinner.spinner_id, &numa_node_affinity);
+	for (int k = 0; k < server->spinner.num_workers; k++)
+		CPU_SET(server->spinner.worker[k].worker_id, &numa_node_affinity);
+	int status = pthread_setaffinity_np(server->socket_thread_cnxt, sizeof(cpu_set_t), &numa_node_affinity);
+	if (status != 0) {
+		log_fatal("failed to pin socket thread for server %d at port %d", server->server_id, server->rdma_port);
+		exit(EXIT_FAILURE);
+	}
+
+	log_info("Started socket thread successfully for Server %d", server->server_id);
+
+	log_info("Starting spinning thread for Server %d", server->server_id);
+	if (pthread_create(&server->spinner_cnxt, NULL, server_spinning_thread_kernel, &server->spinner) != 0) {
+		log_fatal("Failed to create spinner thread for Server: %d", server->server_id);
+		exit(EXIT_FAILURE);
+	}
+
+	// spinning thread pin staff
+	log_info("Pinning spinning thread of Server: %d at port %d at core %d", server->server_id, server->rdma_port,
+		 server->spinner.spinner_id);
+	cpu_set_t spinning_thread_affinity_mask;
+	CPU_ZERO(&spinning_thread_affinity_mask);
+	CPU_SET(server->spinner.spinner_id, &spinning_thread_affinity_mask);
+	status = pthread_setaffinity_np(server->spinner_cnxt, sizeof(cpu_set_t), &spinning_thread_affinity_mask);
+	if (status != 0) {
+		log_fatal("failed to pin spinning thread");
+		exit(EXIT_FAILURE);
+	}
+	log_info("Pinned successfully spinning thread of Server: %d at port %d at "
+		 "core %d",
+		 server->server_id, server->rdma_port, server->spinner.spinner_id);
+
+	server->meta_server.root_server_id = server_idx;
+	log_info("Initializing kreonR metadata server");
+	if (pthread_create(&server->meta_server_cnxt, NULL, krm_metadata_server, &server->meta_server)) {
+		log_fatal("Failed to start metadata_server");
+		exit(EXIT_FAILURE);
+	}
+
+	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	// A long long
 	sem_init(&exit_main, 0, 0);
 

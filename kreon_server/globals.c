@@ -32,7 +32,6 @@ struct globals {
 static struct globals global_vars = { .zk_host_port = NULL,
 				      .RDMA_IP_filter = NULL,
 				      .dev = NULL,
-				      .mount_point = NULL,
 				      .volume_size = 0,
 				      .is_volume_init = 0,
 				      .channel = NULL,
@@ -42,7 +41,7 @@ static struct globals global_vars = { .zk_host_port = NULL,
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
-char *globals_get_RDMA_IP_filter()
+char *globals_get_RDMA_IP_filter(void)
 {
 	if (global_vars.RDMA_IP_filter == NULL) {
 		log_fatal("RDMA_IP_filter host,port not set!\n");
@@ -197,27 +196,6 @@ char *globals_get_dev(void)
 	return global_vars.dev;
 }
 
-char *globals_get_mount_point()
-{
-	return global_vars.mount_point;
-}
-
-void globals_set_mount_point(char *mount_point)
-{
-	if (pthread_mutex_lock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-	if (global_vars.mount_point == NULL)
-		global_vars.mount_point = strdup(mount_point);
-	else
-		log_warn("Mount point set already to %s", global_vars.mount_point);
-	if (pthread_mutex_unlock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-}
-
 uint64_t globals_get_dev_size()
 {
 	return global_vars.volume_size;
@@ -230,7 +208,7 @@ void globals_create_rdma_channel(void)
 		exit(EXIT_FAILURE);
 	}
 	if (global_vars.channel == NULL)
-		global_vars.channel = crdma_client_create_channel();
+		global_vars.channel = crdma_client_create_channel(NULL);
 	else
 		log_warn("rdma channel already set");
 	if (pthread_mutex_unlock(&g_lock) != 0) {
