@@ -27,12 +27,13 @@
 #include "../core/properties.h"
 #include "workload_gen.h"
 // FIXME definition of COMPUTE_TAIL(_ASYNC) should be done in cmake
-#define COMPUTE_TAIL_ASYNC
+//#define COMPUTE_TAIL_ASYNC
 #ifdef COMPUTE_TAIL_ASYNC
 #include "../core/Measurements.hpp"
 #endif
 
 extern "C" {
+#include "../../kreon_rdma_client/client_utils.h"
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
 #include "../../kreon_lib/btree/btree.h"
 #include "../../utilities/queue.h"
@@ -109,6 +110,7 @@ unsigned long djb2_hash(unsigned char *buf, uint32_t length)
 }
 
 static uint64_t reply_counter;
+extern struct cu_regions client_regions;
 }
 
 #define FIELD_COUNT 10
@@ -120,9 +122,6 @@ extern std::unordered_map<std::string, int> ops_per_server;
 int pending_requests[MAX_THREADS];
 int served_requests[MAX_THREADS];
 int num_of_batch_operations_per_thread[MAX_THREADS];
-extern std::string zk_host;
-extern int zk_port;
-extern int regions_total;
 #ifdef COUNT_REQUESTS_PER_REGION
 extern int *region_requests;
 #endif
@@ -131,30 +130,28 @@ namespace ycsbc
 {
 class kreonRAsyncClientDB : public YCSBDB {
     private:
-	int db_num;
 	int field_count;
 	std::vector<db_handle *> dbs;
 	double tinit, t1, t2;
 	struct timeval tim;
-	long long how_many = 0;
-	int cu_num;
 	pthread_mutex_t mutex_num;
 	std::string custom_workload;
 	char **region_prefixes_map;
+	uint32_t regions_total;
 
     public:
 	kreonRAsyncClientDB(int num, utils::Properties &props)
-		: db_num(num), field_count(std::stoi(props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY,
-								       CoreWorkload::FIELD_COUNT_DEFAULT))),
+		: field_count(std::stoi(
+			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT))),
 		  dbs()
 	{
 		struct timeval start;
 
-		if (krc_init((char *)zk_host.c_str(), zk_port) != KRC_SUCCESS) {
-			log_fatal("Failed to init client at zookeeper host %s port %d", zk_host.c_str(), zk_port);
+		std::string zookeeper = props.GetProperty("zookeeperEndpoint", "localhost:2181");
+		if (krc_init((char *)zookeeper.c_str()) != KRC_SUCCESS) {
+			log_fatal("Failed to init client at zookeeper host %s", zookeeper.c_str());
 			exit(EXIT_FAILURE);
 		}
-		cu_num = 0;
 		reply_counter = 0;
 		pthread_mutex_init(&mutex_num, NULL);
 		gettimeofday(&start, NULL);
@@ -165,22 +162,18 @@ class kreonRAsyncClientDB : public YCSBDB {
 			exit(EXIT_FAILURE);
 		}
 		std::cout << "Workload Type: " << custom_workload << std::endl;
-		regions_total = strtol(props.GetProperty("totalRegions", "-1").c_str(), NULL, 10);
-		if (regions_total == -1) {
-			std::cerr << "Error: missing argument -r" << std::endl;
-			exit(EXIT_FAILURE);
-		}
 		// Create a prefixes map that maps each region to a specific prefix
 		// By hashing a key to pick a region you can eliminate load balancing issues
 		// The prefix is necessary to make sure that the key that will be sent to
 		// the server will match the region's range
+		regions_total = client_regions.num_regions;
 		region_prefixes_map = new char *[regions_total];
 #ifdef COUNT_REQUESTS_PER_REGION
 		region_requests = new int[regions_total]();
 #endif
 		char first = 'A';
 		char second = 'A';
-		for (int i = 0; i < regions_total; ++i) {
+		for (unsigned i = 0; i < regions_total; ++i) {
 			region_prefixes_map[i] = new char[3];
 			region_prefixes_map[i][0] = first;
 			region_prefixes_map[i][1] = second;

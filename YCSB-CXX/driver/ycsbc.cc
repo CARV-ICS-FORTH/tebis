@@ -29,7 +29,7 @@
 #include "timer.h"
 #include "client.h"
 #include "core_workload.h"
-#define COMPUTE_TAIL_ASYNC
+//#define COMPUTE_TAIL_ASYNC
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 const char *Op2Str[] = { "LOAD", "READ", "UPDATE", "INSERT", "SCAN", "READMODIFYWRITE" };
 #include "Measurements.hpp"
@@ -49,7 +49,6 @@ Measurements *tail = nullptr;
 std::string outf("ops.txt");
 std::string explan_filename("execution_plan.txt");
 std::string results_directory("RESULTS");
-std::string zk_host("localhost");
 int zk_port = -1;
 #ifdef KREON_DISTRIBUTED
 std::unordered_map<std::string, int> ops_per_server;
@@ -431,23 +430,14 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 
 			db_num = std::atoi(argv[argindex]);
 			argindex++;
-		} else if (strcmp(argv[argindex], "-zk_host") == 0) {
+		} else if (strcmp(argv[argindex], "-zookeeper") == 0) {
 			argindex++;
 			if (argindex >= argc) {
 				UsageMessage(argv[0]);
 				exit(-1);
 			}
 
-			zk_host = std::string(argv[argindex]);
-			argindex++;
-		} else if (strcmp(argv[argindex], "-zk_port") == 0) {
-			argindex++;
-			if (argindex >= argc) {
-				UsageMessage(argv[0]);
-				exit(-1);
-			}
-
-			zk_port = std::atoi(argv[argindex]);
+			props.SetProperty("zookeeperEndpoint", argv[argindex]);
 			argindex++;
 		} else if (strcmp(argv[argindex], "-e") == 0) {
 			argindex++;
@@ -483,14 +473,6 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 			}
 			props.SetProperty("dev", argv[argindex]);
 			argindex++;
-		} else if (strcmp(argv[argindex], "-clientProcesses") == 0) {
-			argindex++;
-			if (argindex >= argc) {
-				UsageMessage(argv[0]);
-				exit(-1);
-			}
-			props.SetProperty("clientProcesses", argv[argindex]);
-			argindex++;
 		} else if (strcmp(argv[argindex], "-outFile") == 0) {
 			argindex++;
 			if (argindex >= argc) {
@@ -506,14 +488,6 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 				exit(-1);
 			}
 			props.SetProperty("workloadType", argv[argindex]);
-			++argindex;
-		} else if (strcmp(argv[argindex], "-r") == 0) {
-			++argindex;
-			if (argindex >= argc) {
-				UsageMessage(argv[0]);
-				exit(-1);
-			}
-			props.SetProperty("totalRegions", argv[argindex]);
 			++argindex;
 		} else {
 			cout << "Unknown option " << argv[argindex] << endl;
@@ -532,15 +506,14 @@ void UsageMessage(const char *command)
 	cout << "Usage: " << command << " [options]" << endl;
 	cout << "Options:" << endl;
 	cout << "  -threads n       Execute using n threads (default: 1)." << endl;
+	cout << "  -w               Set workload type (s, m, l, sd, md or ld)" << endl;
+	cout << "  -zookeeper       Zookeeper endpoint" << endl;
 	cout << "  -dbnum n         Number of distinct databases (default: 1)." << endl;
 	cout << "  -e file          Define the execution plan file (default: execution_plan.txt). For sample format check ep_proposed.txt"
 	     << endl;
 	cout << "  -o file          Define the result directory name (default ./RESULTS)." << endl;
-	cout << "  -insertStart     Set counter start value for key generation during load" << endl;
-	cout << "  -clientProcesses Set to the number of client processes (default = 1)" << endl;
+	cout << "  -insertStart     Set counter start value for key generation during load (default = 0)" << endl;
 	cout << "  -outFile         Set name of ycsb log file (default = ops.txt" << endl;
-	cout << "  -w               Set workload type (s, m, l, sd, md or ld)" << endl;
-	cout << "  -r               Set number of regions (max = 576)" << endl;
 }
 
 inline bool StrStartWith(const char *str, const char *pre)

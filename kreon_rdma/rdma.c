@@ -646,20 +646,35 @@ struct ibv_device *ctx_find_dev(const char *ib_devname)
 	return ib_dev;
 }
 
-struct ibv_context *open_ibv_device(char *devname)
+struct ibv_context *get_rdma_device_context(char *devname)
 {
 	int num_devices;
 	struct ibv_context **dev_list = rdma_get_devices(&num_devices);
 	struct ibv_context *rdma_dev = NULL;
+
+	if (num_devices < 1) {
+		log_fatal("No RDMA device found. Exiting..");
+		exit(EXIT_FAILURE);
+	}
+
+	if (!devname) {
+		log_info("Using default RDMA device %s", dev_list[0]->device->name);
+		return dev_list[0];
+	}
+
 	for (int i = 0; i < num_devices; ++i)
 		if (!strncmp(dev_list[i]->device->name, devname, strlen(devname))) {
 			rdma_dev = dev_list[i];
 			break;
 		}
+
 	if (!rdma_dev) {
-		log_fatal("Cannot find RDMA device %s", DEFAULT_DEV_IBV);
+		log_fatal("Cannot find RDMA device %s", devname);
 		exit(EXIT_FAILURE);
 	}
+
+	rdma_free_devices(dev_list);
+
 	return rdma_dev;
 }
 
@@ -734,34 +749,23 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		ibv_create_cq(channel->context, MAX_WR, (void *)conn, channel->comp_channel, 0);
 	ibv_req_notify_cq(qp_init_attr.send_cq, 0);
 	assert(qp_init_attr.send_cq);
-	// to use both in client's and server's initialization
+	qp_init_attr.qp_type = IBV_QPT_RC;
+
 	struct rdma_addrinfo hints, *res;
-	char *ip;
-	char *port;
-	unsigned long host_copy_size = 1024;
-	char *host_copy = (char *)malloc(host_copy_size);
-	if (host_copy_size < strlen(hosts[0])) {
-		log_fatal("Potential buffer overflow string len is %d allocated buffer is %d", strlen(hosts[0]),
-			  host_copy_size);
-		exit(EXIT_FAILURE);
-	}
-	char *strtok_state = NULL;
-	strcpy(host_copy, hosts[0]);
 	memset(&hints, 0, sizeof hints);
 	hints.ai_port_space = RDMA_PS_TCP;
-	int idx = strlen(host_copy) - 1;
-	char special_character[2] = { '\0', '\0' };
-	while (idx >= 0) {
-		if (host_copy[idx] == ':' || host_copy[idx] == '-') {
-			special_character[0] = host_copy[idx];
-			break;
-		}
-		--idx;
-	}
-	ip = strtok_r(host_copy, special_character, &strtok_state);
-	port = strtok_r(NULL, special_character, &strtok_state);
 
-	log_info("Connecting to %s at port %s\n", ip, port);
+	char host[1024];
+	strcpy(host, hosts[0]);
+	char *ip = host;
+	char *port;
+	char *colon;
+	for (colon = host; *colon != ':'; ++colon)
+		;
+	*colon = '\0';
+	port = colon + 1;
+
+	log_info("Connecting to %s at port %s", ip, port);
 	int ret = rdma_getaddrinfo(ip, port, &hints, &res);
 	if (ret) {
 		log_fatal("rdma_getaddrinfo: %s, %s\n", hosts[0], strerror(errno));
@@ -819,7 +823,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		log_fatal("rdma_post_send: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-	free(host_copy);
+	/*free(host_copy);*/
 	switch (type) {
 	case MASTER_TO_REPLICA_CONNECTION:
 		log_info("Remote side accepted created a new MASTER_TO_REPLICA_CONNECTION");
@@ -936,11 +940,14 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	__sync_fetch_and_add(&channel->nused, 1);
 }
 
-void crdma_init_generic_create_channel(struct channel_rdma *channel)
+void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_devname)
 {
 	int i;
 	channel->sockfd = 0;
-	channel->context = open_ibv_device(DEFAULT_DEV_IBV);
+	if (ib_devname)
+		channel->context = get_rdma_device_context(ib_devname);
+	else
+		channel->context = get_rdma_device_context(NULL);
 
 	channel->comp_channel = ibv_create_comp_channel(channel->context);
 	if (channel->comp_channel == 0) {
@@ -991,7 +998,7 @@ void crdma_init_generic_create_channel(struct channel_rdma *channel)
 	}
 }
 
-struct channel_rdma *crdma_client_create_channel(void)
+struct channel_rdma *crdma_client_create_channel(char *ib_devname)
 {
 	struct channel_rdma *channel;
 
@@ -1006,7 +1013,7 @@ struct channel_rdma *crdma_client_create_channel(void)
 	else
 		channel->spinning_num_th = SPINNING_NUM_TH_CLI;
 #endif
-	crdma_init_generic_create_channel(channel);
+	crdma_init_generic_create_channel(channel, ib_devname);
 
 	return channel;
 }

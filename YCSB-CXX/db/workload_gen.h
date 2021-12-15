@@ -19,6 +19,10 @@ int return_wl(std::string &wl)
 		return 4;
 	else if (wl == "l")
 		return 5;
+	else if (wl == "sd40")
+		return 6;
+	else if (wl == "sd80")
+		return 7;
 	else {
 		std::cout << "Error unknown workload specified" << std::endl;
 		assert(0);
@@ -62,6 +66,24 @@ int choose_wl(std::string &wl, const int &x)
 		return 1;
 	case 5:
 		return 2;
+	case 6:
+		if (x < 4)
+			return 0;
+		else if (x >= 4 && x < 7)
+			return 1;
+		else
+			return 2;
+
+		break;
+	case 7:
+		if (x < 8)
+			return 0;
+		else if (x == 8)
+			return 1;
+		else
+			return 2;
+
+		break;
 	default:
 		assert(0);
 		std::cout << "Unknown workload given" << std::endl;

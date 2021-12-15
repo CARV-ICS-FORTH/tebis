@@ -69,7 +69,8 @@ class kreonRBlockingClientDB : public YCSBDB {
 	{
 		struct timeval start;
 
-		if (krc_init(ZK_HOST, ZK_PORT) != KRC_SUCCESS) {
+		std::string zookeeper = props.GetProperty("zookeeperEndpoint", "localhost:2181");
+		if (krc_init((char *)zookeeper.c_str()) != KRC_SUCCESS) {
 			log_fatal("Failed to init client at zookeeper host %s port %d", ZK_HOST, ZK_PORT);
 			exit(EXIT_FAILURE);
 		}
