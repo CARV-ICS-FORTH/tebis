@@ -233,6 +233,9 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	return;
 }
 
+extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
+				  int *zk_rc);
+
 static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
@@ -247,7 +250,8 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 		if (cps == NULL) {
 			/*ok update server info from zookeeper*/
 			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
-			if (krm_get_server_info(mydesc, hostname, &cps->server) == KREON_FAILURE) {
+			int rc = krm_zk_get_server_name(hostname, mydesc, &cps->server, NULL);
+			if (rc) {
 				log_fatal("Failed to refresh info for server %s", hostname);
 				exit(EXIT_FAILURE);
 			}

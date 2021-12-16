@@ -894,8 +894,8 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 	}
 }
 
-static int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
-				  int *zk_rc)
+int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
+			   int *zk_rc)
 {
 	/*check if you are hostname-RDMA_port belongs to the project*/
 	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
@@ -1575,20 +1575,4 @@ retry:
 		exit(EXIT_FAILURE);
 	}
 	return r_desc;
-}
-
-int krm_get_server_info(struct krm_server_desc *my_desc, char *hostname, struct krm_server_name *server)
-{
-	struct Stat stat;
-	int ret;
-	char *path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, hostname);
-	int buffer_len = sizeof(struct krm_server_name);
-	int rc = zoo_get(my_desc->zh, path, 0, (char *)server, &buffer_len, &stat);
-	if (rc != ZOK) {
-		log_warn("Failed to refresh server info %s with code %s", hostname, zku_op2String(rc));
-		ret = KREON_FAILURE;
-	} else
-		ret = KREON_SUCCESS;
-	free(path);
-	return ret;
 }
