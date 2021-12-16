@@ -198,7 +198,6 @@ struct channel_rdma {
 	struct worker_group *spinning_thread_group
 		[SPINNING_NUM_TH]; /*gesalous new staff, references to worker threads per spinning thread*/
 	SIMPLE_CONCURRENT_LIST *spin_list[SPINNING_NUM_TH];
-	SIMPLE_CONCURRENT_LIST *idle_conn_list[SPINNING_NUM_TH];
 	pthread_mutex_t spin_list_conn_lock[SPINNING_NUM_TH]; /*protectes the per spinnign thread connection list*/
 
 	int spin_num[SPINNING_NUM_TH]; // Number of connections open
@@ -239,11 +238,6 @@ typedef struct connection_rdma {
 	sem_t congestion_control; /*used for congestion control during send rdma operation*/
 	volatile uint64_t sleeping_workers;
 	volatile uint64_t offset;
-	/*handled only by the spinning thread, shows how many times
-   this connection was idle. After a threashold it will be downgraded to
-	 IDLE connection list of the channel*/
-	uint64_t idle_iterations;
-	uint32_t priority;
 	/*to which worker this connection has been assigned to*/
 	int worker_id;
 	/*</gesalous>*/
@@ -325,7 +319,6 @@ void disconnect_and_close_connection(connection_rdma *conn);
 void ec_sig_handler(int signo);
 uint32_t wait_for_payload_arrival(msg_header *hdr);
 int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_message_context *msg_ctx);
-void tu_rdma_init_connection(struct connection_rdma *conn);
 
 void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length);
 void _zero_rendezvous_locations(msg_header *msg);

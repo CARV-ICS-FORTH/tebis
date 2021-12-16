@@ -148,7 +148,7 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 						 connection_type type)
 {
 	/*gesalous, This is the path where it creates the useless memory queues*/
-	tu_rdma_init_connection(conn);
+	memset(conn, 0, sizeof(struct connection_rdma));
 	conn->type = type;
 	conn->channel = channel;
 	return;
@@ -692,14 +692,6 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	return KREON_SUCCESS;
 }
 
-void _update_connection_score(int spinning_list_type, connection_rdma *conn)
-{
-	if (spinning_list_type == HIGH_PRIORITY)
-		conn->idle_iterations = 0;
-	else
-		++conn->idle_iterations;
-}
-
 static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
@@ -750,7 +742,6 @@ static void *server_spinning_thread_kernel(void *args)
 	volatile uint32_t recv;
 
 	int spinning_thread_id; // = spinner->spinner_id;
-	int spinning_list_type;
 	int rc;
 
 	sigemptyset(&sa.sa_mask);
@@ -825,45 +816,13 @@ static void *server_spinning_thread_kernel(void *args)
 
 	while (1) {
 		// gesalous, iterate the connection list of this channel for new messages
-		if (count < 10) {
-			node = spinner->conn_list->first;
-			spinning_list_type = HIGH_PRIORITY;
-		} else {
-			node = spinner->idle_conn_list->first;
-			spinning_list_type = LOW_PRIORITY;
-			count = 0;
-		}
+		node = spinner->conn_list->first;
 
 		prev_node = NULL;
 		ds_resume_halted_tasks(spinner);
 		ds_check_idle_workers(spinner);
 
 		while (node != NULL) {
-			/*check for resumed tasks to be rescheduled*/
-			// for (int i = 0; i < DS_POOL_NUM; i++) {
-			//	struct krm_work_task *task;
-			//	task =
-			// utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-			//	if (task != NULL) {
-			//		assert(task->r_desc != NULL);
-			// log_info("Rescheduling task");
-			//		rc = assign_job_to_worker(spinner, task->conn,
-			// task->msg, task);
-			//		if (rc == KREON_FAILURE) {
-			//			log_fatal("Failed to reschedule task");
-			//			assert(0);
-			//			exit(EXIT_FAILURE);
-			//		}
-			//	}
-			//}
-			// for (int i = 0; i < spinner->num_workers; ++i) {
-			//	if (spinner->worker[i].idle_time > max_idle_time_usec &&
-			//	    utils_queue_used_slots(&spinner->worker[i].work_queue) == 0
-			//&&
-			//	    spinner->worker[i].status == BUSY)
-			//		spinner->worker[i].status = IDLE_SLEEPING;
-			//}
-
 			conn = (connection_rdma *)node->data;
 
 			if (conn->status != CONNECTION_OK)
@@ -874,7 +833,6 @@ static void *server_spinning_thread_kernel(void *args)
 
 			/*messages belonging to data path category*/
 			if (recv == TU_RDMA_REGULAR_MSG) {
-				_update_connection_score(spinning_list_type, conn);
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
 					/*payload have not arrived yet check next connection*/
@@ -885,17 +843,14 @@ static void *server_spinning_thread_kernel(void *args)
 				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
 				if (rc == KREON_FAILURE) {
 					// all workers are busy let's see messages from other connections
-					//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
 					// Caution! message not consumed leave the rendezvous points as is
 					hdr->receive = recv;
 					goto iterate_next_element;
 				}
 
-				/**
-* Set the new rendezvous point, be careful for the case that the
-* rendezvous is
-* outsize of the rdma_memory_regions->remote_memory_buffer
-* */
+				/* Set the new rendezvous point, be careful for the case that the rendezvous is outsize of the
+				 * rdma_memory_regions->remote_memory_buffer
+				 */
 				_update_rendezvous_location(conn, message_size);
 #ifdef DEBUG_RESET_RENDEZVOUS
 				extern unsigned detected_operations;
@@ -910,19 +865,15 @@ static void *server_spinning_thread_kernel(void *args)
 				}
 
 				if (hdr->type == DISCONNECT) {
-					// Warning! the guy that consumes/handles the message is
-					// responsible
-					// for zeroing
-					// the message's segments for possible future rendezvous points.
-					// This
-					// is done
-					// inside free_rdma_received_message function
+					/* Warning! the guy that consumes/handles the message is responsible for zeroing the message's
+					 * segments for possible future rendezvous points. This is done inside free_rdma_received_message
+					 * function
+					 */
 
 					log_info("Disconnect operation bye bye mr Client garbage collection "
 						 "follows");
-					// FIXME these operations might need to be atomic with more than
-					// one
-					// spinning threads
+					// NOTE these operations might need to be atomic with more than one spinning threads
+					// (we currently only support a single spinning thread per worker)
 					struct channel_rdma *channel = conn->channel;
 					// Decrement spinning thread's connections and total connections
 					--channel->spin_num[channel->spinning_conn % channel->spinning_num_th];
@@ -930,36 +881,6 @@ static void *server_spinning_thread_kernel(void *args)
 					_zero_rendezvous_locations(hdr);
 					_update_rendezvous_location(conn, message_size);
 					close_and_free_RDMA_connection(channel, conn);
-					goto iterate_next_element;
-				} else if (hdr->type == CHANGE_CONNECTION_PROPERTIES_REQUEST) {
-					log_warn("Remote side wants to change its connection properties\n");
-					set_connection_property_req *req = (set_connection_property_req *)hdr->data;
-
-					if (req->desired_priority_level == HIGH_PRIORITY) {
-						log_warn("Remote side wants to pin its connection\n");
-						/*pin this conn bitches!*/
-						conn->priority = HIGH_PRIORITY;
-						msg_header *reply = allocate_rdma_message(
-							conn, 0, CHANGE_CONNECTION_PROPERTIES_REPLY);
-						reply->request_message_local_addr = hdr->request_message_local_addr;
-						send_rdma_message(conn, reply);
-
-						if (spinning_list_type == LOW_PRIORITY) {
-							log_warn("Upgrading its connection\n");
-							_zero_rendezvous_locations(hdr);
-							_update_rendezvous_location(conn, message_size);
-							goto upgrade_connection;
-						} else {
-							_zero_rendezvous_locations(hdr);
-							_update_rendezvous_location(conn, message_size);
-						}
-					}
-				} else if (hdr->type == CHANGE_CONNECTION_PROPERTIES_REPLY) {
-					assert(0);
-					((msg_header *)hdr->request_message_local_addr)->ack_arrived = KR_REP_ARRIVED;
-					/*do nothing for now*/
-					_zero_rendezvous_locations(hdr);
-					_update_rendezvous_location(conn, message_size);
 					goto iterate_next_element;
 				} else {
 					log_fatal("unknown message type for connetion properties unknown "
@@ -1018,17 +939,11 @@ static void *server_spinning_thread_kernel(void *args)
 				msg->request_message_local_addr = NULL;
 				__send_rdma_message(conn, msg, NULL);
 
-				// DPRINT("SERVER: Client I AM READY reply will be send at %llu
-				// length
-				// %d type %d message size %d id %llu\n",
-				//(LLU)hdr->reply,hdr->reply_length,
-				// hdr->type,message_size,hdr->MR);
+				// DPRINT("SERVER: Client I AM READY reply will be send at %llu length %d type %d message size %d id
+				// %llu\n",
+				//(LLU)hdr->reply,hdr->reply_length, hdr->type,message_size,hdr->MR);
 				goto iterate_next_element;
 			} else {
-				if (spinning_list_type == HIGH_PRIORITY)
-					++conn->idle_iterations;
-				else if (conn->idle_iterations > 0)
-					--conn->idle_iterations;
 				goto iterate_next_element;
 			}
 
@@ -1037,39 +952,9 @@ static void *server_spinning_thread_kernel(void *args)
 				log_warn("garbage collection");
 				pthread_mutex_lock(&spinner->conn_list_lock);
 				next_node = node->next; /*Caution prev_node remains intact*/
-				if (spinning_list_type == HIGH_PRIORITY)
-					delete_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
-				else
-					delete_element_from_simple_concurrent_list(spinner->idle_conn_list, prev_node,
-										   node);
+				delete_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
 				node = next_node;
 				pthread_mutex_unlock(&spinner->conn_list_lock);
-			} else if (0
-                 /*spinning_list_type == HIGH_PRIORITY &&
-						conn->priority != HIGH_PRIORITY &&//we don't touch high priority connections
-						conn->idle_iterations > MAX_IDLE_ITERATIONS*/) {
-				log_warn("Downgrading connection...");
-				pthread_mutex_lock(&spinner->conn_list_lock);
-				next_node = node->next; /*Caution prev_node remains intact*/
-				remove_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
-				add_node_in_simple_concurrent_list(spinner->idle_conn_list, node);
-				conn->responsible_spin_list = spinner->idle_conn_list;
-				conn->idle_iterations = 0;
-				node = next_node;
-				pthread_mutex_unlock(&spinner->conn_list_lock);
-				log_warn("Downgrading connection...D O N E ");
-			} else if (spinning_list_type == LOW_PRIORITY && conn->idle_iterations > MAX_IDLE_ITERATIONS) {
-			upgrade_connection:
-				log_warn("Upgrading connection...");
-				pthread_mutex_lock(&spinner->conn_list_lock);
-				next_node = node->next; /*Caution prev_node remains intact*/
-				remove_element_from_simple_concurrent_list(spinner->idle_conn_list, prev_node, node);
-				add_node_in_simple_concurrent_list(spinner->conn_list, node);
-				conn->responsible_spin_list = spinner->conn_list;
-				conn->idle_iterations = 0;
-				node = next_node;
-				pthread_mutex_unlock(&spinner->conn_list_lock);
-				log_warn("Upgrading connection...D O N E");
 			} else {
 				prev_node = node;
 				node = node->next;

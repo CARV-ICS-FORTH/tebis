@@ -11,10 +11,6 @@ typedef enum kreon_op_status {
 	KREON_VALUE_TOO_LARGE
 } kreon_op_status;
 
-/*gesalous, priorities and properties regarding the conections*/
-#define HIGH_PRIORITY 1203
-#define LOW_PRIORITY 9829
-
 //TODO move properties to a configuration file
 #define RDMA_IP_FILTER "192.168.4."
 

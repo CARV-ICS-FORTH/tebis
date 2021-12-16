@@ -721,13 +721,6 @@ uint16_t ctx_get_local_lid(struct ibv_context *context, int port, struct ibv_por
 	return attr->lid;
 }
 
-void tu_rdma_init_connection(struct connection_rdma *conn)
-{
-	memset(conn, 0, sizeof(struct connection_rdma));
-	/*gesalous staff initialization*/
-	conn->idle_iterations = 0;
-}
-
 void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts, const int num_hosts,
 					     struct channel_rdma *channel, connection_type type)
 {
@@ -847,7 +840,6 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		exit(EXIT_FAILURE);
 	}
 	conn->remaining_bytes_in_remote_rdma_region = conn->rdma_memory_regions->memory_region_length;
-	conn->priority = LOW_PRIORITY; // FIXME I don't think I use this anymore
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
 
 	// Block until server sends memory region information
@@ -977,7 +969,6 @@ void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_de
 		for (i = 0; i < channel->spinning_num_th; i++) {
 			pthread_mutex_init(&channel->spin_list_conn_lock[i], NULL);
 			channel->spin_list[i] = init_simple_concurrent_list();
-			channel->idle_conn_list[i] = init_simple_concurrent_list();
 		}
 
 		for (i = 0; i < channel->spinning_num_th; i++) {
@@ -1041,7 +1032,7 @@ connection_rdma *crdma_client_create_connection_list_hosts(struct channel_rdma *
 		log_fatal("FATAL ERROR malloc failed\n");
 		exit(EXIT_FAILURE);
 	}
-	tu_rdma_init_connection(conn);
+	memset(conn, 0, sizeof(struct connection_rdma));
 	crdma_init_client_connection_list_hosts(conn, hosts, num_hosts, channel, type);
 	return conn;
 }
@@ -1457,12 +1448,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 									MESSAGE_SEGMENT_SIZE);
 					reset_circular_buffer(conn->send_circular_buf);
 					break;
-
-				case CHANGE_CONNECTION_PROPERTIES_REQUEST:
-				case CHANGE_CONNECTION_PROPERTIES_REPLY:
-					free_rdma_local_message(conn);
-					break;
-
 				case RESET_BUFFER:
 				case RESET_BUFFER_ACK:
 					break;
