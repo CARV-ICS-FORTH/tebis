@@ -816,13 +816,9 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			/*set the callback and context for remote compaction*/
 			log_info("Setting DB %s in replicated mode", t->db->db_desc->db_name);
 			bt_set_db_in_replicated_mode(t->db);
-#if RCO_EXPLICIT_IO
 			set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
 			set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
 			set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
-#else
-			bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
-#endif
 			bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 			rco_add_db_to_pool(server->compaction_pool, t);
 
@@ -1334,13 +1330,9 @@ void *krm_metadata_server(void *args)
 				/*set the callback and context for remote compaction*/
 				log_info("Setting DB %s in replicated mode", t->db->db_desc->db_name);
 				bt_set_db_in_replicated_mode(t->db);
-#if RCO_EXPLICIT_IO
 				set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
 				set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
 				set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
-#else
-				bt_set_compaction_callback(t->db->db_desc, &rco_send_index_to_group);
-#endif
 				bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
 				rco_add_db_to_pool(my_desc->compaction_pool, t);
 			}

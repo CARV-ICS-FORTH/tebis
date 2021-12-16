@@ -1832,11 +1832,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		//	 "level %d of region %s",
 		// g_req->num_buffers, g_req->level_id, r_desc->region->id);
 
-#if !RCO_EXPLICIT_IO
-		r_desc->level_cursor[g_req->level_id].state = DI_INIT;
-		r_desc->level_cursor[g_req->level_id].max_offset = g_req->index_offset;
-		log_info("Index offset set at %llu", r_desc->level_cursor[g_req->level_id].max_offset);
-#endif
 		log_info("DB %s Allocating %u and registering with RDMA buffers for remote "
 			 "compaction",
 			 r_desc->region->id, g_req->num_buffers);
@@ -1921,35 +1916,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				       SEGMENT_SIZE);
 		assert(s == f_req->seg_hash);
 
-// log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
-#if RCO_EXPLICIT_IO
+		// log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
 		di_rewrite_index_with_explicit_IO(r_desc->r_state->index_buffers[f_req->level_id][0]->addr, r_desc,
 						  f_req->primary_segment_offt, f_req->level_id);
-#else
-		struct segment_header *seg = seg_get_raw_index_segment(
-			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
-		seg->next_segment = NULL;
-
-		memcpy((char *)((uint64_t)seg + sizeof(segment_header)),
-		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr +
-			       sizeof(struct segment_header),
-		       SEGMENT_SIZE - sizeof(segment_header));
-		// add mapping to level's hash table
-		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
-		e->master_seg = f_req->primary_segment_offt;
-		e->my_seg = (uint64_t)seg - MAPPED;
-		HASH_ADD_PTR(r_desc->replica_index_map[f_req->level_id], master_seg, e);
-
-		di_rewrite_index(r_desc, f_req->level_id, f_req->tree_id);
-#endif
 		if (f_req->is_last) {
-#if !RCO_EXPLICIT_IO
-			if (r_desc->level_cursor[f_req->level_id].state != DI_COMPLETE) {
-				log_fatal("Failed to rewrite index");
-				assert(0);
-				exit(EXIT_FAILURE);
-			}
-#endif
 			/*translate root*/
 			if (!f_req->root_w && !f_req->root_r) {
 				log_fatal("Both roots can't be NULL");
@@ -2007,24 +1977,13 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// log_info("Ok primary says root_r[%u][%u] is NULL, ok",
 				// f_req->level_id, f_req->tree_id);
 			}
-// deregistering buffers
-#if RCO_EXPLICIT_IO
+			// deregistering buffers
 			free(r_desc->r_state->index_buffers[f_req->level_id][0]->addr);
 			if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][0])) {
 				log_fatal("Failed to deregister rdma buffer");
 				exit(EXIT_FAILURE);
 			}
 			r_desc->r_state->index_buffers[f_req->level_id][0] = NULL;
-#else
-			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
-				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
-				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
-					log_fatal("Failed to deregister rdma buffer");
-					exit(EXIT_FAILURE);
-				}
-				r_desc->r_state->index_buffers[f_req->level_id][i] = NULL;
-			}
-#endif
 			if (f_req->level_id > 1) {
 				seg_free_level(r_desc->db, f_req->level_id - 1, 0);
 			}
@@ -2128,21 +2087,16 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 					   (get_log->num_buffers * sizeof(struct ru_replica_log_buffer_seg)));
 			r_desc->r_state->num_buffers = get_log->num_buffers;
 			for (int i = 0; i < get_log->num_buffers; i++) {
-#if RCO_EXPLICIT_IO
 				if (posix_memalign(&addr, ALIGNMENT, get_log->buffer_size)) {
 					log_fatal("Failed to allocate aligned RDMA buffer");
 					perror("Reason\n");
 					exit(EXIT_FAILURE);
 				}
-#else
-				addr = malloc(get_log->buffer_size);
-#endif
 				r_desc->r_state->seg[i].segment_size = get_log->buffer_size;
 				r_desc->r_state->seg[i].mr =
 					rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
 			}
-			/*what is the next segment id that we should expect (for correctness
-* reasons)*/
+			/* what is the next segment id that we should expect (for correctness reasons) */
 			if (r_desc->db->db_desc->KV_log_size > 0 &&
 			    r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE == 0)
 				r_desc->r_state->next_segment_id_to_flush =
@@ -2260,7 +2214,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// diff);
 		if (!exists) {
 			++r_desc->r_state->next_segment_id_to_flush;
-#if RCO_EXPLICIT_IO
 			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
 			seg->next_segment = NULL;
 			seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
@@ -2269,11 +2222,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}
-#else
-			memcpy(disk_segment, seg, SEGMENT_SIZE);
-			disk_segment->next_segment = NULL;
-			disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
-#endif
 			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
 				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
 			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
@@ -2306,7 +2254,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// log_info("Added mapping for index for log %llu replica %llu",
 				// e->master_seg, e->my_seg);
 			}
-#if RCO_EXPLICIT_IO
 			if (!write_segment_with_explicit_IO(
 				    (char *)(uint64_t)seg + sizeof(struct segment_header),
 				    SEGMENT_SIZE - sizeof(struct segment_header),
@@ -2314,9 +2261,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}
-#else
-			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
-#endif
 		}
 
 		r_desc->db->db_desc->KV_log_size += diff;

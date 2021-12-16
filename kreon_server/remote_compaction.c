@@ -1059,11 +1059,7 @@ void rco_build_index(struct rco_build_index_task *task)
 	};
 
 	// parse log entries
-#if RCO_EXPLICIT_IO
 	char *kv = NULL;
-#else
-	char *kv = malloc(PREFIX_SIZE + sizeof(char *));
-#endif
 	struct rco_key *key = NULL;
 	struct rco_value *value = NULL;
 	struct segment_header *curr_segment = task->segment;
@@ -1079,21 +1075,9 @@ void rco_build_index(struct rco_build_index_task *task)
 		ins_req.metadata.level_id = 0;
 		ins_req.metadata.tree_id = 0; // will be filled properly by the engine
 		ins_req.metadata.special_split = 0;
-#if RCO_EXPLICIT_IO
 		ins_req.metadata.key_format = KV_FORMAT;
 		ins_req.metadata.append_to_log = 1;
 		kv = (char *)key;
-#else
-		ins_req.metadata.key_format = KV_PREFIX;
-		ins_req.metadata.append_to_log = 0;
-		int bytes_to_copy = PREFIX_SIZE;
-		if (key->size < PREFIX_SIZE) {
-			memset(kv, 0x00, PREFIX_SIZE);
-			bytes_to_copy = key->size;
-		}
-		memcpy(kv, key->key, bytes_to_copy);
-		*(uint64_t *)(kv + PREFIX_SIZE) = (uint64_t)key;
-#endif
 		ins_req.key_value_buf = kv;
 		int active_tree = task->r_desc->db->db_desc->levels[0].active_tree;
 		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
@@ -1131,9 +1115,6 @@ void rco_build_index(struct rco_build_index_task *task)
 			break;
 	}
 	//log_info("Done parsing segment");
-#if !RCO_EXPLICIT_IO
-	free(kv);
-#endif
 	return;
 }
 #endif
