@@ -60,12 +60,6 @@
 #define WORKER_THREAD_HIGH_PRIORITY_TASKS_PER_TURN 1
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 
-/*block the socket thread if there's no
-                                  * available memory to allocate to an
-                                  * incoming connection*/
-sem_t memory_steal_sem;
-volatile memory_region *backup_region = NULL;
-
 extern char *DB_NO_SPILLING;
 
 typedef struct prefix_table {
@@ -174,8 +168,6 @@ void *socket_thread(void *args)
 	pthread_setname_np(pthread_self(), "rdma_conn_thread");
 
 	log_info("Starting listener for new rdma connections thread at port %d", rdma_port);
-	sem_init(&memory_steal_sem, 0, 1); // sem_wait when using backup_region,
-	// spinning_thread will sem_post
 
 	struct ibv_qp_init_attr qp_init_attr;
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
@@ -911,14 +903,7 @@ static void *server_spinning_thread_kernel(void *args)
 				conn->control_location = hdr->data;
 
 				log_info("Received SERVER_I_AM_READY at %llu\n", (LLU)conn->rendezvous);
-				if (!backup_region) {
-					backup_region = conn->rdma_memory_regions;
-					conn->rdma_memory_regions = NULL;
-					sem_post(&memory_steal_sem);
-				} else {
-					mrpool_free_memory_region(&conn->rdma_memory_regions);
-				}
-				assert(backup_region);
+				mrpool_free_memory_region(&conn->rdma_memory_regions);
 
 				conn->rdma_memory_regions = conn->next_rdma_memory_regions;
 				conn->next_rdma_memory_regions = NULL;
