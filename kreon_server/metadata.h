@@ -246,7 +246,6 @@ enum di_decode_stage {
 	DI_COMPLETE
 };
 
-#if RCO_EXPLICIT_IO
 struct di_buffer {
 	struct krm_region_desc *r_desc;
 	char *data;
@@ -260,17 +259,6 @@ struct di_buffer {
 	uint8_t allocated;
 	enum di_decode_stage state;
 };
-#else
-struct di_cursor {
-	uint64_t max_offset;
-	uint64_t offset;
-	struct segment_header *segment;
-	char *addr;
-	uint32_t inc;
-	uint32_t curr_entry;
-	enum di_decode_stage state;
-};
-#endif
 
 enum krm_replica_buf_status { KRM_BUFS_UNINITIALIZED = 0, KRM_BUFS_INITIALIZING, KRM_BUFS_READY };
 struct krm_region_desc {
@@ -282,7 +270,6 @@ struct krm_region_desc {
 	pthread_rwlock_t replica_log_map_lock;
 	struct krm_segment_entry *replica_log_map;
 	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
-#if RCO_EXPLICIT_IO
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
@@ -291,9 +278,6 @@ struct krm_region_desc {
 	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
 	//Staff for deserializing the index at the replicas
 	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
-#else
-	struct di_cursor level_cursor[MAX_LEVELS];
-#endif
 
 	enum krm_region_role role;
 	db_handle *db;
@@ -404,7 +388,6 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
 void di_set_cursor_buf(char *buf);
 
-#if RCO_EXPLICIT_IO
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id);
 int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
@@ -412,9 +395,6 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 
 void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id);
-#else
-void di_rewrite_index(struct krm_region_desc *r_desc, uint8_t level_id, uint8_t tree_id);
-#endif
 
 #if RCO_BUILD_INDEX_AT_REPLICA
 struct rco_build_index_task {

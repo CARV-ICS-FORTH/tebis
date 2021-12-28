@@ -60,12 +60,6 @@
 #define WORKER_THREAD_HIGH_PRIORITY_TASKS_PER_TURN 1
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 
-/*block the socket thread if there's no
-                                  * available memory to allocate to an
-                                  * incoming connection*/
-sem_t memory_steal_sem;
-volatile memory_region *backup_region = NULL;
-
 extern char *DB_NO_SPILLING;
 
 typedef struct prefix_table {
@@ -148,7 +142,7 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 						 connection_type type)
 {
 	/*gesalous, This is the path where it creates the useless memory queues*/
-	tu_rdma_init_connection(conn);
+	memset(conn, 0, sizeof(struct connection_rdma));
 	conn->type = type;
 	conn->channel = channel;
 	return;
@@ -174,8 +168,6 @@ void *socket_thread(void *args)
 	pthread_setname_np(pthread_self(), "rdma_conn_thread");
 
 	log_info("Starting listener for new rdma connections thread at port %d", rdma_port);
-	sem_init(&memory_steal_sem, 0, 1); // sem_wait when using backup_region,
-	// spinning_thread will sem_post
 
 	struct ibv_qp_init_attr qp_init_attr;
 	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
@@ -692,14 +684,6 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	return KREON_SUCCESS;
 }
 
-void _update_connection_score(int spinning_list_type, connection_rdma *conn)
-{
-	if (spinning_list_type == HIGH_PRIORITY)
-		conn->idle_iterations = 0;
-	else
-		++conn->idle_iterations;
-}
-
 static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
@@ -750,7 +734,6 @@ static void *server_spinning_thread_kernel(void *args)
 	volatile uint32_t recv;
 
 	int spinning_thread_id; // = spinner->spinner_id;
-	int spinning_list_type;
 	int rc;
 
 	sigemptyset(&sa.sa_mask);
@@ -825,45 +808,13 @@ static void *server_spinning_thread_kernel(void *args)
 
 	while (1) {
 		// gesalous, iterate the connection list of this channel for new messages
-		if (count < 10) {
-			node = spinner->conn_list->first;
-			spinning_list_type = HIGH_PRIORITY;
-		} else {
-			node = spinner->idle_conn_list->first;
-			spinning_list_type = LOW_PRIORITY;
-			count = 0;
-		}
+		node = spinner->conn_list->first;
 
 		prev_node = NULL;
 		ds_resume_halted_tasks(spinner);
 		ds_check_idle_workers(spinner);
 
 		while (node != NULL) {
-			/*check for resumed tasks to be rescheduled*/
-			// for (int i = 0; i < DS_POOL_NUM; i++) {
-			//	struct krm_work_task *task;
-			//	task =
-			// utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-			//	if (task != NULL) {
-			//		assert(task->r_desc != NULL);
-			// log_info("Rescheduling task");
-			//		rc = assign_job_to_worker(spinner, task->conn,
-			// task->msg, task);
-			//		if (rc == KREON_FAILURE) {
-			//			log_fatal("Failed to reschedule task");
-			//			assert(0);
-			//			exit(EXIT_FAILURE);
-			//		}
-			//	}
-			//}
-			// for (int i = 0; i < spinner->num_workers; ++i) {
-			//	if (spinner->worker[i].idle_time > max_idle_time_usec &&
-			//	    utils_queue_used_slots(&spinner->worker[i].work_queue) == 0
-			//&&
-			//	    spinner->worker[i].status == BUSY)
-			//		spinner->worker[i].status = IDLE_SLEEPING;
-			//}
-
 			conn = (connection_rdma *)node->data;
 
 			if (conn->status != CONNECTION_OK)
@@ -874,7 +825,6 @@ static void *server_spinning_thread_kernel(void *args)
 
 			/*messages belonging to data path category*/
 			if (recv == TU_RDMA_REGULAR_MSG) {
-				_update_connection_score(spinning_list_type, conn);
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
 					/*payload have not arrived yet check next connection*/
@@ -885,17 +835,14 @@ static void *server_spinning_thread_kernel(void *args)
 				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
 				if (rc == KREON_FAILURE) {
 					// all workers are busy let's see messages from other connections
-					//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
 					// Caution! message not consumed leave the rendezvous points as is
 					hdr->receive = recv;
 					goto iterate_next_element;
 				}
 
-				/**
-* Set the new rendezvous point, be careful for the case that the
-* rendezvous is
-* outsize of the rdma_memory_regions->remote_memory_buffer
-* */
+				/* Set the new rendezvous point, be careful for the case that the rendezvous is outsize of the
+				 * rdma_memory_regions->remote_memory_buffer
+				 */
 				_update_rendezvous_location(conn, message_size);
 #ifdef DEBUG_RESET_RENDEZVOUS
 				extern unsigned detected_operations;
@@ -910,19 +857,15 @@ static void *server_spinning_thread_kernel(void *args)
 				}
 
 				if (hdr->type == DISCONNECT) {
-					// Warning! the guy that consumes/handles the message is
-					// responsible
-					// for zeroing
-					// the message's segments for possible future rendezvous points.
-					// This
-					// is done
-					// inside free_rdma_received_message function
+					/* Warning! the guy that consumes/handles the message is responsible for zeroing the message's
+					 * segments for possible future rendezvous points. This is done inside free_rdma_received_message
+					 * function
+					 */
 
 					log_info("Disconnect operation bye bye mr Client garbage collection "
 						 "follows");
-					// FIXME these operations might need to be atomic with more than
-					// one
-					// spinning threads
+					// NOTE these operations might need to be atomic with more than one spinning threads
+					// (we currently only support a single spinning thread per worker)
 					struct channel_rdma *channel = conn->channel;
 					// Decrement spinning thread's connections and total connections
 					--channel->spin_num[channel->spinning_conn % channel->spinning_num_th];
@@ -930,36 +873,6 @@ static void *server_spinning_thread_kernel(void *args)
 					_zero_rendezvous_locations(hdr);
 					_update_rendezvous_location(conn, message_size);
 					close_and_free_RDMA_connection(channel, conn);
-					goto iterate_next_element;
-				} else if (hdr->type == CHANGE_CONNECTION_PROPERTIES_REQUEST) {
-					log_warn("Remote side wants to change its connection properties\n");
-					set_connection_property_req *req = (set_connection_property_req *)hdr->data;
-
-					if (req->desired_priority_level == HIGH_PRIORITY) {
-						log_warn("Remote side wants to pin its connection\n");
-						/*pin this conn bitches!*/
-						conn->priority = HIGH_PRIORITY;
-						msg_header *reply = allocate_rdma_message(
-							conn, 0, CHANGE_CONNECTION_PROPERTIES_REPLY);
-						reply->request_message_local_addr = hdr->request_message_local_addr;
-						send_rdma_message(conn, reply);
-
-						if (spinning_list_type == LOW_PRIORITY) {
-							log_warn("Upgrading its connection\n");
-							_zero_rendezvous_locations(hdr);
-							_update_rendezvous_location(conn, message_size);
-							goto upgrade_connection;
-						} else {
-							_zero_rendezvous_locations(hdr);
-							_update_rendezvous_location(conn, message_size);
-						}
-					}
-				} else if (hdr->type == CHANGE_CONNECTION_PROPERTIES_REPLY) {
-					assert(0);
-					((msg_header *)hdr->request_message_local_addr)->ack_arrived = KR_REP_ARRIVED;
-					/*do nothing for now*/
-					_zero_rendezvous_locations(hdr);
-					_update_rendezvous_location(conn, message_size);
 					goto iterate_next_element;
 				} else {
 					log_fatal("unknown message type for connetion properties unknown "
@@ -990,14 +903,7 @@ static void *server_spinning_thread_kernel(void *args)
 				conn->control_location = hdr->data;
 
 				log_info("Received SERVER_I_AM_READY at %llu\n", (LLU)conn->rendezvous);
-				if (!backup_region) {
-					backup_region = conn->rdma_memory_regions;
-					conn->rdma_memory_regions = NULL;
-					sem_post(&memory_steal_sem);
-				} else {
-					mrpool_free_memory_region(&conn->rdma_memory_regions);
-				}
-				assert(backup_region);
+				mrpool_free_memory_region(&conn->rdma_memory_regions);
 
 				conn->rdma_memory_regions = conn->next_rdma_memory_regions;
 				conn->next_rdma_memory_regions = NULL;
@@ -1018,17 +924,11 @@ static void *server_spinning_thread_kernel(void *args)
 				msg->request_message_local_addr = NULL;
 				__send_rdma_message(conn, msg, NULL);
 
-				// DPRINT("SERVER: Client I AM READY reply will be send at %llu
-				// length
-				// %d type %d message size %d id %llu\n",
-				//(LLU)hdr->reply,hdr->reply_length,
-				// hdr->type,message_size,hdr->MR);
+				// DPRINT("SERVER: Client I AM READY reply will be send at %llu length %d type %d message size %d id
+				// %llu\n",
+				//(LLU)hdr->reply,hdr->reply_length, hdr->type,message_size,hdr->MR);
 				goto iterate_next_element;
 			} else {
-				if (spinning_list_type == HIGH_PRIORITY)
-					++conn->idle_iterations;
-				else if (conn->idle_iterations > 0)
-					--conn->idle_iterations;
 				goto iterate_next_element;
 			}
 
@@ -1037,39 +937,9 @@ static void *server_spinning_thread_kernel(void *args)
 				log_warn("garbage collection");
 				pthread_mutex_lock(&spinner->conn_list_lock);
 				next_node = node->next; /*Caution prev_node remains intact*/
-				if (spinning_list_type == HIGH_PRIORITY)
-					delete_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
-				else
-					delete_element_from_simple_concurrent_list(spinner->idle_conn_list, prev_node,
-										   node);
+				delete_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
 				node = next_node;
 				pthread_mutex_unlock(&spinner->conn_list_lock);
-			} else if (0
-                 /*spinning_list_type == HIGH_PRIORITY &&
-						conn->priority != HIGH_PRIORITY &&//we don't touch high priority connections
-						conn->idle_iterations > MAX_IDLE_ITERATIONS*/) {
-				log_warn("Downgrading connection...");
-				pthread_mutex_lock(&spinner->conn_list_lock);
-				next_node = node->next; /*Caution prev_node remains intact*/
-				remove_element_from_simple_concurrent_list(spinner->conn_list, prev_node, node);
-				add_node_in_simple_concurrent_list(spinner->idle_conn_list, node);
-				conn->responsible_spin_list = spinner->idle_conn_list;
-				conn->idle_iterations = 0;
-				node = next_node;
-				pthread_mutex_unlock(&spinner->conn_list_lock);
-				log_warn("Downgrading connection...D O N E ");
-			} else if (spinning_list_type == LOW_PRIORITY && conn->idle_iterations > MAX_IDLE_ITERATIONS) {
-			upgrade_connection:
-				log_warn("Upgrading connection...");
-				pthread_mutex_lock(&spinner->conn_list_lock);
-				next_node = node->next; /*Caution prev_node remains intact*/
-				remove_element_from_simple_concurrent_list(spinner->idle_conn_list, prev_node, node);
-				add_node_in_simple_concurrent_list(spinner->conn_list, node);
-				conn->responsible_spin_list = spinner->conn_list;
-				conn->idle_iterations = 0;
-				node = next_node;
-				pthread_mutex_unlock(&spinner->conn_list_lock);
-				log_warn("Upgrading connection...D O N E");
 			} else {
 				prev_node = node;
 				node = node->next;
@@ -1832,11 +1702,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		//	 "level %d of region %s",
 		// g_req->num_buffers, g_req->level_id, r_desc->region->id);
 
-#if !RCO_EXPLICIT_IO
-		r_desc->level_cursor[g_req->level_id].state = DI_INIT;
-		r_desc->level_cursor[g_req->level_id].max_offset = g_req->index_offset;
-		log_info("Index offset set at %llu", r_desc->level_cursor[g_req->level_id].max_offset);
-#endif
 		log_info("DB %s Allocating %u and registering with RDMA buffers for remote "
 			 "compaction",
 			 r_desc->region->id, g_req->num_buffers);
@@ -1921,35 +1786,10 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				       SEGMENT_SIZE);
 		assert(s == f_req->seg_hash);
 
-// log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
-#if RCO_EXPLICIT_IO
+		// log_info("Primary hash %llu mine %llu", s, f_req->seg_hash);
 		di_rewrite_index_with_explicit_IO(r_desc->r_state->index_buffers[f_req->level_id][0]->addr, r_desc,
 						  f_req->primary_segment_offt, f_req->level_id);
-#else
-		struct segment_header *seg = seg_get_raw_index_segment(
-			r_desc->db->volume_desc, &r_desc->db->db_desc->levels[f_req->level_id], f_req->tree_id);
-		seg->next_segment = NULL;
-
-		memcpy((char *)((uint64_t)seg + sizeof(segment_header)),
-		       r_desc->r_state->index_buffers[f_req->level_id][f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS]->addr +
-			       sizeof(struct segment_header),
-		       SEGMENT_SIZE - sizeof(segment_header));
-		// add mapping to level's hash table
-		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
-		e->master_seg = f_req->primary_segment_offt;
-		e->my_seg = (uint64_t)seg - MAPPED;
-		HASH_ADD_PTR(r_desc->replica_index_map[f_req->level_id], master_seg, e);
-
-		di_rewrite_index(r_desc, f_req->level_id, f_req->tree_id);
-#endif
 		if (f_req->is_last) {
-#if !RCO_EXPLICIT_IO
-			if (r_desc->level_cursor[f_req->level_id].state != DI_COMPLETE) {
-				log_fatal("Failed to rewrite index");
-				assert(0);
-				exit(EXIT_FAILURE);
-			}
-#endif
 			/*translate root*/
 			if (!f_req->root_w && !f_req->root_r) {
 				log_fatal("Both roots can't be NULL");
@@ -2007,24 +1847,13 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// log_info("Ok primary says root_r[%u][%u] is NULL, ok",
 				// f_req->level_id, f_req->tree_id);
 			}
-// deregistering buffers
-#if RCO_EXPLICIT_IO
+			// deregistering buffers
 			free(r_desc->r_state->index_buffers[f_req->level_id][0]->addr);
 			if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][0])) {
 				log_fatal("Failed to deregister rdma buffer");
 				exit(EXIT_FAILURE);
 			}
 			r_desc->r_state->index_buffers[f_req->level_id][0] = NULL;
-#else
-			for (int i = 0; i < MAX_REPLICA_INDEX_BUFFERS; i++) {
-				free(r_desc->r_state->index_buffers[f_req->level_id][i]->addr);
-				if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][i])) {
-					log_fatal("Failed to deregister rdma buffer");
-					exit(EXIT_FAILURE);
-				}
-				r_desc->r_state->index_buffers[f_req->level_id][i] = NULL;
-			}
-#endif
 			if (f_req->level_id > 1) {
 				seg_free_level(r_desc->db, f_req->level_id - 1, 0);
 			}
@@ -2128,21 +1957,16 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 					   (get_log->num_buffers * sizeof(struct ru_replica_log_buffer_seg)));
 			r_desc->r_state->num_buffers = get_log->num_buffers;
 			for (int i = 0; i < get_log->num_buffers; i++) {
-#if RCO_EXPLICIT_IO
 				if (posix_memalign(&addr, ALIGNMENT, get_log->buffer_size)) {
 					log_fatal("Failed to allocate aligned RDMA buffer");
 					perror("Reason\n");
 					exit(EXIT_FAILURE);
 				}
-#else
-				addr = malloc(get_log->buffer_size);
-#endif
 				r_desc->r_state->seg[i].segment_size = get_log->buffer_size;
 				r_desc->r_state->seg[i].mr =
 					rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
 			}
-			/*what is the next segment id that we should expect (for correctness
-* reasons)*/
+			/* what is the next segment id that we should expect (for correctness reasons) */
 			if (r_desc->db->db_desc->KV_log_size > 0 &&
 			    r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE == 0)
 				r_desc->r_state->next_segment_id_to_flush =
@@ -2260,7 +2084,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		// diff);
 		if (!exists) {
 			++r_desc->r_state->next_segment_id_to_flush;
-#if RCO_EXPLICIT_IO
 			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
 			seg->next_segment = NULL;
 			seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
@@ -2269,11 +2092,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}
-#else
-			memcpy(disk_segment, seg, SEGMENT_SIZE);
-			disk_segment->next_segment = NULL;
-			disk_segment->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
-#endif
 			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
 				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
 			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
@@ -2306,7 +2124,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				// log_info("Added mapping for index for log %llu replica %llu",
 				// e->master_seg, e->my_seg);
 			}
-#if RCO_EXPLICIT_IO
 			if (!write_segment_with_explicit_IO(
 				    (char *)(uint64_t)seg + sizeof(struct segment_header),
 				    SEGMENT_SIZE - sizeof(struct segment_header),
@@ -2314,9 +2131,6 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 				log_fatal("Failed to write segment with explicit I/O");
 				exit(EXIT_FAILURE);
 			}
-#else
-			memcpy((struct segment_header *)last_log_segment, seg, SEGMENT_SIZE);
-#endif
 		}
 
 		r_desc->db->db_desc->KV_log_size += diff;
