@@ -109,7 +109,7 @@ find_library(
   PATHS ${Zookeeper_LIB_PATHS})
 
 if(NOT Zookeeper_INCLUDE_DIR)
-  message("Could not find zookeeper header")
+  message(FATAL_ERROR "Could not find zookeeper header Build will exit")
 else()
   message("Zookeeper headers at ${Zookeeper_INCLUDE_DIR}")
   include_directories(${Zookeeper_INCLUDE_DIR})
