@@ -102,7 +102,7 @@ endif()
 
 set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
 find_path(Zookeeper_INCLUDE_DIR zookeeper.h /usr/local/include /usr/include
-          /usr/include/zookeeper)
+          /usr/include/zookeeper /usr/local/include/zookeeper)
 find_library(
   Zookeeper_LIBRARY
   NAMES libzookeeper_mt.a
