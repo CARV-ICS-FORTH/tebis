@@ -45,6 +45,12 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/innerout/libbloom
   GIT_TAG cmake)
 
+FetchContent_Declare(
+  cmake-scripts
+  GIT_REPOSITORY https://github.com/StableCoder/cmake-scripts.git
+  GIT_TAG main
+  GIT_PROGRESS TRUE)
+
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
 ExternalProject_Add(
@@ -66,6 +72,7 @@ FetchContent_GetProperties(uthash)
 FetchContent_GetProperties(log)
 FetchContent_GetProperties(libbloom)
 FetchContent_GetProperties(cjson)
+FetchContent_GetProperties(cmake-scripts)
 
 if(NOT uthash_POPULATED)
   FetchContent_Populate(uthash)
@@ -85,6 +92,12 @@ if(NOT libbloom_POPULATED)
   include_directories(${libbloom_SOURCE_DIR}/include)
   message(${libbloom_SOURCE_DIR}/include)
   FetchContent_MakeAvailable(libbloom)
+endif()
+
+if(NOT cmake-scripts_POPULATED)
+  FetchContent_Populate(cmake-scripts)
+  FetchContent_MakeAvailable(cmake-scripts)
+  include(${cmake-scripts_SOURCE_DIR}/sanitizers.cmake)
 endif()
 
 set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
@@ -128,9 +141,6 @@ set(CMAKE_C_FLAGS_DEBUG
 set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall")
 set(CMAKE_CXX_FLAGS_DEBUG
     "${CMAKE_CXX_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
-
-# set(CMAKE_C_FLAGS "-fsanitize=address -static-libasan") set(CMAKE_CXX_FLAGS
-# "-fsanitize=address -static-libasan")
 
 if(Zookeeper_LIBRARY)
   add_subdirectory(kreon_rdma)
