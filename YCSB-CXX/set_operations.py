@@ -2,7 +2,7 @@
 
 import sys, os
 
-workloads_folder = "ycsb_execution_plans"
+workloads_folder = "workloads"
 
 if len(sys.argv) != 4:
     print(
@@ -32,7 +32,7 @@ for wfilename in ["workloada", "workloadb", "workloadc", "workloadd", "workloadf
     newwfile.close()
     os.system("mv " + "tmp_" + wfilename + " " + workloads_folder + "/" + wfilename)
 
-wfilename = "workloada_load"
+wfilename = "workloada"
 wfile = open(workloads_folder + "/" + wfilename, "r")
 newwfile = open("tmp_" + wfilename, "w")
 for line in wfile:
