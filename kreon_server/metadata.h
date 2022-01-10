@@ -202,7 +202,7 @@ struct ru_replica_state {
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	int num_buffers;
-	struct ru_replica_log_buffer_seg seg[];
+	struct ru_replica_log_buffer_seg seg[RU_REPLICA_NUM_SEGMENTS];
 };
 
 struct krm_server_name {

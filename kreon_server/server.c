@@ -1634,7 +1634,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
 				//	 *task->replicated_bytes[i], i, task->kv_size,
 				//	 task->ins_req.metadata.segment_full_event);
-				assert(i == 0);
 				assert(*task->replicated_bytes[i] <= SEGMENT_SIZE);
 			}
 			task->kreon_operation_status = ALL_REPLICAS_ACKED;
@@ -1960,9 +1959,8 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 
 		pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 		if (r_desc->r_state == NULL) {
-			r_desc->r_state = (struct ru_replica_state *)calloc(
-				1, sizeof(struct ru_replica_state) +
-					   (get_log->num_buffers * sizeof(struct ru_replica_log_buffer_seg)));
+			r_desc->r_state = (struct ru_replica_state *)calloc(1, sizeof(struct ru_replica_state));
+			//(get_log->num_buffers * sizeof(struct ru_replica_log_buffer_seg)));
 			r_desc->r_state->num_buffers = get_log->num_buffers;
 			for (int i = 0; i < get_log->num_buffers; i++) {
 				if (posix_memalign(&addr, ALIGNMENT, get_log->buffer_size)) {
@@ -2086,10 +2084,9 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 			exit(EXIT_FAILURE);
 		}
 
-		// log_info("Flushing segment %llu padding is %llu primary offset %llu local
-		// diff is %llu",
-		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log,
-		// diff);
+		//log_info("Flushing segment %llu padding is %llu primary offset %llu local diff is %llu ",
+		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log, diff);
+
 		if (!exists) {
 			++r_desc->r_state->next_segment_id_to_flush;
 			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
