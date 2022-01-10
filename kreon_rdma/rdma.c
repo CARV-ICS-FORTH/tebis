@@ -1349,6 +1349,20 @@ bool client_rdma_send_message_success(struct rdma_message_context *msg_ctx)
 		return false;
 }
 
+static void error_to_string(int error)
+{
+	switch (error) {
+	case IBV_WC_REM_ACCESS_ERR:
+		log_fatal("Remote memory error");
+		break;
+	case IBV_WC_LOC_ACCESS_ERR:
+		log_fatal("Local memory error");
+		break;
+	default:
+		log_fatal("Unknown error code");
+	}
+}
+
 void *poll_cq(void *arg)
 {
 	struct sigaction sa;
@@ -1391,7 +1405,12 @@ void *poll_cq(void *arg)
 				for (i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;
-					assert(wc[i].status == IBV_WC_SUCCESS);
+
+					if (wc[i].status != IBV_WC_SUCCESS) {
+						error_to_string(wc[i].status);
+						assert(0);
+					}
+
 					if (msg_ctx && msg_ctx->on_completion_callback) {
 						memcpy(&msg_ctx->wc, &wc[i], sizeof(struct ibv_wc));
 						msg_ctx->on_completion_callback(msg_ctx);

@@ -122,7 +122,8 @@ static uint8_t krm_check_ld_regions_sorted(struct krm_leader_regions *ld_regions
 		}
 		if (i == ld_regions->num_regions - 1) {
 			if (memcmp(ld_regions->regions[i].max_key, "+oo", 3) != 0) {
-				log_fatal("Fault last key should be +oo");
+				log_fatal("Fault last key of region %d is %s should be +oo", i,
+					  ld_regions->regions[i].max_key);
 				exit(EXIT_FAILURE);
 			}
 		} else {
