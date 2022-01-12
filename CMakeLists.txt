@@ -102,14 +102,14 @@ endif()
 
 set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
 find_path(Zookeeper_INCLUDE_DIR zookeeper.h /usr/local/include /usr/include
-          /usr/include/zookeeper)
+          /usr/include/zookeeper /usr/local/include/zookeeper)
 find_library(
   Zookeeper_LIBRARY
   NAMES libzookeeper_mt.a
   PATHS ${Zookeeper_LIB_PATHS})
 
 if(NOT Zookeeper_INCLUDE_DIR)
-  message("Could not find zookeeper header")
+  message(FATAL_ERROR "Could not find zookeeper header Build will exit")
 else()
   message("Zookeeper headers at ${Zookeeper_INCLUDE_DIR}")
   include_directories(${Zookeeper_INCLUDE_DIR})

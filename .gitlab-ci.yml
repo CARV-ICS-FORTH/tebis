@@ -1,4 +1,4 @@
-image: carvicsforth/arch_carv:latest
+image: carvicsforth/ubuntu_carv:latest
 variables:
     FF_GITLAB_REGISTRY_HELPER_IMAGE: 1
     GIT_STRATEGY: clone
@@ -20,12 +20,11 @@ build_clang:
   stage: build
   script:
     - mkdir -p build;cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
     - make mkfs.kreon;make kreon;make kreon-shared
     - make ycsb-edb;make test_scans;
 
 build_rdma_gcc:
-  image: carvicsforth/ubuntu_carv:latest
   stage: build
   script:
     - mkdir -p build;cd build
@@ -33,23 +32,13 @@ build_rdma_gcc:
     - make all
 
 build_rdma_clang:
-  image: carvicsforth/ubuntu_carv:latest
   stage: build
   script:
     - mkdir -p build;cd build
     - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
     - make all
 
-build_clang-tidy:
-  stage: build
-  script:
-    - mkdir -p build;cd build
-    - cmake .. "-DCMAKE_C_CLANG_TIDY=/bin/clang-tidy;-checks=* --format-style=../.clang-format"
-    - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;
-
 install_kreon:
-  image: carvicsforth/ubuntu_carv:latest
   stage: deploy
   variables:
     KREON_INSTALL_PATH : "installtest"
@@ -60,11 +49,13 @@ install_kreon:
     - ./verify-installed-files.py $KREON_INSTALL_PATH
 
 pre-commit:
+  image: carvicsforth/arch_carv:latest
   stage: build
   script:
     - ./scripts/pre-commit-CI.sh
 
 pre-merge:
+  image: carvicsforth/arch_carv:latest
   stage: build
   script:
     - ./scripts/pre-merge-CI.sh

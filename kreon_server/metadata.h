@@ -174,10 +174,11 @@ struct ru_master_log_buffer {
 	enum ru_remote_buffer_status stat;
 	uint32_t segment_size;
 	int num_buffers;
-	struct ru_master_log_buffer_seg segment[];
+	struct ru_master_log_buffer_seg segment[RU_REPLICA_NUM_SEGMENTS];
 };
 
 struct ru_master_state {
+#if 0
 	/*parameters used for remote spills at replica with tiering*/
 	node_header *last_node_per_level[RU_MAX_TREE_HEIGHT];
 	uint64_t cur_nodes_per_level[RU_MAX_TREE_HEIGHT];
@@ -185,8 +186,9 @@ struct ru_master_state {
 	uint64_t entries_in_semilast_node[RU_MAX_TREE_HEIGHT];
 	uint64_t entries_in_last_node[RU_MAX_TREE_HEIGHT];
 	uint32_t current_active_tree_in_the_forest;
+#endif
 	int num_backup;
-	struct ru_master_log_buffer r_buf[];
+	struct ru_master_log_buffer r_buf[KRM_MAX_BACKUPS];
 };
 
 struct ru_replica_log_buffer_seg {
@@ -200,7 +202,7 @@ struct ru_replica_state {
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	int num_buffers;
-	struct ru_replica_log_buffer_seg seg[];
+	struct ru_replica_log_buffer_seg seg[RU_REPLICA_NUM_SEGMENTS];
 };
 
 struct krm_server_name {
