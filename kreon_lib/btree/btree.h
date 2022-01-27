@@ -353,6 +353,8 @@ void *bt_get_real_address(uint64_t dev_offt);
 uint64_t bt_get_absolute_address(void *addr);
 
 db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG);
+db_handle *custom_db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG,
+			  uint32_t l0_size, uint32_t growth_factor);
 char db_close(db_handle *handle);
 
 void *compaction_daemon(void *args);

@@ -705,7 +705,8 @@ static void bt_reclaim_volume_space(struct volume_descriptor *volume_desc)
  * @param   db_name
  * @return  db_handle
  **/
-db_handle *db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_name, char CREATE_FLAG)
+static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t size2, char *db_name, char CREATE_FLAG,
+				   uint32_t l0_size, uint32_t growth_factor)
 {
 	(void)size2;
 	db_handle *handle;
@@ -851,10 +852,10 @@ finish_init:
 	for (level_id = 0; level_id < MAX_LEVELS; level_id++) {
 		db_desc->levels[level_id].level_id = level_id;
 		if (level_id == 0)
-			db_desc->levels[level_id].max_level_size = L0_SIZE;
+			db_desc->levels[level_id].max_level_size = l0_size;
 		else
 			db_desc->levels[level_id].max_level_size =
-				db_desc->levels[level_id - 1].max_level_size * GROWTH_FACTOR;
+				db_desc->levels[level_id - 1].max_level_size * growth_factor;
 
 		RWLOCK_INIT(&db_desc->levels[level_id].guard_of_level.rx_lock, NULL);
 		MUTEX_INIT(&db_desc->levels[level_id].spill_trigger, NULL);
@@ -970,6 +971,17 @@ finish_init:
 	MUTEX_UNLOCK(&init_lock);
 
 	return handle;
+}
+
+db_handle *db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG)
+{
+	return internal_db_open(volumeName, start, size, db_name, CREATE_FLAG, DEFAULT_L0_SIZE, DEFAULT_GROWTH_FACTOR);
+}
+
+db_handle *custom_db_open(char *volumeName, uint64_t start, uint64_t size, char *db_name, char CREATE_FLAG,
+			  uint32_t l0_size, uint32_t growth_factor)
+{
+	return internal_db_open(volumeName, start, size, db_name, CREATE_FLAG, l0_size, growth_factor);
 }
 
 char db_close(db_handle *handle)

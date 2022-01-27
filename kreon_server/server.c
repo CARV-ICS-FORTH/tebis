@@ -11,14 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-/**
- *  kreon_server.c
- * Created 28/07/16.
- * Authors
- * Giorgos Saloustros <gesalous@ics.forth.gr>
- * Michalis Vardoulakis <mvard@ics.forth.gr>
- *
- **/
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -2644,9 +2636,9 @@ int main(int argc, char *argv[])
 	char *device_name;
 	int num_of_numa_servers = 1;
 	int next_argv;
-	if (argc != 5) {
+	if (argc != 7) {
 		log_fatal("Error! usage: ./kreon_server <device name>"
-			  " <zk_host:zk_port> <RDMA subnet> <server(s) vector>\n "
+			  " <zk_host:zk_port>  <L0 size in keys> <growth factor> <RDMA subnet> <server(s) vector>\n "
 			  " where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
 			  "id>,<worker id 1>,<worker id 2>,...,<worker id N>\"");
 		exit(EXIT_FAILURE);
@@ -2662,6 +2654,14 @@ int main(int argc, char *argv[])
 	++next_argv;
 	// RDMA subnet
 	globals_set_RDMA_IP_filter(argv[next_argv]);
+	++next_argv;
+	//L0 size
+	uint32_t L0_size = strtoul(argv[next_argv], NULL, 10);
+	globals_set_l0_size(L0_size);
+	++next_argv;
+	//growth factor
+	uint32_t growth_factor = strtoul(argv[next_argv], NULL, 10);
+	globals_set_l0_size(growth_factor);
 	++next_argv;
 
 	/*time to allocate the root server*/

@@ -52,9 +52,9 @@
 
 #define SEGMENT_SIZE (2 * 1024 * 1024)
 #define MAX_SUPPORTED_KV_SIZE (SEGMENT_SIZE - sizeof(struct segment_header))
-#define GROWTH_FACTOR 8
+#define DEFAULT_GROWTH_FACTOR 8
 //#define L0_SIZE 256000
-#define L0_SIZE 512000
+#define DEFAULT_L0_SIZE 512000
 #define EXPLICIT_IO 1
 #define VALUE_LOG_EXPLICIT_IO 1
 #define ENABLE_BLOOM_FILTERS 0
