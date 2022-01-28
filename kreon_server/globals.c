@@ -30,6 +30,7 @@ struct globals {
 	int job_scheduling_max_queue_depth;
 	int worker_spin_time_usec;
 	int is_volume_init;
+	int send_index;
 };
 static struct globals global_vars = { .zk_host_port = NULL,
 				      .RDMA_IP_filter = NULL,
@@ -41,7 +42,8 @@ static struct globals global_vars = { .zk_host_port = NULL,
 				      .job_scheduling_max_queue_depth = 8,
 				      .worker_spin_time_usec = 100,
 				      .L0_size = 64000,
-				      .growth_factor = 4 };
+				      .growth_factor = 4,
+				      .send_index = 0 };
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -316,4 +318,14 @@ void globals_set_growth_factor(uint32_t growth_factor)
 uint32_t globals_get_growth_factor(void)
 {
 	return global_vars.growth_factor;
+}
+
+void globals_set_send_index(int flag)
+{
+	global_vars.send_index = flag;
+}
+
+int globals_get_send_index(void)
+{
+	return global_vars.send_index;
 }
