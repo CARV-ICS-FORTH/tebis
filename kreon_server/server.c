@@ -2665,17 +2665,18 @@ int main(int argc, char *argv[])
 	++next_argv;
 	//growth factor
 	uint32_t growth_factor = strtoul(argv[next_argv], NULL, 10);
-	globals_set_l0_size(growth_factor);
+	globals_set_growth_factor(growth_factor);
 	++next_argv;
 
-	if (strcmp(argv[next_argv], "send_index"))
+	if (strcmp(argv[next_argv], "send_index") == 0)
 		globals_set_send_index(1);
-	else if (strcmp(argv[next_argv], "build_index"))
+	else if (strcmp(argv[next_argv], "build_index") == 0)
 		globals_set_send_index(0);
 	else {
 		log_fatal("what do you want send or build index?");
 		exit(EXIT_FAILURE);
 	}
+	++next_argv;
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)malloc(sizeof(struct ds_root_server) +
