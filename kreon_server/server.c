@@ -11,14 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-/**
- *  kreon_server.c
- * Created 28/07/16.
- * Authors
- * Giorgos Saloustros <gesalous@ics.forth.gr>
- * Michalis Vardoulakis <mvard@ics.forth.gr>
- *
- **/
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -2045,102 +2037,104 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 		if (flush_req->log_padding)
 			memset((void *)((uint64_t)seg + (SEGMENT_SIZE - flush_req->log_padding)), 0x00,
 			       flush_req->log_padding);
-#if RCO_BUILD_INDEX_AT_REPLICA
-		struct rco_build_index_task t;
-		t.r_desc = r_desc;
-		t.segment = (struct segment_header *)seg;
-		t.log_start = 0; // r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE -
-		// sizeof(struct segment_header));
-		t.log_end = SEGMENT_SIZE; // r_desc->db->db_desc->KV_log_size;
-		rco_build_index(&t);
-#else
-		pthread_mutex_lock(&r_desc->db->db_desc->lock_log);
-		/*Now take a segment from the allocator and copy the buffer*/
-		volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
-		// log_info("Last log segment id %llu id to flush %llu",
-		// last_log_segment->segment_id,
-		//	 flush_req->segment_id);
 
-		uint64_t diff = flush_req->end_of_log - r_desc->db->db_desc->KV_log_size;
-		int exists = 0;
-		if (last_log_segment->segment_id == flush_req->segment_id) {
-			// log_info("Forced value log flush due to compaction id %llu",
-			// last_log_segment->segment_id);
-			if (r_desc->r_state->next_segment_id_to_flush == 0)
-				++r_desc->r_state->next_segment_id_to_flush;
-
-			// This op should follow after a partial write
-			if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
-				log_fatal("Corruption");
-				exit(EXIT_FAILURE);
-			}
-			exists = 1;
-		} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
-			log_fatal("Corruption non-contiguous segment ids: expected %llu  got "
-				  "flush_req id is %llu",
-				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
-			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
-			assert(0);
-			exit(EXIT_FAILURE);
-		}
-
-		//log_info("Flushing segment %llu padding is %llu primary offset %llu local diff is %llu ",
-		//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log, diff);
-
-		if (!exists) {
-			++r_desc->r_state->next_segment_id_to_flush;
-			segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
-			seg->next_segment = NULL;
-			seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
-			if (!write_segment_with_explicit_IO((char *)(uint64_t)seg, SEGMENT_SIZE,
-							    (uint64_t)disk_segment - MAPPED, FD)) {
-				log_fatal("Failed to write segment with explicit I/O");
-				exit(EXIT_FAILURE);
-			}
-			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
-				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
-			r_desc->db->db_desc->KV_log_last_segment = disk_segment;
-			// add mapping to level's hash table
-			struct krm_segment_entry *e =
-				(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
-			assert(flush_req->master_segment % SEGMENT_SIZE == 0);
-			e->master_seg = flush_req->master_segment;
-			e->my_seg = (uint64_t)disk_segment - MAPPED;
-			pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
-			HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
-			pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-			// log_info("Added mapping for index for log %llu replica %llu",
-			// e->master_seg, e->my_seg);
+		if (!globals_get_send_index()) {
+			struct rco_build_index_task t;
+			t.r_desc = r_desc;
+			t.segment = (struct segment_header *)seg;
+			t.log_start = 0; // r_desc->db->db_desc->KV_log_size - (SEGMENT_SIZE -
+			// sizeof(struct segment_header));
+			t.log_end = SEGMENT_SIZE; // r_desc->db->db_desc->KV_log_size;
+			rco_build_index(&t);
 		} else {
-			// check if we have the mapping
-			struct krm_segment_entry *index_entry;
-			pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
-			HASH_FIND_PTR(r_desc->replica_log_map, &flush_req->master_segment, index_entry);
-			pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-			if (index_entry == NULL) {
+			pthread_mutex_lock(&r_desc->db->db_desc->lock_log);
+			/*Now take a segment from the allocator and copy the buffer*/
+			volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
+			// log_info("Last log segment id %llu id to flush %llu",
+			// last_log_segment->segment_id,
+			//	 flush_req->segment_id);
+
+			uint64_t diff = flush_req->end_of_log - r_desc->db->db_desc->KV_log_size;
+			int exists = 0;
+			if (last_log_segment->segment_id == flush_req->segment_id) {
+				// log_info("Forced value log flush due to compaction id %llu",
+				// last_log_segment->segment_id);
+				if (r_desc->r_state->next_segment_id_to_flush == 0)
+					++r_desc->r_state->next_segment_id_to_flush;
+
+				// This op should follow after a partial write
+				if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
+					log_fatal("Corruption");
+					exit(EXIT_FAILURE);
+				}
+				exists = 1;
+			} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
+				log_fatal("Corruption non-contiguous segment ids: expected %llu  got "
+					  "flush_req id is %llu",
+					  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
+				log_fatal("last segment in database is %llu", last_log_segment->segment_id);
+				assert(0);
+				exit(EXIT_FAILURE);
+			}
+
+			//log_info("Flushing segment %llu padding is %llu primary offset %llu local diff is %llu ",
+			//	 flush_req->segment_id, flush_req->log_padding, flush_req->end_of_log, diff);
+
+			if (!exists) {
+				++r_desc->r_state->next_segment_id_to_flush;
+				segment_header *disk_segment = seg_get_raw_log_segment(r_desc->db->volume_desc);
+				seg->next_segment = NULL;
+				seg->prev_segment = (segment_header *)((uint64_t)last_log_segment - MAPPED);
+				if (!write_segment_with_explicit_IO((char *)(uint64_t)seg, SEGMENT_SIZE,
+								    (uint64_t)disk_segment - MAPPED, FD)) {
+					log_fatal("Failed to write segment with explicit I/O");
+					exit(EXIT_FAILURE);
+				}
+				if (r_desc->db->db_desc->KV_log_first_segment == NULL)
+					r_desc->db->db_desc->KV_log_first_segment = disk_segment;
+				r_desc->db->db_desc->KV_log_last_segment = disk_segment;
 				// add mapping to level's hash table
 				struct krm_segment_entry *e =
 					(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+				assert(flush_req->master_segment % SEGMENT_SIZE == 0);
 				e->master_seg = flush_req->master_segment;
-				e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
+				e->my_seg = (uint64_t)disk_segment - MAPPED;
 				pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
 				HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
 				pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 				// log_info("Added mapping for index for log %llu replica %llu",
 				// e->master_seg, e->my_seg);
+			} else {
+				// check if we have the mapping
+				struct krm_segment_entry *index_entry;
+				pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
+				HASH_FIND_PTR(r_desc->replica_log_map, &flush_req->master_segment, index_entry);
+				pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+				if (index_entry == NULL) {
+					// add mapping to level's hash table
+					struct krm_segment_entry *e =
+						(struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
+					e->master_seg = flush_req->master_segment;
+					e->my_seg = (uint64_t)r_desc->db->db_desc->KV_log_last_segment - MAPPED;
+					pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
+					HASH_ADD_PTR(r_desc->replica_log_map, master_seg, e);
+					pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+					// log_info("Added mapping for index for log %llu replica %llu",
+					// e->master_seg, e->my_seg);
+				}
+				if (!write_segment_with_explicit_IO(
+					    (char *)(uint64_t)seg + sizeof(struct segment_header),
+					    SEGMENT_SIZE - sizeof(struct segment_header),
+					    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header),
+					    FD)) {
+					log_fatal("Failed to write segment with explicit I/O");
+					exit(EXIT_FAILURE);
+				}
 			}
-			if (!write_segment_with_explicit_IO(
-				    (char *)(uint64_t)seg + sizeof(struct segment_header),
-				    SEGMENT_SIZE - sizeof(struct segment_header),
-				    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header), FD)) {
-				log_fatal("Failed to write segment with explicit I/O");
-				exit(EXIT_FAILURE);
-			}
-		}
 
-		r_desc->db->db_desc->KV_log_size += diff;
-		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
-#endif
+			r_desc->db->db_desc->KV_log_size += diff;
+			pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
+		}
 		/*time for reply :-)*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   (uint64_t)task->msg->reply);
@@ -2644,11 +2638,13 @@ int main(int argc, char *argv[])
 	char *device_name;
 	int num_of_numa_servers = 1;
 	int next_argv;
-	if (argc != 5) {
-		log_fatal("Error! usage: ./kreon_server <device name>"
-			  " <zk_host:zk_port> <RDMA subnet> <server(s) vector>\n "
-			  " where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
-			  "id>,<worker id 1>,<worker id 2>,...,<worker id N>\"");
+	if (argc != 8) {
+		log_fatal(
+			"Error args are %d! usage: ./kreon_server <device name>"
+			" <zk_host:zk_port>  <RDMA subnet> <L0 size in keys> <growth factor> <send_index or build_index> <server(s) vector>\n "
+			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
+			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
+			argc);
 		exit(EXIT_FAILURE);
 	}
 	// argv[0] program name don't care
@@ -2662,6 +2658,24 @@ int main(int argc, char *argv[])
 	++next_argv;
 	// RDMA subnet
 	globals_set_RDMA_IP_filter(argv[next_argv]);
+	++next_argv;
+	//L0 size
+	uint32_t L0_size = strtoul(argv[next_argv], NULL, 10);
+	globals_set_l0_size(L0_size);
+	++next_argv;
+	//growth factor
+	uint32_t growth_factor = strtoul(argv[next_argv], NULL, 10);
+	globals_set_growth_factor(growth_factor);
+	++next_argv;
+
+	if (strcmp(argv[next_argv], "send_index") == 0)
+		globals_set_send_index(1);
+	else if (strcmp(argv[next_argv], "build_index") == 0)
+		globals_set_send_index(0);
+	else {
+		log_fatal("what do you want send or build index?");
+		exit(EXIT_FAILURE);
+	}
 	++next_argv;
 
 	/*time to allocate the root server*/

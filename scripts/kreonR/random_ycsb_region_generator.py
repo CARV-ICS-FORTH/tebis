@@ -35,16 +35,33 @@ host_id = 0
 region_id = 0
 regions = []
 
+
 if max_hosts > 1:
-    region = (
-        str(region_id)
-        + " -oo "
-        + hex_string[0]
-        + "  "
-        + hosts[host_id]
-        + " "
-        + hosts[host_id + 1]
-    )
+    if replication == 1:
+        region = (
+            str(region_id)
+            + " -oo "
+            + hex_string[0]
+            + "  "
+            + hosts[host_id]
+            + " "
+            + hosts[host_id + 1]
+        )
+    elif replication == 2:
+        region = (
+            str(region_id)
+            + " -oo "
+            + hex_string[0]
+            + "  "
+            + hosts[host_id]
+            + " "
+            + hosts[host_id + 1]
+            + " "
+            + hosts[host_id + 2]
+        )
+    else:
+        print("Up to replication 2 supported sorry :-)")
+        exit()
 else:
     region = str(region_id) + " -oo " + hex_string[0] + "  " + hosts[host_id]
 print(region)
@@ -65,12 +82,24 @@ for string in hex_string[1:-1]:
         + " "
         + hosts[host_id]
     )
-    if replication:
+    if replication == 1:
         host_id = host_id + 1
         region_id = region_id + 1
         if host_id >= max_hosts:
             host_id = 0
         region = region + " " + hosts[host_id]
+
+    elif replication == 2:
+        host_id = host_id + 1
+        region_id = region_id + 1
+        if host_id >= max_hosts:
+            host_id = 0
+        region = region + " " + hosts[host_id]
+        host_id = host_id + 1
+        if host_id >= max_hosts:
+            host_id = 0
+        region = region + " " + hosts[host_id]
+
     else:
         host_id = host_id + 1
         region_id = region_id + 1
@@ -80,7 +109,7 @@ for string in hex_string[1:-1]:
     string_id = string_id + 1
 
 
-if replication:
+if replication == 1:
     replica_idx = host_id + 1
     if replica_idx >= max_hosts:
         replica_idx = 0
@@ -94,6 +123,24 @@ if replication:
         + " "
         + hosts[replica_idx]
     )
+elif replication == 2:
+    replica_idx = host_id + 1
+    if replica_idx >= max_hosts:
+        replica_idx = 0
+    region = (
+        str(region_id)
+        + " "
+        + hex_string[string_id]
+        + "  "
+        + " +oo "
+        + hosts[host_id]
+        + " "
+        + hosts[replica_idx]
+    )
+    replica_idx = replica_idx + 1
+    if replica_idx >= max_hosts:
+        host_id = 0
+    region = region + " " + hosts[replica_idx]
 else:
     region = (
         str(region_id) + " " + hex_string[string_id] + "  " + " +oo " + hosts[host_id]

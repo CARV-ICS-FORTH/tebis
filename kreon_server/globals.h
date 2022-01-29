@@ -27,3 +27,12 @@ void globals_set_rdma_channel(struct channel_rdma *channel);
 struct channel_rdma *globals_get_rdma_channel(void);
 
 void globals_init_volume(void);
+
+void globals_set_l0_size(uint32_t l0_size);
+uint32_t globals_get_l0_size(void);
+
+void globals_set_growth_factor(uint32_t growth_factor);
+uint32_t globals_get_growth_factor(void);
+
+void globals_set_send_index(int enable);
+int globals_get_send_index(void);

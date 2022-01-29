@@ -29,7 +29,3 @@ typedef enum kreon_op_status {
  * 4. RCO_DISABLE_REMOTE_COMPACTIONS = 0, RCO_BUILD_INDEX_AT_REPLICA = 1
  *    Unssuported configuration
  */
-#define RCO_DISABLE_REMOTE_COMPACTIONS 0
-#define RCO_BUILD_INDEX_AT_REPLICA 0
-static_assert(!(!RCO_DISABLE_REMOTE_COMPACTIONS && RCO_BUILD_INDEX_AT_REPLICA),
-	      "RCO_DISABLE_REMOTE_COMPACTIONS = 0 and RCO_BUILD_INDEX_AT_REPLICA is not a supported configuration");

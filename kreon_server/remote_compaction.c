@@ -5,6 +5,7 @@
 #include <rdma/rdma_verbs.h>
 #include <semaphore.h>
 #include "djb2.h"
+#include "globals.h"
 #include "metadata.h"
 #include "../utilities/list.h"
 #include <log.h>
@@ -83,9 +84,9 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 {
-#if RCO_DISABLE_REMOTE_COMPACTIONS
-	return 0;
-#endif
+	if (!globals_get_send_index())
+		return 0;
+
 	int ret;
 	// find krm_region_desc
 	// in which pool does this kreon db belongs to?
@@ -175,9 +176,9 @@ exit:
 
 int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 {
-#if RCO_DISABLE_REMOTE_COMPACTIONS
-	return 0;
-#endif
+	if (!globals_get_send_index())
+		return 0;
+
 	int ret;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
@@ -233,9 +234,8 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
 				       uint8_t level_id, struct node_header *root)
 {
-#if RCO_DISABLE_REMOTE_COMPACTIONS
-	return 0;
-#endif
+	if (globals_get_send_index())
+		return 0;
 
 	/*log_info("Send index to replica");*/
 	int ret = 0;
@@ -392,10 +392,10 @@ exit:
 
 int rco_flush_last_log_segment(void *handle)
 {
-#if RCO_DISABLE_REMOTE_COMPACTIONS
-	log_info("Ommiting flush last log segment");
-	return 1;
-#endif
+	if (globals_get_send_index()) {
+		log_info("Ommiting flush last log segment");
+		return 1;
+	}
 	struct db_handle *hd = (struct db_handle *)handle;
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
@@ -563,10 +563,10 @@ int rco_flush_last_log_segment(void *handle)
 
 int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
-#if RCO_DISABLE_REMOTE_COMPACTIONS
-	log_info("ommiting");
-	return 1;
-#endif
+	if (globals_get_send_index()) {
+		log_info("ommiting");
+		return 0;
+	}
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
 
@@ -1065,7 +1065,6 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 	return 1;
 }
 
-#if RCO_BUILD_INDEX_AT_REPLICA
 void rco_build_index(struct rco_build_index_task *task)
 {
 	struct rco_key {
@@ -1136,7 +1135,6 @@ void rco_build_index(struct rco_build_index_task *task)
 	//log_info("Done parsing segment");
 	return;
 }
-#endif
 
 static void *rco_compaction_worker(void *args)
 {

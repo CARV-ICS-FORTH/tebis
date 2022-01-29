@@ -24,10 +24,13 @@ struct globals {
 	char *mount_point;
 	off64_t volume_size;
 	struct channel_rdma *channel;
+	uint32_t L0_size;
+	uint32_t growth_factor;
 	int connections_per_server;
 	int job_scheduling_max_queue_depth;
 	int worker_spin_time_usec;
 	int is_volume_init;
+	int send_index;
 };
 static struct globals global_vars = { .zk_host_port = NULL,
 				      .RDMA_IP_filter = NULL,
@@ -37,7 +40,10 @@ static struct globals global_vars = { .zk_host_port = NULL,
 				      .channel = NULL,
 				      .connections_per_server = NUM_OF_CONNECTIONS_PER_SERVER,
 				      .job_scheduling_max_queue_depth = 8,
-				      .worker_spin_time_usec = 100 };
+				      .worker_spin_time_usec = 100,
+				      .L0_size = 64000,
+				      .growth_factor = 4,
+				      .send_index = 0 };
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -292,4 +298,34 @@ exit:
 		log_fatal("Failed to acquire lock");
 		exit(EXIT_FAILURE);
 	}
+}
+
+void globals_set_l0_size(uint32_t l0_size)
+{
+	global_vars.L0_size = l0_size;
+}
+
+uint32_t globals_get_l0_size(void)
+{
+	return global_vars.L0_size;
+}
+
+void globals_set_growth_factor(uint32_t growth_factor)
+{
+	global_vars.growth_factor = growth_factor;
+}
+
+uint32_t globals_get_growth_factor(void)
+{
+	return global_vars.growth_factor;
+}
+
+void globals_set_send_index(int flag)
+{
+	global_vars.send_index = flag;
+}
+
+int globals_get_send_index(void)
+{
+	return global_vars.send_index;
 }

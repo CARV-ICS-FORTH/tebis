@@ -398,7 +398,6 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id);
 
-#if RCO_BUILD_INDEX_AT_REPLICA
 struct rco_build_index_task {
 	struct krm_region_desc *r_desc;
 	struct segment_header *segment;
@@ -406,7 +405,6 @@ struct rco_build_index_task {
 	uint64_t log_end;
 };
 void rco_build_index(struct rco_build_index_task *task);
-#endif
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
