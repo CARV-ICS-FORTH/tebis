@@ -234,7 +234,7 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
 				       uint8_t level_id, struct node_header *root)
 {
-	if (globals_get_send_index())
+	if (!globals_get_send_index())
 		return 0;
 
 	/*log_info("Send index to replica");*/
@@ -392,7 +392,7 @@ exit:
 
 int rco_flush_last_log_segment(void *handle)
 {
-	if (globals_get_send_index()) {
+	if (!globals_get_send_index()) {
 		log_info("Ommiting flush last log segment");
 		return 1;
 	}
@@ -563,9 +563,9 @@ int rco_flush_last_log_segment(void *handle)
 
 int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
-	if (globals_get_send_index()) {
+	if (!globals_get_send_index()) {
 		log_info("ommiting");
-		return 0;
+		return 1;
 	}
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;
