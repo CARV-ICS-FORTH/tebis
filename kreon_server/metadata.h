@@ -288,7 +288,7 @@ struct krm_region_desc {
 		struct ru_master_state *m_state;
 		struct ru_replica_state *r_state;
 	};
-	uint64_t pending_region_tasks;
+	volatile int64_t pending_region_tasks;
 	enum krm_replica_buf_status replica_buf_status;
 	enum krm_region_status status;
 };

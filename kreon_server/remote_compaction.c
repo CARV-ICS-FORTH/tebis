@@ -494,10 +494,10 @@ int rco_flush_last_log_segment(void *handle)
 		p[i] = sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
 		if (p[i].stat != ALLOCATION_IS_SUCCESSFULL) {
-			// free and retry
-			int j = i;
+			/*free and retry*/
+			int j = i - 1;
 			while (j >= 0) {
-				sc_free_rpc_pair(&p[i]);
+				sc_free_rpc_pair(&p[j]);
 				--j;
 			}
 			goto retry_allocate;
