@@ -4,7 +4,7 @@ Second, RDMA communication is cheap in terms of CPU cycles and provides high thr
 Based on these two observations, Tebis instead of repeating the compaction process in the cluster performs the compaction once and send its results via the network.
 
 # Project structure
-## The following olders contain
+## The following folders contain
 - YCSB-CXX contains the C++ version of the YCSB benchmark along with the driver to run YCSB-CXX
 - kreon_lib contains a fork with some modification of the Kreon storage engine
 - kreon_rdma contains code rdma utilities used in the project
@@ -336,22 +336,35 @@ the memory available to a command (including pages in the buffer cache) to 16GB.
 # Running Tebis on a two server machine configuration
 First we need a Zookeeper server. For simplicity we assume that the Zookeeper service runs at zoo:2181. Then we
 need to initialize Tebis metadata. This can be done through the command
-<Tebis root folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
-- **Hosts_file:** Contains the servers of the cluster
-- <host1:port_for_incoming_rdma_connections> <role leader or empty> example:
-- sith2.cluster.ics.forth.gr:8080 leader, so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system
+<tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
+- **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections> <role leader or empty> 
+ Example:
+- sith2.cluster.ics.forth.gr:8080 leader (so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)
 - sith3.cluter.ics.forth.gr:8080
 - sith6.cluster.ics.forth.gr:8080
 -**Regions file** Contains the region info in which we split the key space
 <region_id> <min_key_range> <max_key_range> <server1:port (primary)> <server 2:port (backup)>
 *Example of regions file*
+
 0 -oo MM sith2.cluster.ics.forth.gr:8080 sith3.cluster.ics.forth.gr:8080
 1 MM  ZZ sith3.cluster.ics.forth.gr:8080 sith6.cluster.ics.forth.gr:8080
 2 ZZ +oo sith6.cluster.ics.forth.gr:8080 sith2.cluster.ics.forth.gr:8080
 
-In each tebis server we need a preallocated file where Tebis will store its data (either with dd or fallocate)
+In each tebis server we need a preallocated file where Tebis will store its data (either with dd or fallocate).Each server's 
+storage capacity will be equal to the size of the file provided.
 Example
+fallocate -l 100G /path/to/file
 
 Then we need to boot first the leader of the Tebis rack
-<Build root folder>/kreon_server/kreon_server <path to tebis file> <zk_host:zk_port> <RDMA IP subnet> <LSM L0 size in keys>
+<tebis_build_root folder>/kreon_server/kreon_server <path to tebis file> <zk_host:zk_port> <RDMA IP subnet> <LSM L0 size in keys>
 <growth factor> <server RDMA port, worker core 0, worker core 1,...,worker core N>
+
+example: build/kreon_server/kreon_server /nvme/par1.dat sith2:2181 192.168.4 128000 8 "8080,0,1,2,3,4" 
+
+# Tests
+cd into folder <BUILD_ROOT_FOLDER>/tests/ and type
+test_krc_api zk_host:zk_port
+
+
+
+
