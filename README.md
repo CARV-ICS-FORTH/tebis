@@ -337,9 +337,15 @@ the memory available to a command (including pages in the buffer cache) to 16GB.
 First we need a Zookeeper server. For simplicity we assume that the Zookeeper service runs at zoo:2181. Then we
 need to initialize Tebis metadata. This can be done through the command
 <tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
+<<<<<<< HEAD
 - **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections> <role leader or empty> 
  Example:
 - sith2.cluster.ics.forth.gr:8080 leader (so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)
+=======
+- **Hosts_file:** Contains the servers of the cluster
+- <host1:port_for_incoming_rdma_connections> <role leader or empty> example:
+- sith2.cluster.ics.forth.gr:8080 leader, so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system
+>>>>>>> 5f2c8b01fbc484aa1e5a5c62b5eaafd7eaf5559e
 - sith3.cluter.ics.forth.gr:8080
 - sith6.cluster.ics.forth.gr:8080
 -**Regions file** Contains the region info in which we split the key space
