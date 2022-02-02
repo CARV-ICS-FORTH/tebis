@@ -461,6 +461,7 @@ static struct krm_work_task *ds_get_server_task_buffer(struct ds_spinning_thread
 
 		job->pool_id = job_idx;
 		job->pool_type = pool_type;
+		job->rescheduling_counter = 1;
 		assert(job->pool_id < DS_POOL_NUM);
 	}
 	assert(job != NULL);
@@ -519,6 +520,7 @@ static struct krm_work_task *ds_get_client_task_buffer(struct ds_spinning_thread
 
 		job->pool_id = job_idx;
 		job->pool_type = pool_type;
+		job->rescheduling_counter = 1;
 		assert(job->pool_id < DS_POOL_NUM);
 	}
 	return job;
@@ -676,14 +678,44 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	return KREON_SUCCESS;
 }
 
+static void print_task(struct krm_work_task *task)
+{
+	switch (task->kreon_operation_status) {
+	case SEGMENT_BARRIER:
+		log_info("SEGMENT_BARRIER state details follow");
+		for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			uint32_t remaining =
+				task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
+			remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
+			log_info(
+				"Sorry segment with replica %u not ready bytes remaining to replicate %llu task %p seg if %u key size is %u",
+				i, remaining, task, task->seg_id_to_flush, task->kv_size);
+		}
+		break;
+	default:
+		log_info("Sorry canoot provide additional info");
+		return;
+	}
+}
+
 static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
-	for (int i = 0; i < DS_POOL_NUM; i++) {
+	for (int i = 0; i < DS_POOL_NUM; ++i) {
 		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
 		while (task) {
 			assert(task->r_desc);
 			// log_info("Rescheduling task");
+
+			if (0 == (task->rescheduling_counter % 10000000)) {
+				log_warn(
+					"Suspicious task %p for region %s has been rescheduled %llu times pending region tasks are: %u state is %u",
+					task, task->r_desc->region->id, task->rescheduling_counter,
+					task->r_desc->pending_region_tasks, task->kreon_operation_status);
+				print_task(task);
+			}
+
+			++task->rescheduling_counter;
 			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
 			if (rc == KREON_FAILURE) {
 				log_fatal("Failed to reschedule task");
@@ -1363,9 +1395,9 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			/********************************************/
 			_insert_key_value(&task->ins_req);
 			if (task->r_desc->region->num_of_backup > 0) {
-				if (task->ins_req.metadata.segment_full_event)
+				if (task->ins_req.metadata.segment_full_event) {
 					task->kreon_operation_status = FLUSH_REPLICA_BUFFERS;
-				else
+				} else
 					task->kreon_operation_status = REPLICATE;
 				break;
 			} else {
@@ -1416,6 +1448,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				log_fatal("No appropriate remote segment id found for flush, what?");
 				exit(EXIT_FAILURE);
 			}
+
 			/*sent flush command to all motherfuckers*/
 			task->kreon_operation_status = SEGMENT_BARRIER;
 			break;

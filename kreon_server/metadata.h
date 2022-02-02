@@ -25,7 +25,7 @@
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 
-#define RU_REPLICA_NUM_SEGMENTS 4
+#define RU_REPLICA_NUM_SEGMENTS 1
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
 #define RU_MAX_NUM_REPLICAS 2
@@ -121,6 +121,7 @@ struct krm_work_task {
 	int pool_id;
 	//int suspended;
 	int seg_id_to_flush;
+	uint64_t rescheduling_counter;
 	enum krm_work_task_type pool_type;
 	enum krm_work_task_status kreon_operation_status;
 };
