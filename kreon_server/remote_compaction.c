@@ -287,7 +287,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #endif
 
 	if (r_desc->region->num_of_backup == 0) {
-		/*log_info("Nothing to do for non-replicated region %s", r_desc->region->id);*/
+		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
@@ -303,7 +303,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		struct connection_rdma *r_conn = sc_get_compaction_conn(db_entry->pool->rco_server,
 									r_desc->region->backups[i].kreon_ds_hostname);
 
-		// Sent the segment via RDMA
+		/* Sent the segment via RDMA */
 		if (size > SEGMENT_SIZE) {
 			log_fatal("Buffer overflow Sorry");
 			exit(EXIT_FAILURE);
