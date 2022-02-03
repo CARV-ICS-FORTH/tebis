@@ -2,28 +2,30 @@
 #define UTILS_QUEUE_HEADER
 #include <stddef.h>
 #include <stdint.h>
-
-#define CONF_CACHE_LINE 64
-
-/*watch out this is the vanilla value*/
-#define UTILS_QUEUE_CAPACITY 512
-
+#include <pthread.h>
 #ifdef __cplusplus
 extern "C" {
 #endif /* ifdef __cplusplus */
-
+#define CONF_CACHE_LINE 64
+#define UTILS_QUEUE_CAPACITY 128
+#define UTILS_QUEUE_MPMC
 /**
  * Internal structure of queue.
  */
+
 struct queue {
+	/** Pointers to data. */
+	void *entries[UTILS_QUEUE_CAPACITY];
+
+#ifdef UTILS_QUEUE_MPMC
+	//utils_spinlock lock;
+	pthread_spinlock_t lock;
+#endif
 	/** Push here  */
 	volatile uint16_t bottom __attribute__((aligned(CONF_CACHE_LINE)));
 
 	/** Pop here */
 	volatile uint16_t top __attribute__((aligned(CONF_CACHE_LINE)));
-
-	/** Pointers to data. */
-	void *entries[UTILS_QUEUE_CAPACITY];
 } __attribute__((aligned(CONF_CACHE_LINE)));
 
 typedef struct queue utils_queue_s;
