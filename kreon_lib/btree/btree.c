@@ -1553,10 +1553,12 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 
 		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
 			sem_post(&db_desc->compaction_daemon_interrupts);
-			if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
-				log_fatal("failed to throttle");
-				exit(EXIT_FAILURE);
-			}
+			//if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
+			//	log_fatal("failed to throttle");
+			//	exit(EXIT_FAILURE);
+			//}
+			pthread_mutex_unlock(&db_desc->client_barrier_lock);
+			return FAILED;
 		}
 		active_tree = db_desc->levels[0].active_tree;
 		pthread_mutex_unlock(&db_desc->client_barrier_lock);
