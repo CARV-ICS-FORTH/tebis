@@ -37,8 +37,10 @@ FetchContent_Declare(
                                       # directory.
 )
 
-FetchContent_Declare(log # Recommendation: Stick close to the original name.
-                     GIT_REPOSITORY https://github.com/innerout/log.c.git)
+FetchContent_Declare(
+  log # Recommendation: Stick close to the original name.
+  GIT_REPOSITORY https://github.com/innerout/log.c.git
+  GIT_TAG 1278d9cb58e2c6b848f6cbdd62c9a01eb9ed45da)
 
 FetchContent_Declare(
   libbloom # Recommendation: Stick close to the original name.
