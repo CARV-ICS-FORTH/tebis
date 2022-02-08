@@ -19,16 +19,17 @@
 
 #define ALLOC_LOCAL 1 // if true use numa_alloc_local, otherwise use posix_memalign
 
-const size_t MEM_REGION_BASE_SIZE = 512 * 1024;
+const size_t MEM_REGION_BASE_SIZE = (2 * 1024 * 1024);
 //const size_t MEM_REGION_BASE_SIZE = 8 * 1024 * 1024;
 const size_t MR_PREALLOCATE_COUNT = 128; // FIXME unused
 
 static int _mrpool_preallocate_mr(memory_region_pool *);
 static void _mrpool_initialize_mem_region(memory_region *, struct ibv_pd *, size_t);
-static void _mrpool_destroy_mr(struct klist_node *);
 
 memory_region *mrpool_get_static_buffer(struct rdma_cm_id *id, uint32_t size)
 {
+	(void)id;
+	(void)size;
 	log_fatal("method not implemented!");
 	assert(0);
 	return NULL;
@@ -189,6 +190,7 @@ static int _mrpool_preallocate_mr(memory_region_pool *pool)
  */
 static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, size_t memory_region_size)
 {
+	(void)pd;
 	// TODO Reintroduce registering the allocated buffers
 	mr->memory_region_length = memory_region_size;
 #if ALLOC_LOCAL
@@ -218,6 +220,7 @@ static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, 
 	memset(mr->remote_memory_buffer, 0xBB, mr->memory_region_length);
 }
 
+#if 0
 /**
  * Free list node destructor. De-register a memory region and free its memory.
  * @param node The list node to be freed
@@ -226,12 +229,13 @@ static void _mrpool_destroy_mr(struct klist_node *node)
 {
 	memory_region *mr = (memory_region *)node->data;
 	if (ibv_dereg_mr(mr->local_memory_region)) {
-		DPRINT("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
+		log_fatal("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
 	}
 	if (ibv_dereg_mr(mr->remote_memory_region)) {
-		DPRINT("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
+		log_fatal("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
 	}
 	numa_free(mr->local_memory_buffer, mr->memory_region_length);
 	numa_free(mr->remote_memory_buffer, mr->memory_region_length);
 	free(mr);
 }
+#endif

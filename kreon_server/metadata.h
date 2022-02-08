@@ -25,10 +25,10 @@
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 
-#define RU_REPLICA_NUM_SEGMENTS 4
+#define RU_REPLICA_NUM_SEGMENTS 1
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
-#define RU_MAX_NUM_REPLICAS 2
+#define RU_MAX_NUM_REPLICAS 4
 //#define RU_MAX_INDEX_SEGMENTS 4
 
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
@@ -121,6 +121,7 @@ struct krm_work_task {
 	int pool_id;
 	//int suspended;
 	int seg_id_to_flush;
+	uint64_t rescheduling_counter;
 	enum krm_work_task_type pool_type;
 	enum krm_work_task_status kreon_operation_status;
 };
@@ -288,7 +289,7 @@ struct krm_region_desc {
 		struct ru_master_state *m_state;
 		struct ru_replica_state *r_state;
 	};
-	uint64_t pending_region_tasks;
+	volatile int64_t pending_region_tasks;
 	enum krm_replica_buf_status replica_buf_status;
 	enum krm_region_status status;
 };

@@ -105,7 +105,8 @@ retry_allocate_request:
 	rep.stat = allocate_space_from_circular_buffer(conn->send_circular_buf, actual_request_size, &addr);
 	switch (rep.stat) {
 	case NOT_ENOUGH_SPACE_AT_THE_END: {
-		log_info("Sending reset rendezvous message");
+		log_fatal("Server 2 Server communication should not include RESET_RENDEZVOUS msg");
+		exit(EXIT_FAILURE);
 		char *addr;
 		struct msg_header *msg;
 		/*inform remote side that to reset the rendezvous*/

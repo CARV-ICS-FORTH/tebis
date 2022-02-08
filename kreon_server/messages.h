@@ -10,7 +10,7 @@
 #include <time.h>
 #include <assert.h>
 #include "conf.h"
-#define MSG_MAX_REGION_KEY_SIZE 256
+#define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
 
 #define MESSAGE_SEGMENT_SIZE 128

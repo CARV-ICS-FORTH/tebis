@@ -102,12 +102,13 @@ void force_snapshot(volume_descriptor *volume_desc)
 
 void bt_flush_log_tail_chunk(struct db_handle *hd)
 {
-	uint64_t chunk_size = hd->db_desc->KV_log_size % LOG_TAIL_CHUNK_SIZE;
+	uint64_t log_size = hd->db_desc->KV_log_size;
+	uint64_t chunk_size = log_size % LOG_TAIL_CHUNK_SIZE;
 	if (!chunk_size) {
 		/*log_info("Nothing to flush for log of DB: %s already flushed", hd->db_desc->db_name);*/
 		return;
 	}
-	uint64_t start_offt = hd->db_desc->KV_log_size - chunk_size;
+	uint64_t start_offt = log_size - chunk_size;
 	start_offt = start_offt % SEGMENT_SIZE;
 	uint64_t chunk_id = start_offt / LOG_TAIL_CHUNK_SIZE;
 	struct log_tail *tail = hd->db_desc->log_tail_buf[hd->db_desc->curr_tail_id % LOG_TAIL_BUFS];

@@ -12,11 +12,11 @@
  */
 
 #include "queue.h"
+#include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <assert.h>
 #include <limits.h>
 
 #define COMPILER_BARRIER() asm volatile("" : : : "memory")
@@ -29,12 +29,21 @@
 #define LIKELY(cond) (cond)
 #endif /* ifdef __GNUC__ */
 
+#ifndef UTILS_QUEUE_MPMC
+// No spinlock, so define spin functions to nop
+#define utils_spinlock_init(V)
+#define utils_spinlock_lock(V)
+#define utils_spinlock_unlock(V)
+#endif
+
 utils_queue_s *utils_queue_init(void *buff)
 {
 	assert(!(UTILS_QUEUE_CAPACITY & (UTILS_QUEUE_CAPACITY - 1)));
-
 	/* Zero memory */
 	memset(buff, 0, sizeof(struct queue));
+
+	//utils_spinlock_init(&(((utils_queue_s *)buff)->lock));
+	pthread_spin_init(&(((utils_queue_s *)buff)->lock), PTHREAD_PROCESS_PRIVATE);
 
 	return (utils_queue_s *)buff;
 }
@@ -57,7 +66,8 @@ void *utils_queue_pop(utils_queue_s *q)
 	register int i;
 	void *ret_val = 0;
 
-	assert(q);
+	//utils_spinlock_lock(&(q->lock));
+	pthread_spin_lock(&(q->lock));
 
 	/* Only one thief can succeed in the following critical section */
 	t = q->top;
@@ -65,19 +75,19 @@ void *utils_queue_pop(utils_queue_s *q)
 
 	/* If it is empty */
 	if (b == t)
-		return 0;
+		goto RETURN;
 
 	/* Get the top element */
 	i = t & (UTILS_QUEUE_CAPACITY - 1);
 	ret_val = q->entries[i];
-#ifdef PARALLEL
-	if (__sync_bool_compare_and_swap(&q->top, t, t + 1))
-		return ret_val;
-	return 0;
-#else
-	q->top = t + 1;
+	if (!__sync_bool_compare_and_swap(&q->top, t, t + 1))
+		ret_val = 0;
+
+RETURN:
+	//utils_spinlock_unlock(&(q->lock));
+	pthread_spin_unlock(&(q->lock));
+
 	return ret_val;
-#endif
 }
 
 void *utils_queue_push(utils_queue_s *q, void *data)
@@ -88,6 +98,9 @@ void *utils_queue_push(utils_queue_s *q, void *data)
 	assert(data);
 	assert(q);
 
+	//utils_spinlock_lock(&(q->lock));
+	pthread_spin_lock(&(q->lock));
+
 	b = q->bottom;
 	t = q->top;
 
@@ -97,18 +110,24 @@ void *utils_queue_push(utils_queue_s *q, void *data)
 		used_slots += UINT16_MAX + 1;
 
 	/* If there is no more space */
-	if (used_slots == UTILS_QUEUE_CAPACITY)
-		return 0;
+	if (used_slots == UTILS_QUEUE_CAPACITY) {
+		data = 0;
+		goto RETURN;
+	}
 
 	i = b & (UTILS_QUEUE_CAPACITY - 1);
 	q->entries[i] = data;
 	__sync_synchronize();
 	q->bottom = b + 1;
-	/* printf("b=%u t=%u\n", ++b, t);
-	 * assert(((b >> 7) == (t >> 7)) || ((b & (UTILS_QUEUE_CAPACITY-1)) <= (t & (UTILS_QUEUE_CAPACITY)))); */
 
+	/* printf("b=%u t=%u\n", ++b, t);
+     * vine_assert(((b >> 7) == (t >> 7)) || ((b & (UTILS_QUEUE_CAPACITY-1)) <= (t & (UTILS_QUEUE_CAPACITY)))); */
+
+RETURN:
+	//utils_spinlock_unlock(&(q->lock));
+	pthread_spin_unlock(&(q->lock));
 	return data;
-}
+} /* utils_queue_push */
 
 void *utils_queue_peek(utils_queue_s *q)
 {
@@ -122,6 +141,8 @@ void *utils_queue_peek(utils_queue_s *q)
 	/* If it is empty */
 	if (b == t)
 		return 0;
+
 	i = t & (UTILS_QUEUE_CAPACITY - 1);
+
 	return q->entries[i];
 }

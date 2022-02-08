@@ -835,6 +835,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	case REPLICA_TO_MASTER_CONNECTION:
 	case SERVER_TO_CLIENT_CONNECTION:
 		log_warn("Should not handle this kind of connection here");
+		break;
 	default:
 		log_fatal("BAD connection type");
 		exit(EXIT_FAILURE);

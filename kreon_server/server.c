@@ -45,7 +45,7 @@
 #include "djb2.h"
 #endif
 
-#define LOG_SEGMENT_CHUNK 32 * 1024
+#define LOG_SEGMENT_CHUNK (32 * 1024)
 #define MY_MAX_THREADS 2048
 
 #define WORKER_THREAD_PRIORITIES_NUM 4
@@ -59,12 +59,15 @@ typedef struct prefix_table {
 } prefix_table;
 
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
-#define DS_POOL_NUM 4
+#define DS_POOL_NUM 1
 
 struct ds_task_buffer_pool {
 	pthread_mutex_t tbp_lock;
 	utils_queue_s task_buffers;
 };
+
+#define MAX_WORKERS 32
+#define MAX_NUMA_SERVERS 8
 
 struct ds_worker_thread {
 	utils_queue_s work_queue;
@@ -72,8 +75,9 @@ struct ds_worker_thread {
 	struct channel_rdma *channel;
 	pthread_t context;
 	/*for affinity purposes*/
-	/*my parent*/
+	int cpu_core_id;
 	int worker_id;
+	/*my parent*/
 	int root_server_id;
 	volatile int idle_time;
 	volatile worker_status status;
@@ -86,6 +90,8 @@ struct ds_spinning_thread {
 	pthread_mutex_t conn_list_lock;
 	SIMPLE_CONCURRENT_LIST *conn_list;
 	SIMPLE_CONCURRENT_LIST *idle_conn_list;
+	struct krm_work_task *client_tasks;
+	struct krm_work_task *server_tasks;
 	int num_workers;
 	int next_worker_to_submit_job;
 	int c_last_pool;
@@ -95,7 +101,7 @@ struct ds_spinning_thread {
 	/*entry in the root table of my dad (numa_server)*/
 	int root_server_id;
 	// my workers follow
-	struct ds_worker_thread worker[];
+	struct ds_worker_thread worker[MAX_WORKERS];
 };
 
 struct ds_numa_server {
@@ -119,7 +125,7 @@ struct ds_numa_server {
 
 struct ds_root_server {
 	int num_of_numa_servers;
-	struct ds_numa_server *numa_servers[];
+	struct ds_numa_server *numa_servers[MAX_NUMA_SERVERS];
 };
 
 /*root of everything*/
@@ -373,6 +379,7 @@ void *worker_thread_kernel(void *args)
 		// Get the next task from one of the task queues
 		// If there are tasks pending, rotate between all queues
 		// Try to get a task
+
 		if (!(job = utils_queue_pop(&worker->work_queue))) {
 			// Try for a few more usecs
 			struct timespec start, end;
@@ -412,14 +419,15 @@ void *worker_thread_kernel(void *args)
 				ds_put_server_task_buffer(&root_server->numa_servers[worker->root_server_id]->spinner,
 							  job);
 				break;
+			default:
+				log_fatal("Unkown pool type!");
+				exit(EXIT_FAILURE);
 			}
 			break;
 
 		default:
-			// send it to spinning thread
-			// log_info("Putting task %p away to be resumed pool id %d pool type %d",
-			// job, job->pool_id, job->pool_type);
-			ds_put_resume_task(&root_server->numa_servers[worker->root_server_id]->spinner, job);
+			ds_put_resume_task(&(root_server->numa_servers[worker->root_server_id]->spinner), job);
+			break;
 		}
 		job = NULL;
 	}
@@ -461,9 +469,10 @@ static struct krm_work_task *ds_get_server_task_buffer(struct ds_spinning_thread
 
 		job->pool_id = job_idx;
 		job->pool_type = pool_type;
-		assert(job->pool_id < DS_POOL_NUM);
+		job->rescheduling_counter = 1;
+		//assert(job->pool_id < DS_POOL_NUM);
 	}
-	assert(job != NULL);
+	//assert(job != NULL);
 	return job;
 }
 
@@ -471,7 +480,7 @@ static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct
 {
 	uint32_t pool_id = task->pool_id;
 	pthread_mutex_lock(&spinner->stb_pool[pool_id].tbp_lock);
-	if (utils_queue_push(&spinner->stb_pool[pool_id].task_buffers, task) == NULL) {
+	if (utils_queue_push(&(spinner->stb_pool[pool_id].task_buffers), task) == NULL) {
 		log_fatal("Failed to add task buffer in pool id %d, this should not happen", pool_id);
 		exit(EXIT_FAILURE);
 	}
@@ -482,9 +491,10 @@ static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task)
 {
 	int pool_id = task->pool_id;
-	assert(pool_id < DS_POOL_NUM);
-	pthread_mutex_lock(&spinner->resume_task_pool[pool_id].tbp_lock);
-	if (utils_queue_push(&spinner->resume_task_pool[pool_id].task_buffers, task) == NULL) {
+	//assert(pool_id == 0);
+	//assert(pool_id < DS_POOL_NUM);
+	pthread_mutex_lock(&(spinner->resume_task_pool[pool_id].tbp_lock));
+	if (utils_queue_push(&(spinner->resume_task_pool[pool_id].task_buffers), task) == NULL) {
 		log_fatal("failed to add to resumed task queue");
 		exit(EXIT_FAILURE);
 	}
@@ -519,7 +529,8 @@ static struct krm_work_task *ds_get_client_task_buffer(struct ds_spinning_thread
 
 		job->pool_id = job_idx;
 		job->pool_type = pool_type;
-		assert(job->pool_id < DS_POOL_NUM);
+		job->rescheduling_counter = 1;
+		//assert(job->pool_id < DS_POOL_NUM);
 	}
 	return job;
 }
@@ -528,7 +539,7 @@ static void ds_put_client_task_buffer(struct ds_spinning_thread *spinner, struct
 {
 	uint32_t pool_id = task->pool_id;
 	pthread_mutex_lock(&spinner->ctb_pool[pool_id].tbp_lock);
-	if (utils_queue_push(&spinner->ctb_pool[pool_id].task_buffers, task) == NULL) {
+	if (utils_queue_push(&(spinner->ctb_pool[pool_id].task_buffers), task) == NULL) {
 		log_fatal("Failed to add task buffer in pool id %d, this should not happen", pool_id);
 		exit(EXIT_FAILURE);
 	}
@@ -561,8 +572,10 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		is_task_resumed = 0;
 		if (is_server_message) {
 			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
-			if (job == NULL)
-				assert(0);
+			if (job == NULL) {
+				log_fatal("Not enough buffers to serve a server 2 server request");
+				exit(EXIT_FAILURE);
+			}
 		} else
 			job = (struct krm_work_task *)ds_get_client_task_buffer(spinner);
 	} else {
@@ -647,7 +660,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		job->notification_addr = (void *)job->msg->request_message_local_addr;
 	}
 
-	if (utils_queue_push(&spinner->worker[worker_id].work_queue, (void *)job) == NULL) {
+	if (utils_queue_push(&(spinner->worker[worker_id].work_queue), (void *)job) == NULL) {
 		log_fatal("Cannot put task in workers queue is full!");
 		exit(EXIT_FAILURE);
 #if 0
@@ -676,22 +689,23 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	return KREON_SUCCESS;
 }
 
-static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
+static void print_task(struct krm_work_task *task)
 {
-	/*check for resumed tasks to be rescheduled*/
-	for (int i = 0; i < DS_POOL_NUM; i++) {
-		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-		while (task) {
-			assert(task->r_desc);
-			// log_info("Rescheduling task");
-			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
-			if (rc == KREON_FAILURE) {
-				log_fatal("Failed to reschedule task");
-				assert(0);
-				exit(EXIT_FAILURE);
-			}
-			task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+	switch (task->kreon_operation_status) {
+	case SEGMENT_BARRIER:
+		log_info("SEGMENT_BARRIER state details follow");
+		for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			uint32_t remaining =
+				task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
+			remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
+			log_info(
+				"Sorry segment with replica %u not ready bytes remaining to replicate %llu task %p seg if %u key size is %u",
+				i, remaining, task, task->seg_id_to_flush, task->kv_size);
 		}
+		break;
+	default:
+		log_info("Sorry canoot provide additional info");
+		return;
 	}
 }
 
@@ -707,6 +721,74 @@ static void ds_check_idle_workers(struct ds_spinning_thread *spinner)
 			spinner->worker[i].status = BUSY;
 			sem_post(&spinner->worker[i].sem);
 		}
+	}
+}
+
+static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
+{
+	/*check for resumed tasks to be rescheduled*/
+	uint32_t total_halted_tasks = 0;
+	uint32_t b_detection = 0;
+	for (int i = 0; i < DS_POOL_NUM; ++i) {
+		pthread_mutex_lock(&spinner->resume_task_pool[i].tbp_lock);
+
+		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		while (task) {
+			// log_info("Rescheduling task");
+
+			if (0 == task->rescheduling_counter % 1000000) {
+				log_warn(
+					"Suspicious task %p for region %s has been rescheduled %llu times pending region tasks are: %u state is %u",
+					task, task->r_desc->region->id, task->rescheduling_counter,
+					task->r_desc->pending_region_tasks, task->kreon_operation_status);
+				print_task(task);
+				b_detection = 1;
+			}
+
+			++task->rescheduling_counter;
+			++total_halted_tasks;
+			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
+			if (rc == KREON_FAILURE) {
+				log_fatal("Failed to reschedule task");
+				exit(EXIT_FAILURE);
+			}
+			task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		}
+		pthread_mutex_unlock(&spinner->resume_task_pool[i].tbp_lock);
+	}
+	while (b_detection) {
+		for (int i = 0; i < DS_POOL_NUM; ++i) {
+			log_warn("Total halted tasks are: %u",
+				 utils_queue_used_slots(&spinner->resume_task_pool[i].task_buffers));
+			log_warn("Total available client buffers tasks are: %u",
+				 utils_queue_used_slots(&spinner->ctb_pool[i].task_buffers));
+			log_warn("Total available server buffers tasks are: %u",
+				 utils_queue_used_slots(&spinner->stb_pool[i].task_buffers));
+			ds_check_idle_workers(spinner);
+			log_info("Client tasks state: *****");
+			for (int i = 0; i < UTILS_QUEUE_CAPACITY / 2; ++i) {
+				log_info("krm work task status[%d]: %u rescheduling counter: %llu pool id %d", i,
+					 spinner->client_tasks[i].kreon_operation_status,
+					 spinner->client_tasks[i].rescheduling_counter,
+					 spinner->client_tasks[i].pool_id);
+				switch (spinner->client_tasks[i].kreon_operation_status) {
+				case SEGMENT_BARRIER:
+					log_info("SEGMENT_BARRIER state detected more info follow");
+					print_task(spinner->client_tasks);
+					break;
+				default:
+					break;
+				}
+			}
+			log_info("Finally workers queue sizes");
+			for (int i = 0; i < 8; ++i) {
+				log_info("Worker[%d] has %d tasks and its status is %d", i,
+					 utils_queue_used_slots(&spinner->worker[i].work_queue),
+					 spinner->worker[i].status);
+			}
+			log_info("Client tasks state: ***** DONE");
+		}
+		sleep(4);
 	}
 }
 
@@ -740,6 +822,7 @@ static void *server_spinning_thread_kernel(void *args)
 		 spinner->spinner_id, DS_POOL_NUM, DS_CLIENT_QUEUE_SIZE / DS_POOL_NUM);
 	spinner->s_last_pool = DS_POOL_NUM;
 	spinner->c_last_pool = DS_POOL_NUM;
+
 	for (int i = 0; i < DS_POOL_NUM; i++) {
 		pthread_mutex_init(&spinner->ctb_pool[i].tbp_lock, NULL);
 		utils_queue_init(&spinner->ctb_pool[i].task_buffers);
@@ -751,17 +834,23 @@ static void *server_spinning_thread_kernel(void *args)
 		utils_queue_init(&spinner->resume_task_pool[i].task_buffers);
 
 		int size = DS_CLIENT_QUEUE_SIZE / DS_POOL_NUM;
+
+		spinner->client_tasks = calloc(size, sizeof(struct krm_work_task));
+		spinner->server_tasks = calloc(size, sizeof(struct krm_work_task));
 		for (int j = 0; j < size; j++) {
 			/*adding buffer to the server/client pool*/
-			struct krm_work_task *work_task =
-				(struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			//struct krm_work_task *work_task =
+			//	(struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			struct krm_work_task *work_task = &spinner->client_tasks[j];
 			work_task->pool_id = i;
 			work_task->pool_type = KRM_CLIENT_POOL;
-			utils_queue_push(&spinner->ctb_pool[i].task_buffers, (void *)work_task);
-			work_task = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			utils_queue_push(&(spinner->ctb_pool[i].task_buffers), (void *)work_task);
+
+			//work_task = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			work_task = &spinner->server_tasks[j];
 			work_task->pool_id = i;
 			work_task->pool_type = KRM_SERVER_POOL;
-			utils_queue_push(&spinner->stb_pool[i].task_buffers, (void *)work_task);
+			utils_queue_push(&(spinner->stb_pool[i].task_buffers), (void *)work_task);
 		}
 	}
 	/*Init my worker threads*/
@@ -779,7 +868,7 @@ static void *server_spinning_thread_kernel(void *args)
 	CPU_ZERO(&worker_threads_affinity_mask);
 	/*pin and create my workers*/
 	for (int i = 0; i < spinner->num_workers; i++)
-		CPU_SET(spinner->worker[i].worker_id, &worker_threads_affinity_mask);
+		CPU_SET(spinner->worker[i].cpu_core_id, &worker_threads_affinity_mask);
 
 	for (int i = 0; i < spinner->num_workers; i++) {
 		pthread_create(&spinner->worker[i].context, NULL, worker_thread_kernel, &spinner->worker[i]);
@@ -793,8 +882,6 @@ static void *server_spinning_thread_kernel(void *args)
 			exit(EXIT_FAILURE);
 		}
 	}
-
-	int count = 0;
 
 	// int max_idle_time_usec = globals_get_worker_spin_time_usec();
 
@@ -1345,7 +1432,8 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			task->ins_req.metadata.segment_full_event = 0;
 			task->ins_req.metadata.special_split = 0;
 
-			/*now Level-0 check (if it needs compaction)*/
+#if 0
+        /*now Level-0 check (if it needs compaction)*/
 			struct db_descriptor *db_desc = task->r_desc->db->db_desc;
 			int active_tree = db_desc->levels[0].active_tree;
 			if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
@@ -1360,12 +1448,18 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				}
 				pthread_mutex_unlock(&db_desc->client_barrier_lock);
 			}
+#endif
 			/********************************************/
-			_insert_key_value(&task->ins_req);
+			if (_insert_key_value(&task->ins_req) == FAILED) {
+				krm_leave_kreon(task->r_desc);
+				return;
+			}
+
 			if (task->r_desc->region->num_of_backup > 0) {
-				if (task->ins_req.metadata.segment_full_event)
+				if (task->ins_req.metadata.segment_full_event) {
+					task->last_replica_to_ack = 0;
 					task->kreon_operation_status = FLUSH_REPLICA_BUFFERS;
-				else
+				} else
 					task->kreon_operation_status = REPLICATE;
 				break;
 			} else {
@@ -1377,6 +1471,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 		case FLUSH_REPLICA_BUFFERS: {
 			struct krm_region_desc *r_desc = task->r_desc;
 
+			pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
 			uint64_t next_segment_to_flush = r_desc->next_segment_to_flush;
 			// pthread_mutex_lock(&task->r_desc->region_lock);
 			/*Is it my turn to flush or can I resume?*/
@@ -1388,6 +1483,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			} else {
 				// pthread_mutex_unlock(&task->r_desc->region_lock);
 				/*sorry not my turn*/
+				pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
 				return;
 			}
 			/*find out the idx of the buffer that needs flush*/
@@ -1395,52 +1491,63 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			uint64_t lc1;
 			uint64_t lc2;
 		retry:
-			task->seg_id_to_flush = -1;
 
-			for (int i = 0; i < RU_REPLICA_NUM_SEGMENTS; i++) {
-				lc1 = r_desc->m_state->r_buf[0].segment[i].lc1;
-				if (task->ins_req.metadata.log_offset_full_event >
-					    r_desc->m_state->r_buf[0].segment[i].start &&
-				    task->ins_req.metadata.log_offset_full_event <=
-					    r_desc->m_state->r_buf[0].segment[i].end) {
-					task->seg_id_to_flush = i;
+			//task->seg_id_to_flush = -1;
+			for (uint32_t m = task->last_replica_to_ack; m < task->r_desc->region->num_of_backup; ++m) {
+				task->seg_id_to_flush = -1;
+				for (int j = 0; j < RU_REPLICA_NUM_SEGMENTS; ++j) {
+					lc1 = r_desc->m_state->r_buf[m].segment[j].lc1;
+					if (task->ins_req.metadata.log_offset_full_event >
+						    r_desc->m_state->r_buf[m].segment[j].start &&
+					    task->ins_req.metadata.log_offset_full_event <=
+						    r_desc->m_state->r_buf[m].segment[j].end) {
+						task->seg_id_to_flush = j;
+					}
+					lc2 = r_desc->m_state->r_buf[m].segment[j].lc2;
+					if (lc1 != lc2)
+						goto retry;
+
+					if (task->seg_id_to_flush == -1) {
+						task->last_replica_to_ack = m;
+						pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
+						return;
+					}
 				}
-				lc2 = r_desc->m_state->r_buf[0].segment[i].lc2;
-				if (lc1 != lc2)
-					goto retry;
-				if (task->seg_id_to_flush != -1)
-					break;
 			}
 
-			if (task->seg_id_to_flush == -1) {
+			if (task->seg_id_to_flush != 0) {
 				log_fatal("No appropriate remote segment id found for flush, what?");
 				exit(EXIT_FAILURE);
 			}
 			/*sent flush command to all motherfuckers*/
 			task->kreon_operation_status = SEGMENT_BARRIER;
+			task->last_replica_to_ack = 0;
+			pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
 			break;
 		}
 		case SEGMENT_BARRIER: {
-			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
-				uint32_t remaining =
+			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
+				uint64_t remaining =
 					task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
 				remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
 				if (remaining > 0) {
 					//log_info("Sorry segment not ready bytes remaining to replicate %llu "
 					//	 "task %p seg if %u",
 					//	 remaining, task, task->seg_id_to_flush);
+					task->last_replica_to_ack = i;
 					return;
 				}
 			}
 			// pthread_mutex_lock(&task->r_desc->region_lock);
 			// task->r_desc->region_halted = 1;
 			// pthread_mutex_unlock(&task->r_desc->region_lock);
+			task->last_replica_to_ack = 0;
 			task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 			break;
 		}
 		case SEND_FLUSH_COMMANDS: {
 			struct krm_region_desc *r_desc = task->r_desc;
-			for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
 				struct connection_rdma *r_conn = NULL;
 				/*allocate and send command*/
 				if (r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].flush_cmd_stat ==
@@ -1453,8 +1560,10 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 						sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
 					if (r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].flush_cmd.stat !=
-					    ALLOCATION_IS_SUCCESSFULL)
+					    ALLOCATION_IS_SUCCESSFULL) {
+						task->last_replica_to_ack = i;
 						return;
+					}
 
 					msg_header *req_header = r_desc->m_state->r_buf[i]
 									 .segment[task->seg_id_to_flush]
@@ -1492,27 +1601,32 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 					// log_info("Sent flush command req_header %llu", req_header);
 				}
 			}
+			task->last_replica_to_ack = 0;
 			task->kreon_operation_status = WAIT_FOR_FLUSH_REPLIES;
 			break;
 		}
 
 		case WAIT_FOR_FLUSH_REPLIES: {
 			struct krm_region_desc *r_desc = task->r_desc;
-			for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
 				/*check if header is there*/
 				msg_header *reply =
 					r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].flush_cmd.reply;
 
-				if (reply->receive != TU_RDMA_REGULAR_MSG)
+				if (reply->receive != TU_RDMA_REGULAR_MSG) {
+					task->last_replica_to_ack = i;
 					return;
+				}
 				/*check if payload is there*/
 
 				uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
 							       reply->pay_len + reply->padding_and_tail) -
 							      TU_TAIL_SIZE);
 
-				if (*tail != TU_RDMA_REGULAR_MSG)
+				if (*tail != TU_RDMA_REGULAR_MSG) {
+					task->last_replica_to_ack = i;
 					return;
+				}
 			}
 			/*got all replies motherfuckers*/
 			pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
@@ -1534,6 +1648,8 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			// log_info("Resume possible halted tasks after flush");
 			// pthread_mutex_lock(&r_desc->region_lock);
 			pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
+			/*count how many replication requests we have send*/
+			task->last_replica_to_ack = 0;
 			task->kreon_operation_status = REPLICATE;
 			break;
 		}
@@ -1547,11 +1663,11 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				remote_offset = task->ins_req.metadata.log_offset % SEGMENT_SIZE;
 			else
 				remote_offset = 0;
-			uint32_t done = 0;
-			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
+				uint32_t replicate_success = 0;
 				/*find appropriate seg buffer to rdma the mutation*/
-
-				for (int j = 0; j < RU_REPLICA_NUM_SEGMENTS; j++) {
+				pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
+				for (uint32_t j = 0; j < RU_REPLICA_NUM_SEGMENTS; ++j) {
 					uint64_t lc1;
 					uint64_t lc2;
 				retry_1:
@@ -1572,7 +1688,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 						int ret;
 
 						client_rdma_init_message_context(&task->msg_ctx[i], NULL);
-						task->last_replica_to_ack = 0;
+
 						task->msg_ctx[i].args = task;
 						task->msg_ctx[i].on_completion_callback =
 							wait_for_replication_completion_callback;
@@ -1592,21 +1708,28 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 							if (ret == 0)
 								break;
 						}
-						done = 1;
+						++task->last_replica_to_ack;
+						replicate_success = 1;
 						break;
 					}
 				}
+				if (!replicate_success) {
+					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
+					return;
+				}
+				pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
 			}
-			if (!done)
+
+			if (task->r_desc->region->num_of_backup != task->last_replica_to_ack)
 				return;
-			else
-				task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
+			/*Reset the counter to count replies*/
+			task->last_replica_to_ack = 0;
+			task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 			break;
 		}
 		case WAIT_FOR_REPLICATION_COMPLETION: {
 #if 1
-			uint32_t i = 0;
-			for (i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; i++) {
+			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
 				if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
 					task->last_replica_to_ack = i;
 					return;
@@ -1620,7 +1743,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				}
 
 				/*count bytes replicated for this segment*/
-				assert(task->kv_size < 1200);
+				//assert(task->kv_size < 1200);
 				__sync_fetch_and_add(task->replicated_bytes[i], task->kv_size);
 				//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
 				//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
@@ -2679,8 +2802,9 @@ int main(int argc, char *argv[])
 	++next_argv;
 
 	/*time to allocate the root server*/
-	root_server = (struct ds_root_server *)malloc(sizeof(struct ds_root_server) +
-						      (num_of_numa_servers * sizeof(struct ds_root_server *)));
+	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
+	//root_server = (struct ds_root_server *)calloc(
+	//	1, sizeof(struct ds_root_server) + (num_of_numa_servers * sizeof(struct ds_root_server *)));
 	root_server->num_of_numa_servers = num_of_numa_servers;
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
@@ -2726,10 +2850,11 @@ int main(int argc, char *argv[])
 	// now we have all info to allocate ds_numa_server, pin,
 	// and inform the root server
 
-	struct ds_numa_server *server = (struct ds_numa_server *)malloc(
-		sizeof(struct ds_numa_server) + (num_workers * sizeof(struct ds_worker_thread)));
+	//struct ds_numa_server *server = (struct ds_numa_server *)calloc(
+	//	1, sizeof(struct ds_numa_server) + (num_workers * sizeof(struct ds_worker_thread)));
+	struct ds_numa_server *server = (struct ds_numa_server *)calloc(1, sizeof(struct ds_numa_server));
 
-	// But first let's build each numa server's RDMA channel*/
+	/*But first let's build each numa server's RDMA channel*/
 	/*RDMA channel staff*/
 	server->channel = (struct channel_rdma *)malloc(sizeof(struct channel_rdma));
 	if (server->channel == NULL) {
@@ -2775,8 +2900,11 @@ int main(int argc, char *argv[])
 	server->meta_server.dataservers_map = NULL;
 
 	server->meta_server.RDMA_port = rdma_port;
-	for (int j = 0; j < num_workers; j++)
-		server->spinner.worker[j].worker_id = j; // workers_id[j];
+
+	for (int j = 0; j < num_workers; j++) {
+		server->spinner.worker[j].worker_id = j;
+		server->spinner.worker[j].cpu_core_id = workers_id[j];
+	}
 	root_server->numa_servers[server_idx] = server;
 
 	/*

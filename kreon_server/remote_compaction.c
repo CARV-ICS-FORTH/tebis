@@ -234,7 +234,7 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
 				       uint8_t level_id, struct node_header *root)
 {
-	if (globals_get_send_index())
+	if (!globals_get_send_index())
 		return 0;
 
 	/*log_info("Send index to replica");*/
@@ -287,7 +287,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #endif
 
 	if (r_desc->region->num_of_backup == 0) {
-		/*log_info("Nothing to do for non-replicated region %s", r_desc->region->id);*/
+		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
@@ -303,7 +303,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		struct connection_rdma *r_conn = sc_get_compaction_conn(db_entry->pool->rco_server,
 									r_desc->region->backups[i].kreon_ds_hostname);
 
-		// Sent the segment via RDMA
+		/* Sent the segment via RDMA */
 		if (size > SEGMENT_SIZE) {
 			log_fatal("Buffer overflow Sorry");
 			exit(EXIT_FAILURE);
@@ -392,7 +392,7 @@ exit:
 
 int rco_flush_last_log_segment(void *handle)
 {
-	if (globals_get_send_index()) {
+	if (!globals_get_send_index()) {
 		log_info("Ommiting flush last log segment");
 		return 1;
 	}
@@ -494,10 +494,10 @@ int rco_flush_last_log_segment(void *handle)
 		p[i] = sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
 		if (p[i].stat != ALLOCATION_IS_SUCCESSFULL) {
-			// free and retry
-			int j = i;
+			/*free and retry*/
+			int j = i - 1;
 			while (j >= 0) {
-				sc_free_rpc_pair(&p[i]);
+				sc_free_rpc_pair(&p[j]);
 				--j;
 			}
 			goto retry_allocate;
@@ -563,9 +563,9 @@ int rco_flush_last_log_segment(void *handle)
 
 int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
-	if (globals_get_send_index()) {
+	if (!globals_get_send_index()) {
 		log_info("ommiting");
-		return 0;
+		return 1;
 	}
 	// in which pool does this kreon db belongs to?
 	struct rco_db_map_entry *db_entry;

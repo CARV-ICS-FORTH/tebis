@@ -1,10 +1,3 @@
-/**
- * eutropia_db.h
- *  YCSB-C
- * Created by Anastasios Papagiannis on 17/11/15.
- * Copyright (c) 2015 Anastasios Papagiannis <apapag@ics.forth.gr>.
-**/
-
 #pragma once
 
 #include "../core/ycsbdb.h"
