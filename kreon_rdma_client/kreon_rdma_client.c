@@ -1,7 +1,7 @@
+
+#define _GNU_SOURCE
 #include <infiniband/verbs.h>
 #include <semaphore.h>
-#define _GNU_SOURCE
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -84,18 +84,20 @@ struct krc_async_req {
 	volatile uint32_t is_valid;
 };
 
+#define KRC_MAX_REQUESTS 512
 struct krc_async_queue {
 	pthread_mutex_t queue_lock;
 	utils_queue_s avail_buffers;
 	uint32_t outstanding_requests;
 	uint32_t num_requests;
-	struct krc_async_req requests[];
+	struct krc_async_req requests[KRC_MAX_REQUESTS];
 };
 
+#define KRC_MAX_QUEUES 64
 struct krc_spinner {
 	int bufs_per_queue;
 	int num_queues;
-	struct krc_async_queue *queue[];
+	struct krc_async_queue *queue[KRC_MAX_QUEUES];
 };
 static struct krc_spinner *spinner = NULL;
 pthread_t spinner_cnxt;
@@ -1249,16 +1251,31 @@ static void *krc_reply_checker(void *args)
 	pthread_setname_np(pthread_self(), "reply_checker");
 	struct krc_async_params *params = (struct krc_async_params *)args;
 
-	uint32_t async_queue_size =
-		sizeof(struct krc_async_queue) + (params->bufs_per_queue * sizeof(struct krc_async_req));
+	//uint32_t async_queue_size =
+	//	sizeof(struct krc_async_queue) + (params->bufs_per_queue * sizeof(struct krc_async_req));
+	if (params->bufs_per_queue > KRC_MAX_REQUESTS) {
+		log_fatal("bufs_per_queue: %u larger than maximum supported: %u", params->bufs_per_queue,
+			  KRC_MAX_REQUESTS);
+		exit(EXIT_FAILURE);
+	}
+	spinner = (struct krc_spinner *)calloc(1, sizeof(struct krc_spinner));
 
-	spinner = (struct krc_spinner *)malloc(sizeof(struct krc_spinner) +
-					       (params->num_queues * sizeof(struct krc_async_queue *)));
+	if (spinner->num_queues > KRC_MAX_QUEUES) {
+		log_fatal("num queues %u too large! Maximum supported: %u", spinner->num_queues, KRC_MAX_QUEUES);
+		exit(EXIT_FAILURE);
+	}
+
+	if (spinner->bufs_per_queue > KRC_MAX_REQUESTS) {
+		log_fatal("bufs per queue %u too large! Maximum supported: %u", spinner->bufs_per_queue,
+			  KRC_MAX_REQUESTS);
+		exit(EXIT_FAILURE);
+	}
+
 	spinner->num_queues = params->num_queues;
 	spinner->bufs_per_queue = params->bufs_per_queue;
 
 	for (int i = 0; i < spinner->num_queues; i++) {
-		spinner->queue[i] = (struct krc_async_queue *)malloc(async_queue_size);
+		spinner->queue[i] = (struct krc_async_queue *)calloc(1, sizeof(struct krc_async_queue));
 		pthread_mutex_init(&spinner->queue[i]->queue_lock, NULL);
 		utils_queue_init(&spinner->queue[i]->avail_buffers);
 		/*now put the actual async_req buffers*/
@@ -1392,7 +1409,7 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 
 uint8_t krc_start_async_thread(int num_queues, int bufs_per_queue)
 {
-	struct krc_async_params *args = (struct krc_async_params *)malloc(sizeof(struct krc_async_params));
+	struct krc_async_params *args = (struct krc_async_params *)calloc(1, sizeof(struct krc_async_params));
 	args->num_queues = num_queues;
 	args->bufs_per_queue = bufs_per_queue;
 	if (pthread_create(&spinner_cnxt, NULL, krc_reply_checker, (void *)args) != 0) {
