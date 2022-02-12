@@ -198,7 +198,6 @@ class kreonRBlockingClientDB : public YCSBDB {
 	{
 		char buffer[1512];
 		int pos;
-		int total_length = 0;
 
 		pos = 0;
 		for (auto v : values) {
@@ -230,10 +229,6 @@ class kreonRBlockingClientDB : public YCSBDB {
 	{
 		char buffer[1512];
 		int pos;
-		int i;
-		int type;
-		int total_length = 0;
-		int ops = 0;
 
 		pos = 0;
 		for (auto v : values) {
@@ -253,7 +248,6 @@ class kreonRBlockingClientDB : public YCSBDB {
 		}
 		/*ommit last space*/
 		pos -= 2;
-		total_length = key.length() + pos + 8;
 
 		if (krc_put(key.length(), (void *)key.c_str(), pos, (void *)buffer) != KRC_SUCCESS) {
 			log_fatal("Put failed for key %s", key.c_str());
