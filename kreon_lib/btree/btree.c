@@ -1349,7 +1349,7 @@ static void do_log_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_han
 	ticket->log_offt = log_offt;
 	ticket->op_size = op_size;
 }
-
+#if DEBUG_LOG
 static void print_log_tail(struct db_descriptor *db_desc, struct log_tail *tail)
 {
 	int id = 0;
@@ -1365,6 +1365,7 @@ static void print_log_tail(struct db_descriptor *db_desc, struct log_tail *tail)
 		value = (uint32_t *)((uint64_t)start + sizeof(uint32_t) + *start);
 	}
 }
+#endif
 
 static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 {
@@ -1472,7 +1473,7 @@ static uint64_t append_key_value_to_log_direct_IO(log_operation *req)
 	}
 	return kv_dev_offt;
 }
-
+#if !VALUE_LOG_EXPLICIT_IO
 static uint64_t append_key_value_to_log(log_operation *req)
 {
 	segment_header *d_header;
@@ -1536,7 +1537,7 @@ static uint64_t append_key_value_to_log(log_operation *req)
 	}
 	return bt_get_absolute_address(addr_inlog);
 }
-
+#endif
 uint8_t _insert_key_value(bt_insert_req *ins_req)
 {
 	db_descriptor *db_desc;
