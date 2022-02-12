@@ -162,6 +162,8 @@ static uint8_t cu_fetch_region_table(void)
 	// Iterate region entries to build the region table
 	char region_json_string[2048];
 	memset(region_json_string, 0, sizeof(region_json_string));
+	int32_t region_json_string_size = sizeof(region_json_string);
+
 	for (int i = 0; i < regions.count; i++) {
 		char *region_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGIONS_PATH, KRM_SLASH, regions.data[i]);
 		int region_json_string_length = sizeof(region_json_string);
@@ -169,7 +171,7 @@ static uint8_t cu_fetch_region_table(void)
 		if (rc != ZOK) {
 			log_fatal("Failed to retrieve region %s from Zookeeper", region_path);
 			exit(EXIT_FAILURE);
-		} else if (stat.dataLength > sizeof(region_json_string)) {
+		} else if (stat.dataLength > region_json_string_size) {
 			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
 				  "Json region entry length is %d and buffer size is %d",
 				  stat.dataLength, sizeof(region_json_string));
