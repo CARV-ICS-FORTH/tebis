@@ -752,7 +752,7 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 	msg_multi_get_req *m_get;
 	msg_header *rep_header;
 	msg_multi_get_rep *m_get_rep;
-	char *seek_key;
+	char *seek_key = NULL;
 	//old school
 	//client_region *curr_region = (client_region *)sc->curr_region;
 	struct cu_region_desc *r_desc = (struct cu_region_desc *)sc->curr_region;
@@ -760,8 +760,8 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 	msg_multi_get_rep *multi_kv_buf = (msg_multi_get_rep *)sc->multi_kv_buf;
 	connection_rdma *conn;
 
-	uint32_t seek_key_size;
-	uint32_t seek_mode;
+	uint32_t seek_key_size = 0;
+	uint32_t seek_mode = sc->seek_mode == KRC_GREATER_OR_EQUAL ? GREATER_OR_EQUAL : GREATER;
 
 	while (1) {
 		switch (sc->state) {
