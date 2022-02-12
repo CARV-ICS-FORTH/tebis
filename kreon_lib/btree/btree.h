@@ -115,9 +115,9 @@ INs and root*/
 } __attribute__((packed)) node_header;
 
 typedef struct index_entry {
-	uint64_t left[1];
+	uint64_t left;
 	uint64_t pivot;
-	uint64_t right[0];
+	uint64_t right[];
 } __attribute__((packed)) index_entry;
 
 #define INDEX_NODE_REMAIN (INDEX_NODE_SIZE - sizeof(struct node_header))

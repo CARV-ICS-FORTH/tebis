@@ -2325,7 +2325,7 @@ void *_index_node_binary_search(index_node *node, void *key_buf, char query_key_
 			if (start_idx > end_idx) {
 				// log_debug("I passed from this corner case2 %s",
 				// (char*)(index_key_buf+4));
-				addr = &(node->p[middle].left[0]);
+				addr = &(node->p[middle].left);
 				middle--;
 				break;
 			}
@@ -2344,7 +2344,7 @@ void *_index_node_binary_search(index_node *node, void *key_buf, char query_key_
 	if (middle < 0) {
 		// log_debug("I passed from this corner case4 %s",
 		// (char*)(index_key_buf+4));
-		addr = &(node->p[0].left[0]);
+		addr = &(node->p[0].left);
 	} else if (middle >= (int64_t)node->header.numberOfEntriesInNode) {
 		// log_debug("I passed from this corner case5 %s",
 		// (char*)(index_key_buf+4));

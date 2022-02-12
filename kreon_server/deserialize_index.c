@@ -136,7 +136,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 		case DI_INDEX_NODE_LEFT_CHILD: {
 			// log_info("Rewriting LEFT_CHILD of index node");
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
-			uint64_t *left_child = &index->p[buf->curr_entry].left[0];
+			uint64_t *left_child = &index->p[buf->curr_entry].left;
 			uint64_t primary_segment_offt = (uint64_t)*left_child % SEGMENT_SIZE;
 			uint64_t primary_segment = (uint64_t)*left_child - primary_segment_offt;
 			struct krm_segment_entry *index_entry;

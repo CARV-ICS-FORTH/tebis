@@ -586,7 +586,7 @@ static void comp_append_pivot_to_index(struct comp_level_write_cursor *c, uint64
 	// assert(*(uint32_t *)(pivot) > 0);
 	++c->last_index[height]->header.numberOfEntriesInNode;
 	uint32_t idx = c->last_index[height]->header.numberOfEntriesInNode - 1;
-	c->last_index[height]->p[idx].left[0] = left_node_offt;
+	c->last_index[height]->p[idx].left = left_node_offt;
 	c->last_index[height]->p[idx].pivot = pivot_offt;
 	c->last_index[height]->p[idx].right[0] = right_node_offt;
 
