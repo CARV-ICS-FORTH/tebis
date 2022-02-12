@@ -43,7 +43,7 @@ void stats_notify_stop_reporter_thread(void)
 	stat_reporter_thread_exit = 1;
 }
 
-static uint32_t sum_operations()
+static uint32_t sum_operations(void)
 {
 	uint32_t sum = 0;
 	for (int i = 0; i < Stats_numa_nodes * Stats_threads; ++i) {
