@@ -57,6 +57,7 @@ unsigned detected_operations = 0;
 #endif /* DEBUG_RESET_RENDEZVOUS */
 static void *stats_reporter_thread(void *args)
 {
+	(void)args;
 	pthread_setname_np(pthread_self(), "stats_reporter");
 	uint32_t ops_at_last_second = sum_operations();
 	uint32_t ops_at_curr_second;
