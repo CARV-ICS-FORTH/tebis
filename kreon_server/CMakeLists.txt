@@ -34,11 +34,11 @@ add_library(
   ../kreon_rdma_client/kreon_rdma_client.c
   ../kreon_server/globals.c
   # ../kreon_server/client_regions.c
-  ../kreon_rdma_client/kreon_rdma_client.c
   zk_utils.c
   djb2.c)
 add_dependencies(kreon_client cjson)
 
+target_link_libraries(kreon_client ${Zookeeper_LIBRARY})
 add_library(
   kreon_client-shared
   SHARED
@@ -58,6 +58,7 @@ add_library(
   zk_utils.c
   djb2.c)
 add_dependencies(kreon_client-shared cjson)
+target_link_libraries(kreon_client-shared ${Zookeeper_LIBRARY})
 
 add_executable(
   kreon_server

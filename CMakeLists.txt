@@ -137,10 +137,10 @@ if(NOT CMAKE_CXX_COMPILER)
 endif()
 
 include_directories(${CMAKE_BINARY_DIR})
-set(CMAKE_C_FLAGS_RELEASE "-std=gnu11 -Wall")
+set(CMAKE_C_FLAGS_RELEASE "-std=gnu11 -Wall -fpic")
 set(CMAKE_C_FLAGS_DEBUG
-    "${CMAKE_C_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall")
+    "${CMAKE_C_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer -fpic")
+set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall -fpic")
 set(CMAKE_CXX_FLAGS_DEBUG
     "${CMAKE_CXX_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
 

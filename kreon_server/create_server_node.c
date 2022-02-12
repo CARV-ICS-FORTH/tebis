@@ -1,4 +1,4 @@
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 #include <log.h>
 #include "../utilities/spin_loop.h"
 #include "metadata.h"

@@ -19,17 +19,18 @@ set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
 # target_link_libraries(streaming_btree_test runtime)
 
 add_executable(test_allocator test_allocator.c)
-target_link_libraries(test_allocator kreon)
+target_link_libraries(test_allocator ${Zookeeper_LIBRARY} kreon)
 
 add_executable(test_scans test_scans.c)
 target_link_libraries(test_scans kreon)
 
 add_executable(test_dirty_scans test_dirty_scans.c)
-target_link_libraries(test_dirty_scans kreon)
+target_link_libraries(test_dirty_scans ${Zookeeper_LIBRARY} kreon)
 
 add_executable(test_circular_buffer test_circular_buffer.c
                                     ../utilities/circular_buffer.c)
-target_link_libraries(test_circular_buffer log)
+
+target_link_libraries(test_circular_buffer log ${Zookeeper_LIBRARY})
 
 # Targets with dependencies to Zookeeper should be added in this if block
 if(Zookeeper_LIBRARY)
