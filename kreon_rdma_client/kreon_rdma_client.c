@@ -172,12 +172,13 @@ static int _krc_send_heartbeat(struct rdma_cm_id *rdma_cm_id)
  * \return KREON_SUCCESS if a message is successfully received
  * \return KREON_FAILURE if the remote side is down
  */
-static int _krc_rdma_write_spin_wait(struct rdma_cm_id *rdma_cm_id, volatile uint32_t *tail, int expected_value)
+static int _krc_rdma_write_spin_wait(struct rdma_cm_id *rdma_cm_id, volatile uint32_t *tail, uint32_t expected_value)
 {
 	const unsigned timeout = 1700000; // 10 sec
-	int i, ret = KREON_SUCCESS;
+	uint32_t ret = KREON_SUCCESS;
+
 	while (1) {
-		for (i = 0; *tail != expected_value && i < timeout; ++i)
+		for (uint32_t i = 0; *tail != expected_value && i < timeout; ++i)
 			;
 
 		if (*tail == expected_value)
