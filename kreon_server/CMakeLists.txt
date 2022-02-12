@@ -55,7 +55,6 @@ add_library(
   ../kreon_rdma_client/kreon_rdma_client.c
   ../kreon_server/globals.c
   # ../kreon_server/client_regions.c
-  ../kreon_rdma_client/kreon_rdma_client.c
   zk_utils.c
   djb2.c)
 add_dependencies(kreon_client-shared cjson)
@@ -79,7 +78,6 @@ add_executable(
   # regions.c
   messages.c
   # storage_devices.c
-  metadata_server.c
   server_communication.c
   ../kreon_rdma/rdma.c
   stats.c)
