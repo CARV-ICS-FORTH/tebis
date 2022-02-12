@@ -136,9 +136,9 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 		case DI_INDEX_NODE_LEFT_CHILD: {
 			// log_info("Rewriting LEFT_CHILD of index node");
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
-			uint64_t *left_child = &index->p[buf->curr_entry].left;
-			uint64_t primary_segment_offt = (uint64_t)*left_child % SEGMENT_SIZE;
-			uint64_t primary_segment = (uint64_t)*left_child - primary_segment_offt;
+			uint64_t left_child = index->p[buf->curr_entry].left;
+			uint64_t primary_segment_offt = left_child % SEGMENT_SIZE;
+			uint64_t primary_segment = left_child - primary_segment_offt;
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
@@ -148,16 +148,16 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 				//          primary_segment, c->curr_entry, r_desc->db->db_desc->db_name);
 				return 0;
 			}
-			*left_child = (uint64_t)index_entry->my_seg + primary_segment_offt;
+			index->p[buf->curr_entry].left = index_entry->my_seg + primary_segment_offt;
 			buf->state = DI_INDEX_NODE_PIVOT;
 			break;
 		}
 		case DI_INDEX_NODE_PIVOT: {
 			// log_info("Rewriting PIVOT of index node");
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
-			uint64_t *pivot = &index->p[buf->curr_entry].pivot;
-			uint64_t primary_segment_offt = (uint64_t)*pivot % SEGMENT_SIZE;
-			uint64_t primary_segment = (uint64_t)*pivot - primary_segment_offt;
+			uint64_t pivot = index->p[buf->curr_entry].pivot;
+			uint64_t primary_segment_offt = pivot % SEGMENT_SIZE;
+			uint64_t primary_segment = pivot - primary_segment_offt;
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
@@ -166,7 +166,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 					 primary_segment_offt, buf->r_desc->db->db_desc->db_name);
 				return 0;
 			}
-			*pivot = (uint64_t)index_entry->my_seg + primary_segment_offt;
+			index->p[buf->curr_entry].pivot = index_entry->my_seg + primary_segment_offt;
 			buf->state = DI_INDEX_NODE_PIVOT;
 
 			if (buf->curr_entry == index->header.numberOfEntriesInNode - 1) {
@@ -183,9 +183,9 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 		case DI_INDEX_NODE_RIGHT_CHILD: {
 			// log_info("Rewriting RIGHT CHILD  of index node");
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
-			uint64_t *right_child = &index->p[buf->curr_entry].right[0];
-			uint64_t primary_segment_offt = (uint64_t)*right_child % SEGMENT_SIZE;
-			uint64_t primary_segment = (uint64_t)*right_child - primary_segment_offt;
+			uint64_t right_child = index->p[buf->curr_entry].right[0];
+			uint64_t primary_segment_offt = right_child % SEGMENT_SIZE;
+			uint64_t primary_segment = right_child - primary_segment_offt;
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
@@ -194,7 +194,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 					 primary_segment_offt, buf->r_desc->db->db_desc->db_name);
 				return 0;
 			}
-			*right_child = (uint64_t)index_entry->my_seg + primary_segment_offt;
+			index->p[buf->curr_entry].right[0] = index_entry->my_seg + primary_segment_offt;
 			buf->state = DI_ADVANCE_CURSOR;
 			continue;
 		}
