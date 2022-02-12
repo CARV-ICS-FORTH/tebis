@@ -145,25 +145,6 @@ static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 		return 0;
 }
 
-static void kreon_op_stat2string(kreon_op_status stat)
-{
-	switch (stat) {
-	case KREON_SUCCESS:
-		printf("KREON_SUCCESS");
-		break;
-	case KREON_FAILURE:
-		printf("KREON_FAILURE");
-		break;
-	case KREON_KEY_NOT_FOUND:
-		printf("KEY_NOT_FOUND");
-		break;
-	case KREON_VALUE_TOO_LARGE:
-		printf("VALUE_TOO_LARGE");
-		break;
-	}
-	return;
-}
-
 extern void on_completion_client(struct rdma_message_context *);
 
 static int _krc_send_heartbeat(struct rdma_cm_id *rdma_cm_id)
