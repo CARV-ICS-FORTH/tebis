@@ -156,7 +156,7 @@ struct kv_prefix {
 struct leaf_kv_pointer {
 	uint64_t device_offt : 63;
 	uint64_t tombstone : 1;
-};
+} __attribute__((packed));
 
 /* this is the same as leaf_root_node */
 typedef struct leaf_node {
