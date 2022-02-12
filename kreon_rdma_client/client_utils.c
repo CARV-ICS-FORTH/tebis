@@ -21,6 +21,9 @@ static void _cu_zk_watcher(zhandle_t *zkh, int type, int state, const char *path
  	* zookeeper_init might not have returned, so we
  	* use zkh instead.
  	*/
+	(void)zkh;
+	(void)path;
+	(void)context;
 	if (type == ZOO_SESSION_EVENT) {
 		if (state == ZOO_CONNECTED_STATE)
 			cu_is_connected = 1;
