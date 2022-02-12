@@ -184,8 +184,6 @@ class EutropiaDB : public YCSBDB {
 		char key_buf[512];
 		int items = 0;
 		std::hash<std::string> hash_fn;
-		bool done = false;
-		unsigned int iter = 0;
 
 		int32_t klen = key.length();
 		memcpy(key_buf, &klen, sizeof(int32_t));
@@ -200,7 +198,10 @@ class EutropiaDB : public YCSBDB {
 
 		while (isValid(sh)) {
 #if 0
-        if(getKeySize(&sh) > 16000){
+		bool done = false;
+		unsigned int iter = 0;
+
+		if(getKeySize(&sh) > 16000){
           std::cout << "TOO LARGE KEY SIZE! iter = " << iter << std::endl;
           std::cout << "[" << getKeySize(&sh) << "]" << std::endl;
           exit(EXIT_FAILURE);
