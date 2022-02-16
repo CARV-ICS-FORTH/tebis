@@ -90,6 +90,7 @@ static void krm_get_IP_Addresses(struct krm_server_desc *server)
 	return;
 }
 
+#if 0
 static void krm_free_msg(struct klist_node *node)
 {
 	struct krm_msg *msg = (struct krm_msg *)node->data;
@@ -97,6 +98,7 @@ static void krm_free_msg(struct klist_node *node)
 	free(node);
 	return;
 }
+#endif
 
 #if 0
 static void krm_free_regions_per_server_entry(NODE *node)

@@ -65,5 +65,5 @@ endif()
 add_executable(ycsb-edb db/db_factory_eutropiadb.cc core/core_workload.cc
                         driver/ycsbc.cc ../utilities/list.c)
 
-target_link_libraries(ycsb-edb kreon libbloom)
+target_link_libraries(ycsb-edb kreon libbloom ${Zookeeper_LIBRARY})
 set_target_properties(ycsb-edb PROPERTIES LINK_FLAGS "-pthread -lnuma -lrt")

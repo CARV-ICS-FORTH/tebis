@@ -1,4 +1,4 @@
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 #include <log.h>
 #include "../utilities/spin_loop.h"
 #include "metadata.h"
@@ -7,6 +7,9 @@ int is_connected = 0;
 
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
+	(void)zkh;
+	(void)path;
+	(void)context;
 	/*
  	* zookeeper_init might not have returned, so we
  	* use zkh instead.

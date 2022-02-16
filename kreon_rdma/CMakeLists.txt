@@ -30,6 +30,7 @@ add_library(
   ../utilities/circular_buffer.c
   ../utilities/list.c)
 
+target_link_libraries(kreon_rdma ${Zookeeper_LIBRARY})
 add_library(
   kreon_rdma-shared SHARED
   memory_region_pool.c
@@ -40,6 +41,7 @@ add_library(
   ../utilities/spin_loop.c
   ../utilities/circular_buffer.c
   ../utilities/list.c)
+target_link_libraries(kreon_rdma-shared ${Zookeeper_LIBRARY})
 
 # add_executable(test_rdma test_rdma.c) set_target_properties(test_rdma
 # PROPERTIES LINK_FLAGS "-libverbs -pthread -D_GNU_SOURCE" )

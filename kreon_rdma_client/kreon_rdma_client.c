@@ -145,25 +145,6 @@ static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 		return 0;
 }
 
-static void kreon_op_stat2string(kreon_op_status stat)
-{
-	switch (stat) {
-	case KREON_SUCCESS:
-		printf("KREON_SUCCESS");
-		break;
-	case KREON_FAILURE:
-		printf("KREON_FAILURE");
-		break;
-	case KREON_KEY_NOT_FOUND:
-		printf("KEY_NOT_FOUND");
-		break;
-	case KREON_VALUE_TOO_LARGE:
-		printf("VALUE_TOO_LARGE");
-		break;
-	}
-	return;
-}
-
 extern void on_completion_client(struct rdma_message_context *);
 
 static int _krc_send_heartbeat(struct rdma_cm_id *rdma_cm_id)
@@ -191,12 +172,13 @@ static int _krc_send_heartbeat(struct rdma_cm_id *rdma_cm_id)
  * \return KREON_SUCCESS if a message is successfully received
  * \return KREON_FAILURE if the remote side is down
  */
-static int _krc_rdma_write_spin_wait(struct rdma_cm_id *rdma_cm_id, volatile uint32_t *tail, int expected_value)
+static int _krc_rdma_write_spin_wait(struct rdma_cm_id *rdma_cm_id, volatile uint32_t *tail, uint32_t expected_value)
 {
 	const unsigned timeout = 1700000; // 10 sec
-	int i, ret = KREON_SUCCESS;
+	uint32_t ret = KREON_SUCCESS;
+
 	while (1) {
-		for (i = 0; *tail != expected_value && i < timeout; ++i)
+		for (uint32_t i = 0; *tail != expected_value && i < timeout; ++i)
 			;
 
 		if (*tail == expected_value)
@@ -770,7 +752,7 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 	msg_multi_get_req *m_get;
 	msg_header *rep_header;
 	msg_multi_get_rep *m_get_rep;
-	char *seek_key;
+	char *seek_key = NULL;
 	//old school
 	//client_region *curr_region = (client_region *)sc->curr_region;
 	struct cu_region_desc *r_desc = (struct cu_region_desc *)sc->curr_region;
@@ -778,8 +760,8 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 	msg_multi_get_rep *multi_kv_buf = (msg_multi_get_rep *)sc->multi_kv_buf;
 	connection_rdma *conn;
 
-	uint32_t seek_key_size;
-	uint32_t seek_mode;
+	uint32_t seek_key_size = 0;
+	uint32_t seek_mode = sc->seek_mode == KRC_GREATER_OR_EQUAL ? GREATER_OR_EQUAL : GREATER;
 
 	while (1) {
 		switch (sc->state) {

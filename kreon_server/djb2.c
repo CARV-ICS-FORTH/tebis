@@ -1,10 +1,11 @@
 #include "djb2.h"
 
 #ifdef CHECKSUM_DATA_MESSAGES
-unsigned long djb2_hash_commulative(unsigned char *buf, uint32_t length, unsigned long hash_initial) {
-	unsigned long hash = (hash_initial == -1)? 5381 : hash_initial;
+unsigned long djb2_hash_commulative(unsigned char *buf, uint32_t length, unsigned long hash_initial)
+{
+	unsigned long hash = (hash_initial == -1) ? 5381 : hash_initial;
 
-	for(int i = 0; i < length; ++i) {
+	for (int i = 0; i < length; ++i) {
 		hash = ((hash << 5) + hash) + buf[i]; /* hash * 33 + c */
 	}
 
@@ -12,10 +13,11 @@ unsigned long djb2_hash_commulative(unsigned char *buf, uint32_t length, unsigne
 }
 #endif
 
-unsigned long djb2_hash(unsigned char *buf, uint32_t length) {
+unsigned long djb2_hash(unsigned char *buf, uint32_t length)
+{
 	unsigned long hash = 5381;
 
-	for(int i = 0; i < length; ++i) {
+	for (uint32_t i = 0; i < length; ++i) {
 		hash = ((hash << 5) + hash) + buf[i]; /* hash * 33 + c */
 	}
 

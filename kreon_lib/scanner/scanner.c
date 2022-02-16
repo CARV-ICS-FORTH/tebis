@@ -439,7 +439,7 @@ static int32_t sc_seek_scanner(level_scanner *level_sc, void *start_key_buf, SEE
 		if (ret <= 0)
 			node = (node_header *)bt_get_real_address(inode->p[middle].right[0]);
 		else
-			node = (node_header *)bt_get_real_address(inode->p[middle].left[0]);
+			node = (node_header *)bt_get_real_address(inode->p[middle].left);
 
 		read_lock_node(level_sc, node);
 
@@ -772,7 +772,7 @@ int32_t _get_next_KV(level_scanner *sc)
 				break;
 			} else if (node->type == internalNode || node->type == rootNode) {
 				inode = (index_node *)node;
-				node = (node_header *)bt_get_real_address((uint64_t)inode->p[0].left[0]);
+				node = (node_header *)bt_get_real_address((uint64_t)inode->p[0].left);
 			} else {
 				log_fatal("Reached corrupted node");
 				assert(0);
