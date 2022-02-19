@@ -122,12 +122,17 @@ configure_file(config.h.in config.h @ONLY)
 
 include_directories(${CMAKE_BINARY_DIR})
 string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
-
 string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
-
+string(APPEND CMAKE_C_FLAGS
+       " -Wstrict-prototypes -Wall -Wextra -std=gnu11 -fpic -gdwarf-4")
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
-
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
+string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4")
+
+set(CMAKE_LINKER_FLAGS
+    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+)
+
 add_subdirectory(kreon_rdma)
 add_subdirectory(kreon_lib)
 add_subdirectory(kreon_server)
