@@ -4,7 +4,7 @@ import sys
 
 prefix = "./" + sys.argv[1]
 files = [
-    "/usr/local/include/kreon/kreon_rdma_client.h",
+    "/usr/local/include/kreon_rdma_client.h",
     "/usr/local/lib/libkreon_rdma.so",
     "/usr/local/lib/libkreonr.so",
     "/usr/local/lib/libkreon.so",
