@@ -27,17 +27,19 @@ add_executable(
   stats.c)
 
 add_dependencies(kreon_server cjson)
-target_link_options(
+target_link_libraries(
   kreon_server
-  PUBLIC
-  -pthread
-  -lnuma
-  -libverbs
-  -lrdmacm
-  -lrt
-  -lm)
-target_link_libraries(kreon_server kreon_rdma kreonr log ${Zookeeper_LIBRARY}
-                      ${cjson_LIBRARY})
+  kreon_rdma
+  kreonr
+  log
+  ${Zookeeper_LIBRARY}
+  ${cjson_LIBRARY}
+  pthread
+  numa
+  ibverbs
+  rdmacm
+  rt
+  m)
 
 add_executable(create_region create_region.c zk_utils.c
                              ../utilities/spin_loop.c)
