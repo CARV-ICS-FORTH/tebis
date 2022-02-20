@@ -50,8 +50,8 @@ add_executable(
   ../utilities/list.c
   btree/asyncio.c)
 
-target_link_libraries(mkfs.kreon log libbloom)
 target_link_options(mkfs.kreon PUBLIC -lrt -pthread -lm)
+target_link_libraries(mkfs.kreon log libbloom)
 
 if(KREON_BUILD_CPACK)
   install(
