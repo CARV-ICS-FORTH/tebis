@@ -13,6 +13,7 @@
 // limitations under the License.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <stdlib.h>
 #endif
 #include <limits.h>
 #include <stdio.h>
@@ -1791,6 +1792,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 	uint32_t key_length = 0;
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
+	assert(task->msg->type == PUT_REQUEST || task->msg->type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
@@ -1869,6 +1871,7 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 	msg_get_rep *get_rep;
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
+	assert(task->msg->type == GET_REQUEST);
 	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
 	int level_id;
 	/*kreon phase*/
@@ -1966,7 +1969,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
 	zero_value.size = 0;
-
+	assert(task->msg->type == MULTI_GET_REQUEST);
 	multi_get = (msg_multi_get_req *)task->msg->data;
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, multi_get->seek_key, multi_get->seek_key_size);
 
@@ -2088,6 +2091,7 @@ static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_t
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
 	msg_delete_req *del_req = (msg_delete_req *)task->msg->data;
+	assert(task->msg->type == DELETE_REQUEST);
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, del_req->key, del_req->key_size);
 
 	if (r_desc == NULL) {
@@ -2139,6 +2143,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
+	assert(task->msg->type == FLUSH_COMMAND_REQ);
 	// log_info("Master orders a flush, obey your master!");
 	struct msg_flush_cmd_req *flush_req =
 		(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -2284,6 +2289,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
 	void *addr;
+	assert(task->msg->type == GET_LOG_BUFFER_REQ);
 	struct msg_get_log_buffer_req *get_log =
 		(struct msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2365,6 +2371,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
+	assert(task->msg->type == REPLICA_INDEX_GET_BUFFER_REQ);
 	struct msg_replica_index_get_buffer_req *g_req =
 		(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2442,6 +2449,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
+	assert(task->msg->type == REPLICA_INDEX_FLUSH_REQ);
 	struct msg_replica_index_flush_req *f_req =
 		(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2611,6 +2619,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc);
+	assert(task->msg->type == TEST_REQUEST);
 	task->reply_msg =
 		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
 	/*initialize message*/
@@ -2649,6 +2658,28 @@ static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_tas
 	task->reply_msg->request_message_local_addr = task->notification_addr;
 }
 
+void execute_test_req_fetch_payload(struct krm_server_desc *mydesc, struct krm_work_task *task)
+{
+	(void)mydesc;
+	(void)task;
+	assert(task->msg->type == TEST_REQUEST_FETCH_PAYLOAD);
+	log_fatal("This message is not supported yet...");
+	exit(EXIT_FAILURE);
+}
+
+typedef void execute_task(struct krm_server_desc *mydesc, struct krm_work_task *task);
+
+execute_task *task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
+						   execute_replica_index_flush_req,
+						   execute_get_log_buffer_req,
+						   execute_flush_command_req,
+						   execute_put_req,
+						   execute_delete_req,
+						   execute_get_req,
+						   execute_multi_get_req,
+						   execute_test_req,
+						   execute_test_req_fetch_payload };
+
 /*
    * KreonR main processing function of networkrequests.
    * Each network processing request must be resumable. For each message type
@@ -2660,51 +2691,14 @@ static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_tas
    * */
 static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
-	switch (task->msg->type) {
-	case REPLICA_INDEX_GET_BUFFER_REQ:
-		execute_replica_index_get_buffer_req(mydesc, task);
-		break;
+	enum message_type type;
+	if (task->msg->type == PUT_IF_EXISTS_REQUEST)
+		type = PUT_REQUEST; /*will handle the IF_EXIST internally*/
+	else
+		type = task->msg->type;
 
-	case REPLICA_INDEX_FLUSH_REQ:
-		execute_replica_index_flush_req(mydesc, task);
-		break;
+	task_dispatcher[type - 1](mydesc, task); /*type enumeration start from 1*/
 
-	case GET_LOG_BUFFER_REQ:
-		execute_get_log_buffer_req(mydesc, task);
-		break;
-
-	case FLUSH_COMMAND_REQ:
-		execute_flush_command_req(mydesc, task);
-		break;
-
-	case PUT_REQUEST:
-	case PUT_IF_EXISTS_REQUEST:
-		execute_put_req(mydesc, task);
-		break;
-
-	case DELETE_REQUEST:
-		execute_delete_req(mydesc, task);
-		break;
-
-	case GET_REQUEST:
-		execute_get_req(mydesc, task);
-		break;
-
-	case MULTI_GET_REQUEST:
-		execute_multi_get_req(mydesc, task);
-		break;
-
-	case TEST_REQUEST:
-		execute_test_req(mydesc, task);
-		break;
-
-	case TEST_REQUEST_FETCH_PAYLOAD:
-		log_fatal("Message not supported yet");
-		exit(EXIT_FAILURE);
-	default:
-		log_fatal("unknown operation %d", task->msg->type);
-		exit(EXIT_FAILURE);
-	}
 	// free_rdma_received_message(rdma_conn, data_message);
 	// assert(reply_data_message->request_message_local_addr);
 	if (task->kreon_operation_status == TASK_COMPLETE)
