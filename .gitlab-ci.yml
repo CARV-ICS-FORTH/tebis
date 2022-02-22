@@ -8,22 +8,6 @@ stages:
   - build
   - deploy
 
-build_gcc:
-  stage: build
-  script:
-    - mkdir -p build;cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug
-    - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;
-
-build_clang:
-  stage: build
-  script:
-    - mkdir -p build;cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
-    - make mkfs.kreon;make kreon;make kreon-shared
-    - make ycsb-edb;make test_scans;
-
 build_rdma_gcc:
   stage: build
   script:

@@ -110,53 +110,36 @@ find_library(
   NAMES libzookeeper_mt.a
   PATHS ${Zookeeper_LIB_PATHS})
 
-if(NOT Zookeeper_INCLUDE_DIR)
-  message(FATAL_ERROR "Could not find zookeeper header Build will exit")
+if(NOT Zookeeper_INCLUDE_DIR OR NOT Zookeeper_LIBRARY)
+  message(FATAL_ERROR "Could not find zookeeper build will fail!")
 else()
   message("Zookeeper headers at ${Zookeeper_INCLUDE_DIR}")
   include_directories(${Zookeeper_INCLUDE_DIR})
 endif()
 
-if(NOT Zookeeper_LIBRARY)
-  message("Could not find zookeeper lib needs >= 3.4.5")
-else()
-  message("Zookeeper library at ${Zookeeper_LIBRARY}")
-endif()
-
-# Paths set(ZK_C_LIB "/home1/public/mvard/zookeeper_c")
 include(CMakeconfig.txt)
 configure_file(config.h.in config.h @ONLY)
 
-# Compiler configuration
-if(NOT CMAKE_C_COMPILER)
-  set(CMAKE_C_COMPILER "gcc")
-endif()
-
-if(NOT CMAKE_CXX_COMPILER)
-  set(CMAKE_CXX_COMPILER "g++")
-endif()
-
 include_directories(${CMAKE_BINARY_DIR})
-set(CMAKE_C_FLAGS_RELEASE "-std=gnu11 -Wall -fpic")
-set(CMAKE_C_FLAGS_DEBUG
-    "${CMAKE_C_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer -fpic")
-set(CMAKE_CXX_FLAGS_RELEASE "-std=gnu++11 -Wall -fpic")
-set(CMAKE_CXX_FLAGS_DEBUG
-    "${CMAKE_CXX_FLAGS_RELEASE} -gdwarf-4 -fno-omit-frame-pointer")
+string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
+string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
+string(APPEND CMAKE_C_FLAGS
+       " -Wstrict-prototypes -Wall -Wextra -std=gnu11 -fpic -gdwarf-4")
+string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
+string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
+string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4")
 
-if(Zookeeper_LIBRARY)
-  add_subdirectory(kreon_rdma)
-endif()
+set(CMAKE_LINKER_FLAGS
+    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+)
+
+add_subdirectory(kreon_rdma)
 add_subdirectory(kreon_lib)
-if(Zookeeper_LIBRARY)
-  add_subdirectory(kreon_server)
-endif()
+add_subdirectory(kreon_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
-if(Zookeeper_LIBRARY)
-  add_subdirectory(microbenchmarks)
-endif()
+add_subdirectory(microbenchmarks)
 
 if(KREON_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR

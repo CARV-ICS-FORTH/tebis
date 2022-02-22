@@ -1,64 +1,15 @@
-if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-  set(CMAKE_C_FLAGS
-      "-Wstrict-prototypes -Wall -Wextra -std=gnu11 -fPIC ${CMAKE_C_FLAGS}"
-  )# -Werror
-  set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -Og ${CMAKE_C_FLAGS_DEBUG}")
-endif()
-
-if(CMAKE_BUILD_TYPE EQUAL "Release")
-  set(CMAKE_C_FLAGS_RELEASE
-      "-flto -fwhopr -funit-at-a-time -fprefetch-loop-arrays -fpeel-loops -O2 -finline-functions -DNDEBUG ${CMAKE_C_FLAGS_RELEASE}"
-  ) # -Werror
-endif()
-
 set_source_files_properties(../utilities/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                                 "-O0")
-
-set(CMAKE_EXE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lrt")
 add_definitions(-DKREONR)
 
 add_library(
   kreon_client
-  STATIC
-  # zk_client.c
-  # zk_string_vector.c
-  # network_data.c
-  # network_data_client.c
-  # regions.c
-  messages.c
-  # client_regions.c
-  # client_scanner.c
-  # client_regions_manager.c
-  ../kreon_rdma_client/client_utils.c
-  ../kreon_rdma_client/kreon_rdma_client.c
-  ../kreon_server/globals.c
-  # ../kreon_server/client_regions.c
-  zk_utils.c
+  messages.c ../kreon_rdma_client/client_utils.c
+  ../kreon_rdma_client/kreon_rdma_client.c ../kreon_server/globals.c zk_utils.c
   djb2.c)
 add_dependencies(kreon_client cjson)
 
 target_link_libraries(kreon_client ${Zookeeper_LIBRARY})
-add_library(
-  kreon_client-shared
-  SHARED
-  # zk_client.c
-  # zk_string_vector.c
-  # network_data.c
-  # network_data_client.c
-  # regions.c
-  messages.c
-  # client_regions.c
-  # client_scanner.c
-  # client_regions_manager.c
-  ../kreon_rdma_client/client_utils.c
-  ../kreon_rdma_client/kreon_rdma_client.c
-  ../kreon_server/globals.c
-  # ../kreon_server/client_regions.c
-  zk_utils.c
-  djb2.c)
-add_dependencies(kreon_client-shared cjson)
-target_link_libraries(kreon_client-shared ${Zookeeper_LIBRARY})
 
 add_executable(
   kreon_server
@@ -68,63 +19,51 @@ add_executable(
   deserialize_index.c
   zk_utils.c
   djb2.c
-  # replica_utilities.c
   globals.c
-  # zk_string_vector.c
-  # regions_manager.c
-  # network_data.c
-  # zk_server.c
-  # network_data_server.c
-  # server_regions.c
-  # regions.c
   messages.c
-  # storage_devices.c
   server_communication.c
   ../kreon_rdma/rdma.c
+  ../kreon_rdma_client/client_utils.c
   stats.c)
+
 add_dependencies(kreon_server cjson)
-target_link_libraries(kreon_server kreon_rdma kreonr log ${Zookeeper_LIBRARY}
-                      ${cjson_LIBRARY})
+target_link_libraries(
+  kreon_server
+  kreon_rdma
+  kreonr
+  log
+  ${Zookeeper_LIBRARY}
+  ${cjson_LIBRARY}
+  pthread
+  numa
+  ibverbs
+  rdmacm
+  rt
+  m)
 
 add_executable(create_region create_region.c zk_utils.c
                              ../utilities/spin_loop.c)
+
 target_link_libraries(create_region log ${Zookeeper_LIBRARY})
+target_link_options(create_region PUBLIC -gdwarf-4 -pthread)
 
 add_executable(create_server_node create_server_node.c zk_utils.c
                                   ../utilities/spin_loop.c)
 target_link_libraries(create_server_node log ${Zookeeper_LIBRARY})
+target_link_options(create_server_node PUBLIC -gdwarf-4 -pthread)
 
-# add_executable( create_regions create_regions.c create_regions_utils.c
-# zk_string_vector.c network_data.c regions.c globals.c ../utilities/queue.c
-# ../utilities/simple_concurrent_list.c ../utilities/spin_loop.c
-# ../utilities/circular_buffer.c) target_link_libraries(create_regions
-# kreon_rdma kreonr log)
-
-# FIXME put_get_test and scan_test don't compile add_executable(put_get_test
-# tests/put_get.c zk_string_vector.c network_data.c zk_server.c
-# network_data_server.c server_regions.c regions.c messages.c storage_devices.c
-# rbtree.c  zk_client.c zk_string_vector.c network_data.c network_data.client.c
-# client_regions.c ) target_link_libraries(put_get_test kreon_rdma)
-
-# add_executable(scan_test tests/scan.c zk_string_vector.c network_data.c
-# zk_server.c network_data_server.c server_regions.c regions.c messages.c
-# storage_devices.c rbtree.c  zk_client.c zk_string_vector.c network_data.c
-# network_data.client.c client_regions.c client_scanner.c )
-# add_executable(scan_test tests/scan.c) target_link_libraries(scan_test
-# tuclient kreon_rdma)
-
-# add_executable(fake_client fake_client.c client_regions_manager.c rbtree.c
-# zk_client.c zk_string_vector.c network_data.c network_data.client.c regions.c
-# messages.c client_regions.c client_scanner.c ../TuRDMA/rdma.c )
-# target_link_libraries(fake_client kreon_rdma)
 set_target_properties(
-  kreon_client-shared PROPERTIES PUBLIC_HEADER
-                                 "../kreon_rdma_client/kreon_rdma_client.h")
+  kreon_client PROPERTIES PUBLIC_HEADER
+                          "../kreon_rdma_client/kreon_rdma_client.h")
+
+set(KREON_CLIENT_LIB "kreon_client")
+set(KREON_SERVER_LIB "kreon_server")
 if(KREON_BUILD_CPACK)
   install(
-    TARGETS kreon_client-shared kreon_server
+    TARGETS ${KREON_CLIENT_LIB} ${KREON_SERVER_LIB}
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}")
-  set_target_properties(kreon_client-shared PROPERTIES OUTPUT_NAME kreon_client)
+    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  set_target_properties(kreon_client PROPERTIES OUTPUT_NAME ${KREON_CLIENT_LIB})
 endif()

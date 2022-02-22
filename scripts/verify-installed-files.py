@@ -4,11 +4,11 @@ import sys
 
 prefix = "./" + sys.argv[1]
 files = [
-    "/usr/local/include/kreon/kreon_rdma_client.h",
-    "/usr/local/lib/libkreon_rdma.so",
-    "/usr/local/lib/libkreonr.so",
-    "/usr/local/lib/libkreon.so",
-    "/usr/local/lib/libkreon_client.so",
+    "/usr/local/include/kreon_rdma_client.h",
+    "/usr/local/lib/libkreon_rdma.a",
+    "/usr/local/lib/libkreonr.a",
+    "/usr/local/lib/libkreon.a",
+    "/usr/local/lib/libkreon_client.a",
     "/usr/local/bin/mkfs.kreon",
     "/usr/local/bin/kreon_server",
 ]
