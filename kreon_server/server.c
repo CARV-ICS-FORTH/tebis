@@ -2442,7 +2442,6 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 	// region %s", g_rep->num_buffers,
 	// r_desc->region->id);
 	task->kreon_operation_status = TASK_COMPLETE;
-	log_info("Get reply");
 }
 
 static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
@@ -2697,7 +2696,7 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 	else
 		type = task->msg->type;
 
-	task_dispatcher[type - 1](mydesc, task); /*type enumeration start from 1*/
+	task_dispatcher[type](mydesc, task);
 
 	// free_rdma_received_message(rdma_conn, data_message);
 	// assert(reply_data_message->request_message_local_addr);
