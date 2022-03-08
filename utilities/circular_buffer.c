@@ -88,7 +88,6 @@ static circular_buffer_op_status __allocate_space_from_send_circular_buffer(circ
 		 */
 		if (check_if_space_is_free(c, c->last_addr, c->remaining_space)) {
 			*addr = NULL;
-			// DPRINT("bitmap[0] = %x\n",c->bitmap[0]);
 			return NOT_ENOUGH_SPACE_AT_THE_END;
 		} else {
 			return SPACE_NOT_READY_YET;
@@ -142,7 +141,6 @@ static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circ
 		 */
 		if (check_if_space_is_free(c, c->last_addr, c->remaining_space - preallocated_control_space)) {
 			*addr = c->last_addr;
-			// DPRINT("bitmap[0] = %x\n",c->bitmap[0]);
 			return NOT_ENOUGH_SPACE_AT_THE_END;
 		} else {
 			return SPACE_NOT_READY_YET;

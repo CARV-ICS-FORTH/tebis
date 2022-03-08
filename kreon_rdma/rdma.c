@@ -210,7 +210,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
 		switch (stat) {
 		case ALLOCATION_IS_SUCCESSFULL:
-		case BITMAP_RESET:
 			goto init_message;
 
 		case NOT_ENOUGH_SPACE_AT_THE_END:
@@ -242,7 +241,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 				}
 				free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
 								MESSAGE_SEGMENT_SIZE);
-				// log_info("CLIENT: Informing server to reset the rendezvous");
 			}
 			addr = NULL;
 			reset_circular_buffer(c_buf);
@@ -261,6 +259,10 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 				}
 			}
 			break;
+
+		default:
+			log_fatal("Unhandled state");
+			exit(EXIT_FAILURE);
 		}
 	}
 
@@ -1147,20 +1149,6 @@ uint32_t wait_for_payload_arrival(msg_header *hdr)
 	return message_size;
 }
 
-void _update_client_rendezvous_location(connection_rdma *conn, int message_size)
-{
-	if (message_size < MESSAGE_SEGMENT_SIZE)
-		message_size = MESSAGE_SEGMENT_SIZE;
-
-	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
-	if ((uint64_t)conn->rendezvous + message_size >= (uint64_t)conn->rdma_memory_regions->remote_memory_buffer +
-								 (conn->peer_mr->length - MESSAGE_SEGMENT_SIZE)) {
-		conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
-		log_info("Silent reset");
-	} else
-		conn->rendezvous = (void *)((uint64_t)conn->rendezvous + message_size);
-}
-
 void _update_rendezvous_location(connection_rdma *conn, int message_size)
 {
 	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
@@ -1174,30 +1162,11 @@ void _update_rendezvous_location(connection_rdma *conn, int message_size)
 		     conn->rdma_memory_regions->memory_region_length)) {
 			conn->rendezvous = (void *)conn->rdma_memory_regions->remote_memory_buffer;
 			// log_info("silent reset");
-		} else {
+		} else
 			conn->rendezvous = (void *)((uint64_t)conn->rendezvous + (uint32_t)message_size);
-		}
 	} else {
 		log_fatal("Faulty connection type");
 		exit(EXIT_FAILURE);
-#if 0
-		if (message_size > 0) {
-			if (conn->remaining_bytes_in_remote_rdma_region >= message_size) {
-				conn->remaining_bytes_in_remote_rdma_region -= message_size;
-				conn->rendezvous = (void *)((uint64_t)conn->rendezvous + message_size);
-			} else {
-				log_info("Just waiting for a RESET_BUFFER");
-				/*the next message will surely be a RESET_BUFFER*/
-				conn->rendezvous =
-					conn->rdma_memory_regions->remote_memory_buffer +
-					(conn->rdma_memory_regions->memory_region_length - MESSAGE_SEGMENT_SIZE);
-			}
-		} else {
-			/*RESET rendezvous location after a RESET_BUFFER message*/
-			conn->remaining_bytes_in_remote_rdma_region = conn->rdma_memory_regions->memory_region_length;
-			conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
-		}
-#endif
 	}
 }
 
