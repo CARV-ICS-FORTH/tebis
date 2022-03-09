@@ -1118,11 +1118,11 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				      void *context, int is_update_if_exists)
 {
-	msg_header *req_header;
-	msg_put_key *put_key;
-	msg_put_value *put_value;
-	msg_header *rep_header;
-	msg_put_rep *put_rep;
+	msg_header *req_header = NULL;
+	msg_put_key *put_key = NULL;
+	msg_put_value *put_value = NULL;
+	msg_header *rep_header = NULL;
+	msg_put_rep *put_rep = NULL;
 
 	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
 		log_fatal("KV size too large currently for Kreon, current max value size supported = %u bytes",
