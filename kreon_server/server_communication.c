@@ -101,40 +101,11 @@ retry_allocate_reply:
 
 	rep.reply = (struct msg_header *)addr;
 
-retry_allocate_request:
 	rep.stat = allocate_space_from_circular_buffer(conn->send_circular_buf, actual_request_size, &addr);
 	switch (rep.stat) {
-	case NOT_ENOUGH_SPACE_AT_THE_END: {
+	case NOT_ENOUGH_SPACE_AT_THE_END:
 		log_fatal("Server 2 Server communication should not include RESET_RENDEZVOUS msg");
 		exit(EXIT_FAILURE);
-		char *addr;
-		struct msg_header *msg;
-		/*inform remote side that to reset the rendezvous*/
-		if (allocate_space_from_circular_buffer(conn->send_circular_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
-		    ALLOCATION_IS_SUCCESSFULL) {
-			log_fatal("cannot send reset rendezvous");
-			exit(EXIT_FAILURE);
-		}
-		msg = (msg_header *)addr;
-		msg->pay_len = 0;
-		msg->padding_and_tail = 0;
-		msg->data = NULL;
-		msg->next = NULL;
-
-		msg->receive = RESET_RENDEZVOUS;
-		msg->type = RESET_RENDEZVOUS;
-		msg->local_offset = addr - conn->send_circular_buf->memory_region;
-		msg->remote_offset = addr - conn->send_circular_buf->memory_region;
-		// log_info("Sending to remote offset %llu\n", msg->remote_offset);
-		msg->ack_arrived = 0; // maybe?
-		msg->request_message_local_addr = NULL;
-		msg->reply = NULL;
-		msg->reply_length = 0;
-		client_send_rdma_message(conn, msg);
-		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, MESSAGE_SEGMENT_SIZE);
-		reset_circular_buffer(conn->send_circular_buf);
-		goto retry_allocate_request;
-	}
 	case SPACE_NOT_READY_YET:
 		/*rollback previous allocation*/
 		free_space_from_circular_buffer(conn->recv_circular_buf, (char *)rep.reply, actual_reply_size);

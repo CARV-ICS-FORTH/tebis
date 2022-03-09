@@ -961,11 +961,6 @@ static void *server_spinning_thread_kernel(void *args)
 					assert(0);
 					exit(EXIT_FAILURE);
 				}
-			} else if (recv == RESET_RENDEZVOUS) {
-				// log_info("SERVER: Clients wants a reset ... D O N E");
-				_zero_rendezvous_locations(hdr);
-				conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
-				goto iterate_next_element;
 			} else if (recv == I_AM_CLIENT) {
 				assert(conn->type == SERVER_TO_CLIENT_CONNECTION ||
 				       conn->type == REPLICA_TO_MASTER_CONNECTION);
@@ -2666,6 +2661,32 @@ void execute_test_req_fetch_payload(struct krm_server_desc *mydesc, struct krm_w
 	exit(EXIT_FAILURE);
 }
 
+void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
+{
+	assert(mydesc && task);
+	assert(task->msg->type == NO_OP);
+
+	//log_info("A NO OP HAS COME");
+	task->kreon_operation_status = TASK_NO_OP;
+	task->reply_msg =
+		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg->pay_len = 0;
+	task->reply_msg->padding_and_tail = MESSAGE_SEGMENT_SIZE;
+
+	task->reply_msg->data = NULL;
+	task->reply_msg->next = NULL;
+	task->reply_msg->type = NO_OP_ACK;
+	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
+	task->reply_msg->ack_arrived = KR_REP_PENDING;
+	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
+	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
+	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+	uint32_t *msg_tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->pay_len +
+					  task->reply_msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
+	*msg_tail = TU_RDMA_REGULAR_MSG;
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
 typedef void execute_task(struct krm_server_desc *mydesc, struct krm_work_task *task);
 
 execute_task *task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
@@ -2677,7 +2698,8 @@ execute_task *task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buf
 						   execute_get_req,
 						   execute_multi_get_req,
 						   execute_test_req,
-						   execute_test_req_fetch_payload };
+						   execute_test_req_fetch_payload,
+						   execute_no_op };
 
 /*
    * KreonR main processing function of networkrequests.

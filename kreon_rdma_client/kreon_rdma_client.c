@@ -102,12 +102,87 @@ struct krc_spinner {
 static struct krc_spinner *spinner = NULL;
 pthread_t spinner_cnxt;
 
+void spin_for_msg_reply(msg_header *msg)
+{
+	//log_info("Waiting for rep message with pay_len%d and pad %d", msg->pay_len, msg->padding_and_tail);
+	while (wait_for_payload_arrival(msg) == 0)
+		;
+}
+
+/*allocate a message for reseting the rendezvous.
+ *return this msg for later use*/
+static msg_header *send_no_op_operation(connection_rdma *conn, msg_header *rep)
+{
+	log_info("No op scenario");
+	char *addr = NULL;
+	uint32_t remaining_space = conn->send_circular_buf->remaining_space;
+	if (ALLOCATION_IS_SUCCESSFULL !=
+	    allocate_space_from_circular_buffer(conn->send_circular_buf, remaining_space, &addr)) {
+		log_fatal("Not enough space for request");
+		exit(EXIT_FAILURE);
+	}
+	msg_header *msg = (msg_header *)addr;
+	msg->pay_len = remaining_space - MESSAGE_SEGMENT_SIZE;
+	assert(remaining_space >= MESSAGE_SEGMENT_SIZE && msg->pay_len % MESSAGE_SEGMENT_SIZE == 0);
+	msg->padding_and_tail = TU_TAIL_SIZE;
+	msg->pay_len -= msg->padding_and_tail;
+	//log_info("pay len is %d padd is %d", msg->pay_len, msg->padding_and_tail);
+	/*pad is 0*/
+	msg->data = NULL;
+	msg->next = NULL;
+	msg->receive = TU_RDMA_REGULAR_MSG;
+	msg->type = NO_OP;
+	msg->local_offset = addr - conn->send_circular_buf->memory_region;
+	msg->remote_offset = addr - conn->send_circular_buf->memory_region;
+	msg->request_message_local_addr = msg;
+	/*Now the reply part*/
+	rep->receive = 0;
+
+	uint32_t *tail =
+		(uint32_t *)((uint64_t)msg + msg->pay_len + msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
+
+	*tail = TU_RDMA_REGULAR_MSG;
+
+	msg->reply = (char *)((uint64_t)rep - (uint64_t)conn->recv_circular_buf->memory_region);
+	msg->reply_length = sizeof(msg_header) + rep->pay_len + rep->padding_and_tail;
+
+	if (KREON_SUCCESS != client_send_rdma_message(conn, msg)) {
+		log_fatal("RDMA Write error");
+		exit(EXIT_FAILURE);
+	}
+	return msg;
+}
+
 static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
 			      int rep_msg_type, uint32_t rep_size)
 {
+	msg_header *msg = NULL;
+	uint32_t msg_size = 0;
 	pthread_mutex_lock(&conn->buffer_lock);
-	*req = client_allocate_rdma_message(conn, req_size, req_msg_type);
 	*rep = client_allocate_rdma_message(conn, rep_size, rep_msg_type);
+	*req = client_allocate_rdma_message(conn, req_size, req_msg_type);
+
+	while (*req == NULL) {
+		msg = send_no_op_operation(conn, *rep);
+		msg_size = MESSAGE_SEGMENT_SIZE + msg->pay_len + msg->padding_and_tail;
+		/*wait for the reply, free the lock for others*/
+		pthread_mutex_unlock(&conn->buffer_lock);
+		spin_for_msg_reply(*rep);
+		pthread_mutex_lock(&conn->buffer_lock);
+
+		/*free circular circular buffers*/
+		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, msg_size);
+		reset_circular_buffer(conn->send_circular_buf);
+
+		/*zero and free the reply*/
+		_zero_rendezvous_locations_l(*rep, msg->reply_length);
+		client_free_rpc_pair(conn, *rep);
+
+		/*allocate new rep reqs*/
+		*rep = client_allocate_rdma_message(conn, rep_size, rep_msg_type);
+		*req = client_allocate_rdma_message(conn, req_size, req_msg_type);
+	}
+
 	pthread_mutex_unlock(&conn->buffer_lock);
 }
 

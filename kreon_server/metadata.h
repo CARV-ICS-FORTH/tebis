@@ -82,7 +82,8 @@ enum krm_work_task_status {
 	WAIT_FOR_FLUSH_REPLIES,
 	TASK_GET_KEY,
 	TASK_MULTIGET,
-	TASK_DELETE_KEY
+	TASK_DELETE_KEY,
+	TASK_NO_OP
 };
 
 /*server to server communication related staff*/

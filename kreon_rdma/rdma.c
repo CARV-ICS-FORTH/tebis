@@ -107,7 +107,6 @@ msg_header *allocate_rdma_message(connection_rdma *conn, int message_payload_siz
 	case I_AM_CLIENT:
 	case SERVER_I_AM_READY:
 	case DISCONNECT:
-	case RESET_RENDEZVOUS:
 		lock = &conn->send_buffer_lock;
 		break;
 	case PUT_REPLY:
@@ -179,7 +178,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		break;
 	case I_AM_CLIENT:
 	case SERVER_I_AM_READY:
-	case RESET_RENDEZVOUS:
 		c_buf = conn->send_circular_buf;
 		ack_arrived = KR_REP_DONT_CARE;
 		receive_type = TU_RDMA_REGULAR_MSG;
@@ -213,38 +211,12 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 			goto init_message;
 
 		case NOT_ENOUGH_SPACE_AT_THE_END:
-			if (reset_rendezvous) {
-				/*inform remote side that to reset the rendezvous*/
-				if (allocate_space_from_circular_buffer(c_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
-				    ALLOCATION_IS_SUCCESSFULL) {
-					log_fatal("cannot send reset rendezvous");
-					exit(EXIT_FAILURE);
-				}
-				msg = (msg_header *)addr;
-				msg->pay_len = 0;
-				msg->padding_and_tail = 0;
-				msg->data = NULL;
-				msg->next = NULL;
+			if (reset_rendezvous)
+				return NULL;
 
-				msg->receive = RESET_RENDEZVOUS;
-				msg->type = RESET_RENDEZVOUS;
-				msg->local_offset = addr - c_buf->memory_region;
-				msg->remote_offset = addr - c_buf->memory_region;
-				// log_info("Sending to remote offset %llu\n", msg->remote_offset);
-				msg->ack_arrived = ack_arrived;
-				msg->request_message_local_addr = NULL;
-				msg->reply = NULL;
-				msg->reply_length = 0;
-				if (client_send_rdma_message(conn, msg) != KREON_SUCCESS) {
-					log_fatal("RDMA Write error");
-					exit(EXIT_FAILURE);
-				}
-				free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
-								MESSAGE_SEGMENT_SIZE);
-			}
+			/*only replies reach here*/
 			addr = NULL;
 			reset_circular_buffer(c_buf);
-
 			break;
 		case SPACE_NOT_READY_YET:
 			if (++i % 10000000 == 0) {
@@ -339,7 +311,6 @@ msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_
 		break;
 	case I_AM_CLIENT:
 	case SERVER_I_AM_READY:
-	case RESET_RENDEZVOUS:
 		c_buf = conn->send_circular_buf;
 		ack_arrived = KR_REP_DONT_CARE;
 		receive_type = TU_RDMA_REGULAR_MSG;
@@ -374,39 +345,9 @@ msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_
 		goto init_message;
 
 	case NOT_ENOUGH_SPACE_AT_THE_END:
-		if (reset_rendezvous) {
-			/*inform remote side that to reset the rendezvous*/
-			if (allocate_space_from_circular_buffer(c_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
-			    ALLOCATION_IS_SUCCESSFULL) {
-				log_fatal("cannot send reset rendezvous");
-				exit(EXIT_FAILURE);
-			}
-			msg = (msg_header *)addr;
-			msg->pay_len = 0;
-			msg->padding_and_tail = 0;
-			msg->data = NULL;
-			msg->next = NULL;
+		log_fatal("FIX ME");
+		exit(EXIT_FAILURE);
 
-			msg->receive = RESET_RENDEZVOUS;
-			msg->type = RESET_RENDEZVOUS;
-			msg->local_offset = addr - c_buf->memory_region;
-			msg->remote_offset = addr - c_buf->memory_region;
-			// log_info("Sending to remote offset %llu\n", msg->remote_offset);
-			msg->ack_arrived = ack_arrived;
-			msg->request_message_local_addr = NULL;
-			msg->reply = NULL;
-			msg->reply_length = 0;
-			if (client_send_rdma_message(conn, msg) != KREON_SUCCESS) {
-				log_fatal("RDMA Write error");
-				exit(EXIT_FAILURE);
-			}
-			free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, MESSAGE_SEGMENT_SIZE);
-			// log_info("CLIENT: Informing server to reset the rendezvous");
-		}
-		addr = NULL;
-		reset_circular_buffer(c_buf);
-
-		break;
 	case SPACE_NOT_READY_YET:
 		if (++i % 10000000 == 0) {
 			for (i = 0; i < c_buf->bitmap_size; i++) {
@@ -529,9 +470,10 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case DELETE_REPLY:
 		case TEST_REPLY:
 		case TEST_REPLY_FETCH_PAYLOAD:
+		case NO_OP_ACK:
 			context = NULL;
 			break;
-		case RESET_RENDEZVOUS: {
+		case NO_OP: {
 			/*rest I care*/
 			struct rdma_message_context *msg_ctx = malloc(sizeof(struct rdma_message_context));
 			client_rdma_init_message_context(msg_ctx, msg);
@@ -1430,15 +1372,11 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				case SERVER_I_AM_READY:
 					break;
 				case I_AM_CLIENT:
-				case RESET_RENDEZVOUS:
 					/*client staff, app will decide when staff arrives*/
 					assert(0);
 					free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
 									MESSAGE_SEGMENT_SIZE);
 					reset_circular_buffer(conn->send_circular_buf);
-					break;
-				case RESET_BUFFER:
-				case RESET_BUFFER_ACK:
 					break;
 
 				default:
