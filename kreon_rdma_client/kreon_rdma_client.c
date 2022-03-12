@@ -109,6 +109,24 @@ void spin_for_msg_reply(msg_header *msg)
 		;
 }
 
+/** function filling paylen and pad of the msg according to the remaining space of the circular buffer */
+void fill_msg_paylen_and_pad(uint32_t remaining_space, msg_header *msg)
+{
+	assert(remaining_space >= MESSAGE_SEGMENT_SIZE);
+	assert(msg != NULL);
+
+	if (remaining_space > MESSAGE_SEGMENT_SIZE) {
+		msg->pay_len = remaining_space - MESSAGE_SEGMENT_SIZE;
+		/*paylen must be a multiple of message segmentsize*/
+		assert(msg->pay_len % MESSAGE_SEGMENT_SIZE == 0);
+		msg->padding_and_tail = TU_TAIL_SIZE;
+		msg->pay_len -= msg->padding_and_tail;
+	} else if (remaining_space == MESSAGE_SEGMENT_SIZE) {
+		msg->pay_len = 0;
+		msg->padding_and_tail = 0;
+	}
+}
+
 /*allocate a message for reseting the rendezvous.
  *return this msg for later use*/
 static msg_header *send_no_op_operation(connection_rdma *conn, msg_header *rep)
@@ -122,10 +140,7 @@ static msg_header *send_no_op_operation(connection_rdma *conn, msg_header *rep)
 		exit(EXIT_FAILURE);
 	}
 	msg_header *msg = (msg_header *)addr;
-	msg->pay_len = remaining_space - MESSAGE_SEGMENT_SIZE;
-	assert(remaining_space >= MESSAGE_SEGMENT_SIZE && msg->pay_len % MESSAGE_SEGMENT_SIZE == 0);
-	msg->padding_and_tail = TU_TAIL_SIZE;
-	msg->pay_len -= msg->padding_and_tail;
+	fill_msg_paylen_and_pad(remaining_space, msg);
 	//log_info("pay len is %d padd is %d", msg->pay_len, msg->padding_and_tail);
 	/*pad is 0*/
 	msg->data = NULL;
