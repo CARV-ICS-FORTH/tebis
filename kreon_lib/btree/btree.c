@@ -1546,24 +1546,6 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 	uint8_t rc;
 
 	db_desc = ins_req->metadata.handle->db_desc;
-
-	int active_tree = db_desc->levels[0].active_tree;
-	while (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-		pthread_mutex_lock(&db_desc->client_barrier_lock);
-		active_tree = db_desc->levels[0].active_tree;
-
-		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-			sem_post(&db_desc->compaction_daemon_interrupts);
-			//if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
-			//	log_fatal("failed to throttle");
-			//	exit(EXIT_FAILURE);
-			//}
-			pthread_mutex_unlock(&db_desc->client_barrier_lock);
-			return FAILED;
-		}
-		active_tree = db_desc->levels[0].active_tree;
-		pthread_mutex_unlock(&db_desc->client_barrier_lock);
-	}
 	db_desc->dirty = 0x01;
 
 	if (ins_req->metadata.key_format == KV_FORMAT) {
@@ -2573,6 +2555,17 @@ static void init_index_node(index_node *node)
 	node->header.numberOfEntriesInNode = 0;
 }
 
+static int is_current_active_tree_full(db_descriptor *db_desc)
+{
+	uint8_t active_tree = db_desc->levels[0].active_tree;
+	if (db_desc->levels[0].level_size[active_tree] >= db_desc->levels[0].max_level_size) {
+		sem_post(&db_desc->compaction_daemon_interrupts);
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
 uint8_t _concurrent_insert(bt_insert_req *ins_req)
 {
 	/*The array with the locks that belong to this thread from upper levels*/
@@ -2631,6 +2624,11 @@ release_and_retry:
 		log_fatal("Failed to acquire guard lock for level %u", level_id);
 		exit(EXIT_FAILURE);
 	}
+	if (FAILURE == is_current_active_tree_full(db_desc)) {
+		RWLOCK_UNLOCK(&guard_of_level->rx_lock);
+		return FAILURE;
+	}
+
 	/*now look which is the active_tree of L0*/
 	if (ins_req->metadata.level_id == 0) {
 		ins_req->metadata.tree_id = ins_req->metadata.handle->db_desc->levels[0].active_tree;
@@ -2905,6 +2903,10 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 		log_fatal("Failed to acquire guard lock for db: %s", db_desc->db_name);
 		perror("Reason: ");
 		exit(EXIT_FAILURE);
+	}
+	if (FAILURE == is_current_active_tree_full(db_desc)) {
+		RWLOCK_UNLOCK(&guard_of_level->rx_lock);
+		return FAILURE;
 	}
 	/*now look which is the active_tree of L0*/
 	if (ins_req->metadata.level_id == 0)
