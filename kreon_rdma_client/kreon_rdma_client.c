@@ -131,7 +131,7 @@ void fill_msg_paylen_and_pad(uint32_t remaining_space, msg_header *msg)
  *return this msg for later use*/
 static msg_header *send_no_op_operation(connection_rdma *conn, msg_header *rep)
 {
-	log_info("No op scenario");
+	//log_info("No op scenario");
 	char *addr = NULL;
 	uint32_t remaining_space = conn->send_circular_buf->remaining_space;
 	if (ALLOCATION_IS_SUCCESSFULL !=
@@ -181,9 +181,9 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 		msg = send_no_op_operation(conn, *rep);
 		msg_size = MESSAGE_SEGMENT_SIZE + msg->pay_len + msg->padding_and_tail;
 		/*wait for the reply, free the lock for others*/
-		pthread_mutex_unlock(&conn->buffer_lock);
+		//pthread_mutex_unlock(&conn->buffer_lock);
 		spin_for_msg_reply(*rep);
-		pthread_mutex_lock(&conn->buffer_lock);
+		//pthread_mutex_lock(&conn->buffer_lock);
 
 		/*free circular circular buffers*/
 		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, msg_size);
