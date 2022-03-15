@@ -602,12 +602,6 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 * at for every task.
 */
 
-	/* Regular tasks scheduling policy
-* Assign tasks to one worker until he is swamped, then start assigning
-* to the next one. Once all workers are swamped it will essentially
-* become a round robin policy since the worker_id will be incremented
-* at for every task.
-*/
 	if (is_server_message) {
 		uint64_t hash = djb2_hash((unsigned char *)&msg->session_id, sizeof(uint64_t));
 		int bound = spinner->num_workers / 2;
@@ -1428,24 +1422,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 			task->ins_req.metadata.segment_full_event = 0;
 			task->ins_req.metadata.special_split = 0;
 
-#if 0
-        /*now Level-0 check (if it needs compaction)*/
-			struct db_descriptor *db_desc = task->r_desc->db->db_desc;
-			int active_tree = db_desc->levels[0].active_tree;
-			if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-				pthread_mutex_lock(&db_desc->client_barrier_lock);
-				active_tree = db_desc->levels[0].active_tree;
-
-				if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-					sem_post(&db_desc->compaction_daemon_interrupts);
-					pthread_mutex_unlock(&db_desc->client_barrier_lock);
-					krm_leave_kreon(task->r_desc);
-					return;
-				}
-				pthread_mutex_unlock(&db_desc->client_barrier_lock);
-			}
-#endif
-			/********************************************/
 			if (_insert_key_value(&task->ins_req) == FAILED) {
 				krm_leave_kreon(task->r_desc);
 				return;
