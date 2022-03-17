@@ -15,32 +15,31 @@
 #define _GNU_SOURCE
 #include <stdlib.h>
 #endif
-#include <limits.h>
-#include <stdio.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <sys/syscall.h>
 #include <alloca.h>
 #include <infiniband/verbs.h>
+#include <limits.h>
+#include <pthread.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
+#include <semaphore.h>
+#include <signal.h>
+#include <stdio.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 
-#include "messages.h"
-#include "globals.h"
-#include "metadata.h"
 #include "../kreon_lib/btree/btree.h"
+#include "../kreon_lib/btree/conf.h"
 #include "../kreon_lib/btree/segment_allocator.h"
 #include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_rdma/rdma.h"
-#include "../kreon_lib/scanner/scanner.h"
-#include "../kreon_lib/btree/conf.h"
 #include "../utilities/queue.h"
 #include "djb2.h"
-#include <log.h>
+#include "globals.h"
+#include "messages.h"
+#include "metadata.h"
 #include "stats.h"
+#include <log.h>
 
 #ifdef CHECKSUM_DATA_MESSAGES
 #include "djb2.h"
@@ -574,7 +573,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		if (is_server_message) {
 			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
 			if (job == NULL) {
-				log_fatal("Not enough buffers to serve a server 2 server request");
+				log_fatal("Not enough space to serve a server 2 server request");
 				exit(EXIT_FAILURE);
 			}
 		} else
@@ -658,22 +657,6 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 	if (utils_queue_push(&(spinner->worker[worker_id].work_queue), (void *)job) == NULL) {
 		log_fatal("Cannot put task in workers queue is full!");
 		exit(EXIT_FAILURE);
-#if 0
-		// Give back the allocated job buffer
-		switch (job->pool_type) {
-		case KRM_SERVER_POOL:
-			ds_put_server_task_buffer(spinner, job);
-			break;
-		case KRM_CLIENT_POOL:
-			ds_put_client_task_buffer(spinner, job);
-			log_info("Boom");
-			break;
-		default:
-			log_fatal("Corrupted pool type of job");
-			exit(EXIT_FAILURE);
-		}
-		return KREON_FAILURE;
-#endif
 	}
 
 	if (spinner->worker[worker_id].status == IDLE_SLEEPING) {
@@ -918,11 +901,6 @@ static void *server_spinning_thread_kernel(void *args)
 				 * rdma_memory_regions->remote_memory_buffer
 				 */
 				_update_rendezvous_location(conn, message_size);
-#ifdef DEBUG_RESET_RENDEZVOUS
-				extern unsigned detected_operations;
-				if (conn->type == SERVER_TO_CLIENT_CONNECTION)
-					__sync_fetch_and_add(&detected_operations, 1);
-#endif /* DEBUG_RESET_RENDEZVOUS */
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
@@ -965,39 +943,6 @@ static void *server_spinning_thread_kernel(void *args)
 					 (LLU)conn->control_location);
 				_zero_rendezvous_locations(hdr);
 				_update_rendezvous_location(conn, MESSAGE_SEGMENT_SIZE);
-				goto iterate_next_element;
-			} else if (recv == SERVER_I_AM_READY) {
-				conn->status = CONNECTION_OK;
-				hdr->receive = 0;
-				conn->control_location = hdr->data;
-
-				log_info("Received SERVER_I_AM_READY at %llu\n", (LLU)conn->rendezvous);
-				mrpool_free_memory_region(&conn->rdma_memory_regions);
-
-				conn->rdma_memory_regions = conn->next_rdma_memory_regions;
-				conn->next_rdma_memory_regions = NULL;
-				conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
-
-				msg_header *msg =
-					(msg_header *)((uint64_t)conn->rdma_memory_regions->local_memory_buffer +
-						       (uint64_t)conn->control_location);
-				msg->pay_len = 0;
-				msg->padding_and_tail = 0;
-				msg->data = NULL;
-				msg->next = NULL;
-				msg->type = CLIENT_RECEIVED_READY;
-				msg->receive = TU_RDMA_REGULAR_MSG;
-				msg->local_offset = (uint64_t)conn->control_location;
-				msg->remote_offset = (uint64_t)conn->control_location;
-				msg->ack_arrived = KR_REP_PENDING;
-				msg->request_message_local_addr = NULL;
-				__send_rdma_message(conn, msg, NULL);
-
-				// DPRINT("SERVER: Client I AM READY reply will be send at %llu length %d type %d message size %d id
-				// %llu\n",
-				//(LLU)hdr->reply,hdr->reply_length, hdr->type,message_size,hdr->MR);
-				goto iterate_next_element;
-			} else {
 				goto iterate_next_element;
 			}
 

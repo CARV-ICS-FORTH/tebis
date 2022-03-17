@@ -3,33 +3,32 @@
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
 #define _GNU_SOURCE /* See feature_test_macros(7) */
+#include <arpa/inet.h>
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <getopt.h>
+#include <immintrin.h>
+#include <limits.h>
+#include <malloc.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <malloc.h>
-#include <getopt.h>
-#include <limits.h>
-#include <errno.h>
-#include <signal.h>
-#include <string.h>
-#include <ctype.h>
 #include <sys/mman.h>
-#include <sys/types.h>
 #include <sys/time.h>
-#include <arpa/inet.h>
-#include <assert.h>
-#include <pthread.h>
-#include <immintrin.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-#include "get_clock.h"
-#include "../kreon_server/metadata.h"
-#include "../kreon_server/messages.h"
 #include "../kreon_server/globals.h"
+#include "../kreon_server/messages.h"
+#include "../kreon_server/metadata.h"
+#include "get_clock.h"
 
+#include "../utilities/circular_buffer.h"
 #include "../utilities/simple_concurrent_list.h"
 #include "../utilities/spin_loop.h"
-#include "../utilities/circular_buffer.h"
 #include <log.h>
 
 #define CTX_HANDSHAKE_SUCCESS 0
@@ -87,57 +86,6 @@ void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_
 	// conn->offset += message_size;
 }
 
-msg_header *allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
-{
-	(void)conn;
-	(void)message_payload_size;
-	(void)message_type;
-	log_fatal("dead function");
-	raise(SIGINT);
-	exit(EXIT_FAILURE);
-#if 0
-	msg_header *msg;
-	pthread_mutex_t *lock;
-	switch (message_type) {
-	case PUT_REQUEST:
-	case GET_REQUEST:
-	case MULTI_GET_REQUEST:
-	case PUT_OFFT_REQUEST:
-	case DELETE_REQUEST:
-	case I_AM_CLIENT:
-	case SERVER_I_AM_READY:
-	case DISCONNECT:
-		lock = &conn->send_buffer_lock;
-		break;
-	case PUT_REPLY:
-	case TU_GET_REPLY:
-	case MULTI_GET_REPLY:
-	case PUT_OFFT_REPLY:
-	case DELETE_REPLY:
-		lock = &conn->recv_buffer_lock;
-		break;
-	default:
-		log_fatal("faulty message type %d", message_type);
-		exit(EXIT_FAILURE);
-	}
-#ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
-	pthread_mutex_lock(lock);
-#else
-	pthread_spin_lock(lock);
-#endif
-
-	msg = _client_allocate_rdma_message(conn, message_payload_size, message_type);
-
-#ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
-	pthread_mutex_unlock(lock);
-#else
-	pthread_spin_unlock(lock);
-#endif
-return msg;
-#endif
-	return NULL;
-}
-
 msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
 {
 	uint32_t message_size;
@@ -177,7 +125,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		receive_type = CONNECTION_PROPERTIES;
 		break;
 	case I_AM_CLIENT:
-	case SERVER_I_AM_READY:
 		c_buf = conn->send_circular_buf;
 		ack_arrived = KR_REP_DONT_CARE;
 		receive_type = TU_RDMA_REGULAR_MSG;
@@ -238,132 +185,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		}
 	}
 
-init_message:
-	msg = (msg_header *)addr;
-	if (message_payload_size > 0) {
-		msg->pay_len = message_payload_size;
-		msg->padding_and_tail = padding + TU_TAIL_SIZE;
-		msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
-		msg->next = msg->data;
-		/*set the tail to the proper value*/
-		*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
-			      sizeof(uint32_t)) = receive_type;
-	} else {
-		msg->pay_len = 0;
-		msg->padding_and_tail = 0;
-		msg->data = NULL;
-		msg->next = NULL;
-	}
-
-	msg->type = message_type;
-	msg->receive = receive_type;
-	msg->local_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-	msg->remote_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-
-	// log_info("\t Sending to remote offset %llu\n", msg->remote_offset);
-	msg->ack_arrived = ack_arrived;
-	msg->request_message_local_addr = NULL;
-
-	return msg;
-}
-
-/* FIXME this function is mostly a copy of client_allocate_rdma_message.
- * A possible fix would be to split into smaller functions, shared between both
- * and use __attribute__((flatten)) to
- * avoid the incurred performance overheads by inlining them.
- * Useful link from gxanth:
- * https://awesomekling.github.io/Smarter-C++-inlining-with-attribute-flatten/
- */
-msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
-{
-	uint32_t message_size;
-	uint32_t padding = 0;
-	uint32_t ack_arrived;
-	uint32_t receive_type;
-	uint32_t i = 0;
-	char *addr = NULL;
-	msg_header *msg;
-	circular_buffer *c_buf;
-	circular_buffer_op_status stat;
-	uint8_t reset_rendezvous = 0;
-	switch (message_type) {
-	case PUT_REQUEST:
-	case GET_REQUEST:
-	case MULTI_GET_REQUEST:
-	case TEST_REQUEST:
-		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_PENDING;
-		receive_type = TU_RDMA_REGULAR_MSG;
-		reset_rendezvous = 1;
-		break;
-	case TEST_REPLY:
-	case PUT_REPLY:
-	case GET_REPLY:
-	case MULTI_GET_REPLY:
-		c_buf = conn->recv_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
-		receive_type = 0;
-		break;
-	case DISCONNECT:
-		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
-		receive_type = CONNECTION_PROPERTIES;
-		break;
-	case I_AM_CLIENT:
-	case SERVER_I_AM_READY:
-		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
-		receive_type = TU_RDMA_REGULAR_MSG;
-		receive_type = CONNECTION_PROPERTIES;
-		break;
-	default:
-		log_fatal("unknown message type %d", message_type);
-		exit(EXIT_FAILURE);
-	}
-
-	if (message_payload_size > 0) {
-		message_size = TU_HEADER_SIZE + message_payload_size + TU_TAIL_SIZE;
-		if (message_size % MESSAGE_SEGMENT_SIZE != 0) {
-			/*need to pad */
-			padding = (MESSAGE_SEGMENT_SIZE - (message_size % MESSAGE_SEGMENT_SIZE));
-			message_size += padding;
-			assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
-		} else
-			padding = 0;
-	} else {
-		message_size = MESSAGE_SEGMENT_SIZE;
-		padding = 0;
-	}
-
-	addr = NULL;
-
-	// while (1) {
-	stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
-	switch (stat) {
-	case ALLOCATION_IS_SUCCESSFULL:
-	case BITMAP_RESET:
-		goto init_message;
-
-	case NOT_ENOUGH_SPACE_AT_THE_END:
-		log_fatal("FIX ME");
-		exit(EXIT_FAILURE);
-
-	case SPACE_NOT_READY_YET:
-		if (++i % 10000000 == 0) {
-			for (i = 0; i < c_buf->bitmap_size; i++) {
-				if (c_buf->bitmap[i] != 0xFFFFFFFF) {
-					// if (++k % 100000000 == 0)
-					// DPRINT("bitmap[%d] = 0x%x waiting for reply at
-					// %llu\n",i,conn->send_circular_buf->bitmap[i],
-					// (char*)conn->rendezvous -
-					// conn->rdma_memory_regions->remote_memory_buffer);
-				}
-			}
-		}
-		break;
-	}
-	// }
-	return NULL;
 init_message:
 	msg = (msg_header *)addr;
 	if (message_payload_size > 0) {
@@ -551,12 +372,14 @@ void free_rdma_local_message(connection_rdma *conn)
 /*Disconnect*/
 void disconnect_and_close_connection(connection_rdma *conn)
 {
-	msg_header *disconnect_request = allocate_rdma_message(conn, 0, DISCONNECT);
-	send_rdma_message(conn, disconnect_request);
-	DPRINT("Successfully sent disconnect message, bye bye Caution! Missing "
+	//msg_header *disconnect_request = allocate_rdma_message(conn, 0, DISCONNECT);
+	log_info("REMINDER fix me");
+	exit(EXIT_FAILURE);
+	/*send_rdma_message(conn, disconnect_request);
+	log_warn("Successfully sent disconnect message, bye bye Caution! Missing "
 	       "deallocation of resources follows...\n");
 	close_and_free_RDMA_connection(conn->channel, conn);
-	DPRINT("Success\n");
+	*/
 }
 
 struct ibv_device *ctx_find_dev(const char *ib_devname)
@@ -620,42 +443,6 @@ struct ibv_context *get_rdma_device_context(char *devname)
 	rdma_free_devices(dev_list);
 
 	return rdma_dev;
-}
-
-/**
- * Pick a connection to steal memory from. For the first implementation, a lower
- * priority connection will be picked
- * randomly.
- * @param connections_list A pointer to the connections list to search in for
- * the candidate connection
- * @return A pointer to a candidate connection from where to steal memory
- */
-connection_rdma *find_memory_steal_candidate(SIMPLE_CONCURRENT_LIST *connections_list)
-{
-	SIMPLE_CONCURRENT_LIST_NODE *node = NULL;
-	// SIMPLE_CONCURRENT_LIST_NODE*	node_max = NULL;
-	connection_rdma *ret = NULL;
-	// int i;
-	// pthread_mutex_lock(&sch->list_lock);
-	node = connections_list->first;
-	ret = NULL;
-	while (node) {
-		if (!((connection_rdma *)node->data)->next_rdma_memory_regions &&
-		    (ret == NULL || ret->rdma_memory_regions->memory_region_length <
-					    ((connection_rdma *)node->data)->rdma_memory_regions->memory_region_length))
-			ret = (connection_rdma *)node->data;
-		node = node->next;
-	}
-
-	if (ret) {
-		assert(!ret->next_rdma_memory_regions);
-	} else {
-		DPRINT("No candidate connection found!\n");
-	}
-	DPRINT("id = %d, ret = %p, ret->mrsize = %zu\n", ret->idconn, ret,
-	       ret->rdma_memory_regions->memory_region_length);
-	// pthread_mutex_unlock(&sch->list_lock);
-	return ret;
 }
 
 uint16_t ctx_get_local_lid(struct ibv_context *context, int port, struct ibv_port_attr *attr)
@@ -939,16 +726,12 @@ struct channel_rdma *crdma_client_create_channel(char *ib_devname)
 	struct channel_rdma *channel;
 
 	channel = malloc(sizeof(*channel));
-	if (channel == NULL) {
-		perror("ERROR crdma_alloc_init_channel_rdma: memory problem, malloc failed\n");
-		exit(EXIT_FAILURE);
-	}
-#if (SPINNING_THREAD & SPINNING_PER_CHANNEL)
+
 	if (SPINNING_NUM_TH_CLI > SPINNING_NUM_TH)
 		channel->spinning_num_th = SPINNING_NUM_TH;
 	else
 		channel->spinning_num_th = SPINNING_NUM_TH_CLI;
-#endif
+
 	crdma_init_generic_create_channel(channel, ib_devname);
 
 	return channel;
@@ -986,8 +769,7 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 {
 	conn->idconn = channel->nconn;
 	// conn->local_mrq->idconn =  conn->idconn;
-	channel->nconn++;
-#if (SPINNING_THREAD & SPINNING_PER_CHANNEL)
+	++channel->nconn;
 	int idx;
 	channel->spinning_conn++;
 	idx = channel->spinning_conn % channel->spinning_num_th;
@@ -1000,10 +782,6 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 
 	pthread_mutex_unlock(&channel->spin_list_conn_lock[idx]);
 	sem_post(&channel->sem_spinning[idx]);
-// log_info(" *** Added connection with ID %d to spinning thread %d of total
-// spinning threads %d ***",
-//	 conn->idconn, idx, channel->spinning_num_th);
-#endif
 }
 
 void ec_sig_handler(int signo)
@@ -1354,11 +1132,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			msg = msg_ctx->msg;
 			if (msg) {
 				switch (msg->type) {
-				/*server to client messages*/
-				case CLIENT_STOP_NOW:
-				case CLIENT_RECEIVED_READY:
-					/*do nothing, client handles them*/
-					break;
 				/*server to server new school*/
 				case GET_LOG_BUFFER_REQ:
 				case GET_LOG_BUFFER_REP:
@@ -1368,8 +1141,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				/*client to server RPCs*/
 				case DISCONNECT:
 					msg->got_send_completion = 1;
-					break;
-				case SERVER_I_AM_READY:
 					break;
 				case I_AM_CLIENT:
 					/*client staff, app will decide when staff arrives*/

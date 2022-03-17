@@ -4,12 +4,12 @@
 */
 
 #pragma once
+#include "conf.h"
+#include <assert.h>
 #include <infiniband/verbs.h>
 #include <inttypes.h>
 #include <semaphore.h>
 #include <time.h>
-#include <assert.h>
-#include "conf.h"
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
 
@@ -46,9 +46,6 @@ enum message_type {
 	/*test messages*/
 	TEST_REPLY,
 	TEST_REPLY_FETCH_PAYLOAD,
-	CLIENT_STOP_NOW,
-	SERVER_I_AM_READY,
-	CLIENT_RECEIVED_READY,
 	/*pseudo-messages*/
 	//RECOVER_LOG_CONTEXT
 };

@@ -4,29 +4,29 @@
 #define _GNU_SOURCE
 #endif
 
+#include <infiniband/verbs.h>
+#include <inttypes.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <rdma/rdma_cma.h>
+#include <semaphore.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <netdb.h>
 #include <string.h>
-#include <semaphore.h>
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
 #include <sys/syscall.h>
-#include <signal.h>
 #include <sys/types.h>
-#include <netinet/in.h>
-#include <inttypes.h>
-#include <stdbool.h>
+#include <unistd.h>
 
-#include "../utilities/macros.h"
 #include "../kreon_server/conf.h"
 #include "../kreon_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/macros.h"
 #include "../utilities/queue.h"
 #include "../utilities/simple_concurrent_list.h"
-#include "../utilities/circular_buffer.h"
 #include "memory_region_pool.h"
 
 #define MAX_USEC_BEFORE_SLEEPING 5000000
@@ -43,13 +43,11 @@
 #define KEY_PRINT_FMT "%04x:%06x:%06x:%08x:%016Lx:%016Lx:"
 
 /* The Format of the message we pass through sockets (With Gid). */
-#define KEY_PRINT_FMT_GID                                                                                              \
+#define KEY_PRINT_FMT_GID \
 	"%04x:%06x:%06x:%08x:%016Lx:%016Lx:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:"
 
 #define CONNECTION_BUFFER_WITH_MUTEX_LOCK
 
-#define SPINNING_THREAD 1
-#define SPINNING_PER_CHANNEL 1
 #define SPINNING_NO_LIST 1
 
 #define SPINNING_NUM_TH 8 // was 1
@@ -69,14 +67,14 @@ typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_RE
 #define TU_RDMA_REGULAR_MSG_READY 3
 #define TU_RDMA_DISCONNECT_MSG_READY 5
 #define TU_RDMA_REGULAR_MSG 17
-#define CONNECTION_PROPERTIES                                                                                          \
+#define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
 #define TU_RDMA_RECEIVED_MREND_MSG 9 //To inform the spinning thread to go to the beginning
-#define TU_RDMA_ACK_RECEIVED_MREND_REPLY_MSG                                                                           \
+#define TU_RDMA_ACK_RECEIVED_MREND_REPLY_MSG \
 	12 //To inform the client we received the MREND_REPLY_MSG and can be released
 
-#define TU_RDMA_RECEIVED_ACK_MSG                                                                                       \
+#define TU_RDMA_RECEIVED_ACK_MSG \
 	14 //To inform the last message we have received. It should be usually sent from the client to the server.
 #define TU_RDMA_DISCONNECT_MSG 99
 
@@ -288,7 +286,6 @@ void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_
 		       uint32_t message_payload_size, uint32_t padding);
 
 msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
-msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
 
 int send_rdma_message(connection_rdma *conn, msg_header *msg);
 int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg);
