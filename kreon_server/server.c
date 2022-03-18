@@ -13,6 +13,7 @@
 // limitations under the License.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include "conf.h"
 #include <stdlib.h>
 #endif
 #include <alloca.h>
@@ -51,6 +52,7 @@
 #define WORKER_THREAD_PRIORITIES_NUM 4
 #define WORKER_THREAD_HIGH_PRIORITY_TASKS_PER_TURN 1
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
+#define MAX_OUTSTANDING_REQUESTS (UTILS_QUEUE_CAPACITY / 2)
 
 extern char *DB_NO_SPILLING;
 
@@ -59,7 +61,6 @@ typedef struct prefix_table {
 } prefix_table;
 
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
-#define DS_POOL_NUM 1
 
 struct ds_task_buffer_pool {
 	pthread_mutex_t tbp_lock;
@@ -84,18 +85,14 @@ struct ds_worker_thread {
 };
 
 struct ds_spinning_thread {
-	struct ds_task_buffer_pool ctb_pool[DS_POOL_NUM];
-	struct ds_task_buffer_pool stb_pool[DS_POOL_NUM];
-	struct ds_task_buffer_pool resume_task_pool[DS_POOL_NUM];
+	struct ds_task_buffer_pool resume_task_pool;
 	pthread_mutex_t conn_list_lock;
 	SIMPLE_CONCURRENT_LIST *conn_list;
 	SIMPLE_CONCURRENT_LIST *idle_conn_list;
-	struct krm_work_task *client_tasks;
 	struct krm_work_task *server_tasks;
+	uint64_t num_of_outstanding_client_req;
 	int num_workers;
 	int next_worker_to_submit_job;
-	int c_last_pool;
-	int s_last_pool;
 	/*for affinity purposes*/
 	int spinner_id;
 	/*entry in the root table of my dad (numa_server)*/
@@ -132,8 +129,6 @@ struct ds_root_server {
 static struct ds_root_server *root_server = NULL;
 
 static void handle_task(struct krm_server_desc *my_server, struct krm_work_task *task);
-static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task);
-static void ds_put_client_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 
 static void crdma_server_create_connection_inuse(struct connection_rdma *conn, struct channel_rdma *channel,
@@ -410,14 +405,15 @@ void *worker_thread_kernel(void *args)
 		case TASK_COMPLETE:
 			_zero_rendezvous_locations(job->msg);
 			__send_rdma_message(job->conn, job->reply_msg, NULL);
-			switch (job->pool_type) {
-			case KRM_CLIENT_POOL:
-				ds_put_client_task_buffer(&root_server->numa_servers[worker->root_server_id]->spinner,
-							  job);
+			switch (job->task_type) {
+			case KRM_CLIENT_TASK:
+				__sync_fetch_and_sub(&root_server->numa_servers[worker->root_server_id]
+							      ->spinner.num_of_outstanding_client_req,
+						     1);
+				free(job);
 				break;
-			case KRM_SERVER_POOL:
-				ds_put_server_task_buffer(&root_server->numa_servers[worker->root_server_id]->spinner,
-							  job);
+			case KRM_SERVER_TASK:
+				free(job);
 				break;
 			default:
 				log_fatal("Unkown pool type!");
@@ -441,110 +437,14 @@ static inline int worker_queued_jobs(struct ds_worker_thread *worker)
 	return utils_queue_used_slots(&worker->work_queue);
 }
 
-static struct krm_work_task *ds_get_server_task_buffer(struct ds_spinning_thread *spinner)
-{
-	struct krm_work_task *job = NULL;
-	int idx = spinner->s_last_pool + 1;
-	if (spinner->s_last_pool >= DS_POOL_NUM)
-		idx = 0;
-
-	int i = idx;
-	while (1) {
-		job = (struct krm_work_task *)utils_queue_pop(&spinner->stb_pool[i].task_buffers);
-		if (job != NULL)
-			break;
-		++i;
-		if (i >= DS_POOL_NUM)
-			i = 0;
-		if (i == idx || (DS_POOL_NUM == 1))
-			// nothing found after a full round
-			break;
-	}
-	// reset task struct
-	if (job) {
-		spinner->c_last_pool = i;
-		int job_idx = job->pool_id;
-		int pool_type = job->pool_type;
-		memset(job, 0x00, sizeof(struct krm_work_task));
-
-		job->pool_id = job_idx;
-		job->pool_type = pool_type;
-		job->rescheduling_counter = 1;
-		//assert(job->pool_id < DS_POOL_NUM);
-	}
-	//assert(job != NULL);
-	return job;
-}
-
-static void ds_put_server_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task)
-{
-	uint32_t pool_id = task->pool_id;
-	pthread_mutex_lock(&spinner->stb_pool[pool_id].tbp_lock);
-	if (utils_queue_push(&(spinner->stb_pool[pool_id].task_buffers), task) == NULL) {
-		log_fatal("Failed to add task buffer in pool id %d, this should not happen", pool_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&spinner->stb_pool[pool_id].tbp_lock);
-	return;
-}
-
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task)
 {
-	int pool_id = task->pool_id;
-	//assert(pool_id == 0);
-	//assert(pool_id < DS_POOL_NUM);
-	pthread_mutex_lock(&(spinner->resume_task_pool[pool_id].tbp_lock));
-	if (utils_queue_push(&(spinner->resume_task_pool[pool_id].task_buffers), task) == NULL) {
+	pthread_mutex_lock(&(spinner->resume_task_pool.tbp_lock));
+	if (utils_queue_push(&(spinner->resume_task_pool.task_buffers), task) == NULL) {
 		log_fatal("failed to add to resumed task queue");
 		exit(EXIT_FAILURE);
 	}
-	pthread_mutex_unlock(&spinner->resume_task_pool[pool_id].tbp_lock);
-}
-
-static struct krm_work_task *ds_get_client_task_buffer(struct ds_spinning_thread *spinner)
-{
-	struct krm_work_task *job = NULL;
-	int idx = spinner->c_last_pool + 1;
-	if (idx >= DS_POOL_NUM)
-		idx = 0;
-	int i = idx;
-	while (1) {
-		job = (struct krm_work_task *)utils_queue_pop(&spinner->ctb_pool[i].task_buffers);
-		if (job != NULL)
-			break;
-		++i;
-		if (i >= DS_POOL_NUM)
-			i = 0;
-		if (i == idx || (DS_POOL_NUM == 1))
-			// nothing found after a full round
-			break;
-	}
-
-	// reset task struct
-	if (job) {
-		spinner->c_last_pool = i;
-		int job_idx = job->pool_id;
-		int pool_type = job->pool_type;
-		memset(job, 0x00, sizeof(struct krm_work_task));
-
-		job->pool_id = job_idx;
-		job->pool_type = pool_type;
-		job->rescheduling_counter = 1;
-		//assert(job->pool_id < DS_POOL_NUM);
-	}
-	return job;
-}
-
-static void ds_put_client_task_buffer(struct ds_spinning_thread *spinner, struct krm_work_task *task)
-{
-	uint32_t pool_id = task->pool_id;
-	pthread_mutex_lock(&spinner->ctb_pool[pool_id].tbp_lock);
-	if (utils_queue_push(&(spinner->ctb_pool[pool_id].task_buffers), task) == NULL) {
-		log_fatal("Failed to add task buffer in pool id %d, this should not happen", pool_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&spinner->ctb_pool[pool_id].tbp_lock);
-	return;
+	pthread_mutex_unlock(&spinner->resume_task_pool.tbp_lock);
 }
 
 static int ds_is_server2server_job(struct msg_header *msg)
@@ -562,33 +462,40 @@ static int ds_is_server2server_job(struct msg_header *msg)
 	}
 }
 
+/** Functions assigning tasks to workers
+ *  TODO refactor task mechanism. Now when task is NULL means that we have to insert the task in a workers queue
+ *  while when task is not NULL we have to resume a task */
 static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct connection_rdma *conn, msg_header *msg,
 				struct krm_work_task *task)
 {
 	struct krm_work_task *job = NULL;
 	int is_server_message = ds_is_server2server_job(msg);
-	uint8_t is_task_resumed;
+	uint8_t is_task_resumed = 0;
+
+	/*allocate or resume task*/
+	/*we have to schedule a new task*/
 	if (task == NULL) {
 		is_task_resumed = 0;
 		if (is_server_message) {
-			job = (struct krm_work_task *)ds_get_server_task_buffer(spinner);
-			if (job == NULL) {
-				log_fatal("Not enough space to serve a server 2 server request");
-				exit(EXIT_FAILURE);
+			/*TODO XXX check this again*/
+			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			job->task_type = KRM_SERVER_TASK;
+		} else {
+			if (spinner->num_of_outstanding_client_req >= MAX_OUTSTANDING_REQUESTS) {
+				//log_debug("I am full, can not serve more");
+				return KREON_FAILURE;
 			}
-		} else
-			job = (struct krm_work_task *)ds_get_client_task_buffer(spinner);
-	} else {
+			__sync_fetch_and_add(&spinner->num_of_outstanding_client_req, 1);
+			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			job->task_type = KRM_CLIENT_TASK;
+		}
+	} else { /*we have to resume a task*/
 		job = task;
 		is_task_resumed = 1;
 		if (is_server_message) {
 			log_fatal("server2server messages are not resumable");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
-	}
-	if (!job) {
-		// log_info("assign_job_to_worker failed!");
-		return KREON_FAILURE;
 	}
 
 	int max_queued_jobs = globals_get_job_scheduling_max_queue_depth(); // TODO [mvard] Tune this
@@ -656,7 +563,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 
 	if (utils_queue_push(&(spinner->worker[worker_id].work_queue), (void *)job) == NULL) {
 		log_fatal("Cannot put task in workers queue is full!");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	if (spinner->worker[worker_id].status == IDLE_SLEEPING) {
@@ -707,132 +614,80 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 	/*check for resumed tasks to be rescheduled*/
 	uint32_t total_halted_tasks = 0;
 	uint32_t b_detection = 0;
-	for (int i = 0; i < DS_POOL_NUM; ++i) {
-		pthread_mutex_lock(&spinner->resume_task_pool[i].tbp_lock);
+	pthread_mutex_lock(&spinner->resume_task_pool.tbp_lock);
 
-		struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
-		while (task) {
-			// log_info("Rescheduling task");
+	struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool.task_buffers);
+	while (task) {
+		// log_info("Rescheduling task");
 
-			if (0 == task->rescheduling_counter % 1000000) {
-				log_warn(
-					"Suspicious task %p for region %s has been rescheduled %llu times pending region tasks are: %u state is %u",
-					task, task->r_desc->region->id, task->rescheduling_counter,
-					task->r_desc->pending_region_tasks, task->kreon_operation_status);
-				print_task(task);
-				b_detection = 1;
-			}
-
-			++task->rescheduling_counter;
-			++total_halted_tasks;
-			int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
-			if (rc == KREON_FAILURE) {
-				log_fatal("Failed to reschedule task");
-				exit(EXIT_FAILURE);
-			}
-			task = utils_queue_pop(&spinner->resume_task_pool[i].task_buffers);
+		if (0 == ++task->rescheduling_counter % 1000000) {
+			log_warn(
+				"Suspicious task %p for region %s has been rescheduled %llu times pending region tasks are: %u state is %u",
+				task, task->r_desc->region->id, task->rescheduling_counter,
+				task->r_desc->pending_region_tasks, task->kreon_operation_status);
+			print_task(task);
+			b_detection = 1;
 		}
-		pthread_mutex_unlock(&spinner->resume_task_pool[i].tbp_lock);
+
+		++total_halted_tasks;
+		int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
+		if (rc == KREON_FAILURE) {
+			log_fatal("Failed to reschedule task");
+			exit(EXIT_FAILURE);
+		}
+		task = utils_queue_pop(&spinner->resume_task_pool.task_buffers);
 	}
+	pthread_mutex_unlock(&spinner->resume_task_pool.tbp_lock);
 	while (b_detection) {
-		for (int i = 0; i < DS_POOL_NUM; ++i) {
-			log_warn("Total halted tasks are: %u",
-				 utils_queue_used_slots(&spinner->resume_task_pool[i].task_buffers));
-			log_warn("Total available client buffers tasks are: %u",
-				 utils_queue_used_slots(&spinner->ctb_pool[i].task_buffers));
-			log_warn("Total available server buffers tasks are: %u",
-				 utils_queue_used_slots(&spinner->stb_pool[i].task_buffers));
-			ds_check_idle_workers(spinner);
-			log_info("Client tasks state: *****");
-			for (int i = 0; i < UTILS_QUEUE_CAPACITY / 2; ++i) {
-				log_info("krm work task status[%d]: %u rescheduling counter: %llu pool id %d", i,
-					 spinner->client_tasks[i].kreon_operation_status,
-					 spinner->client_tasks[i].rescheduling_counter,
-					 spinner->client_tasks[i].pool_id);
-				switch (spinner->client_tasks[i].kreon_operation_status) {
-				case SEGMENT_BARRIER:
-					log_info("SEGMENT_BARRIER state detected more info follow");
-					print_task(spinner->client_tasks);
-					break;
-				default:
-					break;
-				}
-			}
-			log_info("Finally workers queue sizes");
-			for (int i = 0; i < 8; ++i) {
-				log_info("Worker[%d] has %d tasks and its status is %d", i,
-					 utils_queue_used_slots(&spinner->worker[i].work_queue),
-					 spinner->worker[i].status);
-			}
-			log_info("Client tasks state: ***** DONE");
+		log_warn("Total halted tasks are: %u", utils_queue_used_slots(&spinner->resume_task_pool.task_buffers));
+		ds_check_idle_workers(spinner);
+		log_info("Client tasks state: *****");
+		for (int i = 0; i < UTILS_QUEUE_CAPACITY / 2; ++i) {
+			log_info("krm work task status[%d]: rescheduling counter: %llu", i,
+				 spinner->num_of_outstanding_client_req);
 		}
+		log_info("Finally workers queue sizes");
+		for (int i = 0; i < 8; ++i) {
+			log_info("Worker[%d] has %d tasks and its status is %d", i,
+				 utils_queue_used_slots(&spinner->worker[i].work_queue), spinner->worker[i].status);
+		}
+		log_info("Client tasks state: ***** DONE");
 		sleep(4);
 	}
 }
 
 static void *server_spinning_thread_kernel(void *args)
 {
-	struct msg_header *hdr;
+	struct msg_header *hdr = NULL;
 
-	SIMPLE_CONCURRENT_LIST_NODE *node;
-	SIMPLE_CONCURRENT_LIST_NODE *prev_node;
-	SIMPLE_CONCURRENT_LIST_NODE *next_node;
+	SIMPLE_CONCURRENT_LIST_NODE *node = NULL;
+	SIMPLE_CONCURRENT_LIST_NODE *prev_node = NULL;
+	SIMPLE_CONCURRENT_LIST_NODE *next_node = NULL;
 
 	struct sigaction sa;
 	struct ds_spinning_thread *spinner = (struct ds_spinning_thread *)args;
-	struct connection_rdma *conn;
+	struct connection_rdma *conn = NULL;
 
-	uint32_t message_size;
-	volatile uint32_t recv;
+	uint32_t message_size = 0;
+	volatile uint32_t recv = 0;
 
-	int spinning_thread_id; // = spinner->spinner_id;
-	int rc;
+	int spinning_thread_id = 0; // = spinner->spinner_id;
+	int rc = 0;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sa.sa_handler = ec_sig_handler;
 
-	pthread_t self;
-	self = pthread_self();
+	pthread_t self = pthread_self();
 	pthread_setname_np(self, "spinner");
-	log_info("Spinning thread %d initializing empty task buffers pool size %d, "
-		 "putting %d buffers per pool",
-		 spinner->spinner_id, DS_POOL_NUM, DS_CLIENT_QUEUE_SIZE / DS_POOL_NUM);
-	spinner->s_last_pool = DS_POOL_NUM;
-	spinner->c_last_pool = DS_POOL_NUM;
 
-	for (int i = 0; i < DS_POOL_NUM; i++) {
-		pthread_mutex_init(&spinner->ctb_pool[i].tbp_lock, NULL);
-		utils_queue_init(&spinner->ctb_pool[i].task_buffers);
+	pthread_mutex_init(&spinner->resume_task_pool.tbp_lock, NULL);
+	utils_queue_init(&spinner->resume_task_pool.task_buffers);
 
-		pthread_mutex_init(&spinner->stb_pool[i].tbp_lock, NULL);
-		utils_queue_init(&spinner->stb_pool[i].task_buffers);
+	spinner->num_of_outstanding_client_req = 0;
 
-		pthread_mutex_init(&spinner->resume_task_pool[i].tbp_lock, NULL);
-		utils_queue_init(&spinner->resume_task_pool[i].task_buffers);
-
-		int size = DS_CLIENT_QUEUE_SIZE / DS_POOL_NUM;
-
-		spinner->client_tasks = calloc(size, sizeof(struct krm_work_task));
-		spinner->server_tasks = calloc(size, sizeof(struct krm_work_task));
-		for (int j = 0; j < size; j++) {
-			/*adding buffer to the server/client pool*/
-			//struct krm_work_task *work_task =
-			//	(struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
-			struct krm_work_task *work_task = &spinner->client_tasks[j];
-			work_task->pool_id = i;
-			work_task->pool_type = KRM_CLIENT_POOL;
-			utils_queue_push(&(spinner->ctb_pool[i].task_buffers), (void *)work_task);
-
-			//work_task = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
-			work_task = &spinner->server_tasks[j];
-			work_task->pool_id = i;
-			work_task->pool_type = KRM_SERVER_POOL;
-			utils_queue_push(&(spinner->stb_pool[i].task_buffers), (void *)work_task);
-		}
-	}
 	/*Init my worker threads*/
-	for (int i = 0; i < spinner->num_workers; i++) {
+	for (int i = 0; i < spinner->num_workers; ++i) {
 		/*init worker group vars*/
 		spinner->worker[i].idle_time = 0;
 		spinner->worker[i].status = IDLE_SLEEPING;
@@ -857,7 +712,7 @@ static void *server_spinning_thread_kernel(void *args)
 						    &worker_threads_affinity_mask);
 		if (status != 0) {
 			log_fatal("failed to pin workers for spinning thread %d", spinner->spinner_id);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 	}
 
