@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zookeeper.h>
 #include <zookeeper/zookeeper.h>
 
 static int cu_is_connected = 0;

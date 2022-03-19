@@ -2,6 +2,7 @@
 #include "metadata.h"
 #include "zk_utils.h"
 #include <log.h>
+#include <zookeeper.h>
 #include <zookeeper/zookeeper.h>
 
 uint8_t is_connected = 0;

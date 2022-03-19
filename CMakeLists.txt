@@ -102,9 +102,25 @@ if(NOT cmake-scripts_POPULATED)
   include(${cmake-scripts_SOURCE_DIR}/sanitizers.cmake)
 endif()
 
-set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
-find_path(Zookeeper_INCLUDE_DIR zookeeper.h /usr/local/include /usr/include
-          /usr/include/zookeeper /usr/local/include/zookeeper)
+# If users have zookeeper installed in a custom path they can provide it to
+# continue the build. e.g.
+# -DCUSTOM_ZOOKEEPER_LIB_PATH=/home/user/zookeeper/usr/local/lib e.g.
+# -DCUSTOM_ZOOKEEPER_INCLUDE_PATH=/home/user/zookeeper/usr/local/include/zookeeper
+if(NOT CUSTOM_ZOOKEEPER_LIB_PATH)
+  set(CUSTOM_ZOOKEEPER_LIB_PATH "")
+  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH "")
+endif()
+
+set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu
+                        ${CUSTOM_ZOOKEEPER_LIB_PATH})
+find_path(
+  Zookeeper_INCLUDE_DIR
+  zookeeper.h
+  /usr/local/include
+  /usr/include
+  /usr/include/zookeeper
+  /usr/local/include/zookeeper
+  ${CUSTOM_ZOOKEEPER_INCLUDE_PATH})
 find_library(
   Zookeeper_LIBRARY
   NAMES libzookeeper_mt.a
