@@ -22,6 +22,15 @@ build_rdma_clang:
     - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
     - make all
 
+iwyu-report:
+    stage: build
+    script:
+        - mkdir -p build;cd build
+        - cmake .. -DCMAKE_BUILD_TYPE=Debug -DRUN_IWYU=ON -DDISABLE_ALL_WARNINGS=ON
+        - make all > make_output.txt 2&> iwyu_output.txt || echo ignoring exit code since if this job fails others will fail too > /dev/null
+        - ./check-iwyu-output.py
+    needs: []
+
 cppcheck:
   stage: build
   script:

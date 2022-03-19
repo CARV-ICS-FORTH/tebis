@@ -19,6 +19,13 @@ option(
   "Run include-what-you-use on the source files of the key-value store library."
   OFF)
 
+option(DISABLE_ALL_WARNINGS "Disable all warnings to parse iwyu output." OFF)
+
+if(RUN_IWYU STREQUAL "ON")
+  file(COPY ${CMAKE_SOURCE_DIR}/scripts/CI/check-iwyu-output.py
+       DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(
     STATUS
@@ -142,6 +149,11 @@ include(CMakeconfig.txt)
 configure_file(config.h.in config.h @ONLY)
 
 include_directories(${CMAKE_BINARY_DIR})
+
+if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
+  string(APPEND CMAKE_C_FLAGS APPEND " -w")
+  string(APPEND CMAKE_CXX_FLAGS APPEND " -w")
+endif()
 string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
 string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
 string(APPEND CMAKE_C_FLAGS
