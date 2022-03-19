@@ -22,6 +22,13 @@ build_rdma_clang:
     - cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10
     - make all
 
+cppcheck:
+  stage: build
+  script:
+    - cppcheck --language=c . --enable=all --force --inconclusive --max-ctu-depth=1024 -iYCSB-CXX -ibuild -imicrobenchmarks -iutilities -itests -ikreon_lib --inline-suppr --suppress=missingInclude
+    - cppcheck --language=c . --enable=all --force --inconclusive --max-ctu-depth=1024 -iYCSB-CXX -ibuild -imicrobenchmarks -iutilities -itests -ikreon_lib --inline-suppr --suppress=missingInclude &> log.txt
+    - python scripts/CI/check-cppcheck-output.py
+
 install_kreon:
   stage: deploy
   variables:
