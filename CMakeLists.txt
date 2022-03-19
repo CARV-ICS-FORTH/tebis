@@ -14,6 +14,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
   set(default_build_type "Debug")
 endif()
 
+option(
+  RUN_IWYU
+  "Run include-what-you-use on the source files of the key-value store library."
+  OFF)
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(
     STATUS
