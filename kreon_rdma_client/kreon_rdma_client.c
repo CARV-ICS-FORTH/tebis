@@ -1,25 +1,25 @@
 
 #define _GNU_SOURCE
-#include <infiniband/verbs.h>
-#include <semaphore.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <string.h>
-#include <pthread.h>
-#include <immintrin.h>
-#include <assert.h>
-#include <rdma/rdma_verbs.h>
-#include <time.h>
 #include "kreon_rdma_client.h"
 #include "client_utils.h"
+#include <assert.h>
+#include <immintrin.h>
+#include <infiniband/verbs.h>
+#include <pthread.h>
+#include <rdma/rdma_verbs.h>
+#include <semaphore.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 //#include "../kreon_server/client_regions.h"
+#include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_rdma/rdma.h"
+#include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/messages.h"
 #include "../utilities/spin_loop.h"
-#include "../kreon_lib/scanner/scanner.h"
-#include "../kreon_server/djb2.h"
 #include <log.h>
 #define KRC_GET_SIZE (16 * 1024)
 
@@ -885,8 +885,8 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 			if (sc->stop_key != NULL) {
 				ret = krc_compare_keys(sc->curr_key, sc->stop_key);
 				if (ret < 0 || (ret == 0 && sc->stop_key_seek_mode == KRC_GREATER)) {
-					log_info("stop key reached curr key %s stop key %s", sc->curr_key->key_buf,
-						 sc->stop_key->key_buf);
+					log_debug("stop key reached curr key %s stop key %s", sc->curr_key->key_buf,
+						  sc->stop_key->key_buf);
 					sc->is_valid = 0;
 					sc->state = KRC_INVALID;
 					sc->curr_key = NULL;
@@ -1086,7 +1086,7 @@ void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, 
 	sc->stop_key = (krc_key *)malloc(sizeof(krc_key) + stop_key_size);
 	sc->stop_key->key_size = stop_key_size;
 	memcpy(sc->stop_key->key_buf, stop_key, stop_key_size);
-	log_info("stop key set to %s", sc->stop_key->key_buf);
+	log_debug("stop key set to %s", sc->stop_key->key_buf);
 	return;
 }
 
@@ -1353,7 +1353,7 @@ static void *krc_reply_checker(void *args)
 		/*now put the actual async_req buffers*/
 		spinner->queue[i]->num_requests = params->bufs_per_queue;
 		spinner->queue[i]->outstanding_requests = 0;
-		log_info("bufs per queue set to %lu", spinner->queue[i]->num_requests);
+		log_debug("bufs per queue set to %lu", spinner->queue[i]->num_requests);
 		for (uint32_t j = 0; j < spinner->queue[i]->num_requests; j++) {
 			memset(&spinner->queue[i]->requests[j], 0x00, sizeof(struct krc_async_req));
 			if (utils_queue_push(&spinner->queue[i]->avail_buffers, &spinner->queue[i]->requests[j]) ==
@@ -1366,7 +1366,7 @@ static void *krc_reply_checker(void *args)
 		}
 	}
 
-	log_info("reply_checker done initialization starting spinning for possible replies");
+	log_debug("reply_checker done initialization starting spinning for possible replies");
 	rep_checker_stat = KRC_REPLY_CHECKER_RUNNING;
 	while (!reply_checker_exit) {
 		for (int i = 0; i < spinner->num_queues; i++) {

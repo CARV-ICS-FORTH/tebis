@@ -1,14 +1,14 @@
 #pragma once
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
-#include <stdint.h>
-#include <semaphore.h>
-#include <zookeeper/zookeeper.h>
-#include <pthread.h>
-#include "../utilities/list.h"
 #include "../kreon_lib/btree/btree.h"
-#include "uthash.h"
 #include "../kreon_rdma/rdma.h"
+#include "../utilities/list.h"
+#include "uthash.h"
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdint.h>
+#include <zookeeper/zookeeper.h>
 #define KRM_MAX_REGIONS 1024
 #define KRM_MAX_DS_REGIONS 512
 #define KRM_MAX_KEY_SIZE 64
@@ -95,7 +95,7 @@ struct sc_msg_pair {
 	enum circular_buffer_op_status stat;
 };
 
-enum krm_work_task_type { KRM_CLIENT_POOL, KRM_SERVER_POOL };
+enum krm_work_task_type { KRM_CLIENT_TASK, KRM_SERVER_TASK };
 
 struct krm_work_task {
 	/*from client*/
@@ -119,11 +119,10 @@ struct krm_work_task {
 	int server_id;
 	int thread_id;
 	int error_code;
-	int pool_id;
 	//int suspended;
 	int seg_id_to_flush;
 	uint64_t rescheduling_counter;
-	enum krm_work_task_type pool_type;
+	enum krm_work_task_type task_type;
 	enum krm_work_task_status kreon_operation_status;
 };
 

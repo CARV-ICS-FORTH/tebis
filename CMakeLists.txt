@@ -139,7 +139,6 @@ add_subdirectory(kreon_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
-add_subdirectory(microbenchmarks)
 
 if(KREON_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR

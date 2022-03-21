@@ -14,9 +14,9 @@
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE
 #define COMPACTION
-#include <signal.h>
-#include <pthread.h>
 #include <assert.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/mman.h>
 
 #include "../scanner/scanner.h"
@@ -892,7 +892,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 
 	if (handle.db_desc->idx_init) {
 		(*handle.db_desc->idx_init)((uint64_t)handle.db_desc, comp_req->dst_level);
-		log_info("Informed my replicas of DB: %s for remote compaction!", handle.db_desc->db_name);
+		log_debug("Informed my replicas of DB: %s for remote compaction!", handle.db_desc->db_name);
 	}
 
 	uint64_t local_spilled_keys = 0;
@@ -1033,7 +1033,7 @@ static void comp_compact_with_explicit_IO(struct compaction_request *comp_req, s
 	comp_close_write_cursor(merged_level);
 	if (handle.db_desc->destroy_rdma_buf) {
 		(*handle.db_desc->destroy_rdma_buf)((uint64_t)handle.db_desc, comp_req->dst_level);
-		log_info("Destoyed buffer successfully for DB %s!", handle.db_desc->db_name);
+		log_debug("Destoyed buffer successfully for DB %s!", handle.db_desc->db_name);
 	}
 
 	merged_level->handle->db_desc->levels[comp_req->dst_level].root_w[1] =
@@ -1242,8 +1242,8 @@ void *compaction(void *_comp_req)
 					break;
 				curr_segment = bt_get_real_address((uint64_t)curr_segment->next_segment);
 			}
-			log_info("Freed space %llu MB from db:%s level %u", space_freed / (1024 * 1024),
-				 comp_req->db_desc->db_name, comp_req->src_level);
+			log_debug("Freed space %llu MB from db:%s level %u", space_freed / (1024 * 1024),
+				  comp_req->db_desc->db_name, comp_req->src_level);
 		}
 		/*do the switch for the destination level*/
 		/*log_info("Switching tree[%u][%u] to tree[%u][%u]", comp_req->dst_level, 1, comp_req->dst_level, 0);*/
@@ -1333,8 +1333,8 @@ void *compaction(void *_comp_req)
 		}
 
 		log_info("Swapped levels %d to %d successfully", comp_req->src_level, comp_req->dst_level);
-		log_info("After swapping dst tree[%d][%d] size is %llu", comp_req->dst_level, 0,
-			 leveld_dst->level_size[0]);
+		log_debug("After swapping dst tree[%d][%d] size is %llu", comp_req->dst_level, 0,
+			  leveld_dst->level_size[0]);
 		assert(leveld_dst->first_segment != NULL);
 	}
 

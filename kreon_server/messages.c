@@ -47,7 +47,7 @@ int push_buffer_in_msg_header(msg_header *data_message, char *buffer, uint32_t b
 {
 	uint32_t current_len = data_message->next - data_message->data;
 	if (current_len + buffer_length > data_message->pay_len) {
-		log_info("push failed message payload length %d  current_len %d buffer_length %d",
+		log_debug("push failed message payload length %d  current_len %d buffer_length %d",
 			 data_message->pay_len, current_len, buffer_length);
 		return KREON_FAILURE;
 	}
