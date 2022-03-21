@@ -1,11 +1,11 @@
-#include <errno.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <signal.h>
-#include <pthread.h>
 #include "asyncio.h"
 #include "log.h"
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Initialize the array of I/O requests for the asynchronous I/O
 struct asyncio_ctx *asyncio_create_context(int max_concurrent_requests)
@@ -22,7 +22,7 @@ struct asyncio_ctx *asyncio_create_context(int max_concurrent_requests)
 	}
 	ctx->len_requests = max_concurrent_requests;
 	pthread_mutex_init(&ctx->lock, NULL);
-	log_info("New AIO context created");
+	log_debug("New AIO context created");
 	return ctx;
 }
 

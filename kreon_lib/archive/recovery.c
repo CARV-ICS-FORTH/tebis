@@ -1,11 +1,11 @@
 #define TRUE 0x01
 #define FALSE 0x00
-#include <signal.h>
-#include <assert.h>
-#include "allocator.h"
 #include "../btree/btree.h"
+#include "allocator.h"
 #include "dmap-ioctl.h"
+#include <assert.h>
 #include <log.h>
+#include <signal.h>
 
 void recovery_worker(void *args)
 {
@@ -26,14 +26,14 @@ void recovery_worker(void *args)
 	if (recover_req->db_desc->commit_log->kv_log_size < recover_req->db_desc->KV_log_size)
 		log_warn("warning commit log should be larger than g_kv_log");
 
-	log_info("starting recovery for db %s first KV log segment %llu last KV log last segment %llu",
-		 recover_req->db_desc->db_name, (LLU)recover_req->db_desc->KV_log_first_segment,
-		 (LLU)recover_req->db_desc->KV_log_last_segment);
+	log_debug("starting recovery for db %s first KV log segment %llu last KV log last segment %llu",
+		  recover_req->db_desc->db_name, (LLU)recover_req->db_desc->KV_log_first_segment,
+		  (LLU)recover_req->db_desc->KV_log_last_segment);
 
 	/*first, we need to check the L0_start_offset to which segment points to*/
 	uint64_t segment_id = recover_req->recovery_start_log_offset / BUFFER_SEGMENT_SIZE;
-	log_info("L0 start offset %llu maps to segment id %llu", (LLU)recover_req->db_desc->L0_start_log_offset,
-		 (LLU)segment_id);
+	log_debug("L0 start offset %llu maps to segment id %llu", (LLU)recover_req->db_desc->L0_start_log_offset,
+		  (LLU)segment_id);
 	current_log_segment = (segment_header *)(MAPPED + (uint64_t)recover_req->db_desc->commit_log->last_kv_log);
 	uint64_t previous_segment_id = 0;
 	while (current_log_segment->segment_id != segment_id) {
@@ -51,7 +51,7 @@ void recovery_worker(void *args)
 			exit(EXIT_FAILURE);
 		}
 	}
-	log_info("starting segment %llu of L0 found starting recovery procedure", (LLU)segment_id);
+	log_debug("starting segment %llu of L0 found starting recovery procedure", (LLU)segment_id);
 
 	log_offset = recover_req->recovery_start_log_offset;
 	while (log_offset < db_desc->commit_log->kv_log_size) {
@@ -65,7 +65,7 @@ void recovery_worker(void *args)
 				break;
 			segment_id = current_log_segment->segment_id;
 			current_log_segment = (segment_header *)(MAPPED + (uint64_t)current_log_segment->next_segment);
-			log_info(
+			log_debug(
 				"recovering segment = %llu of db %s padded space = %llu log offset %llu commit log offset %llu",
 				(LLU)current_log_segment->segment_id, recover_req->db_desc->db_name,
 				(LLU)(BUFFER_SEGMENT_SIZE - (log_offset % BUFFER_SEGMENT_SIZE)), (LLU)log_offset,
@@ -102,7 +102,7 @@ void recovery_worker(void *args)
 					(segment_header *)(MAPPED + (uint64_t)current_log_segment->next_segment);
 				assert(segment_id + 1 == current_log_segment->segment_id);
 				log_offset += sizeof(segment_header);
-				log_info(
+				log_debug(
 					"recovering segment = %llu of db %s padded space = %llu log offset %llu commit log offset %llu",
 					(LLU)current_log_segment->segment_id, recover_req->db_desc->db_name,
 					(LLU)(BUFFER_SEGMENT_SIZE - (log_offset % BUFFER_SEGMENT_SIZE)),
@@ -112,11 +112,11 @@ void recovery_worker(void *args)
 				mark_block(handle.volume_desc, (void *)current_log_segment, BUFFER_SEGMENT_SIZE, 0x00,
 					   &bit_idx);
 				log_offset += remaining_bytes_in_segment;
-				log_info("recovering segment %llu", (LLU)current_log_segment->segment_id);
+				log_debug("recovering segment %llu", (LLU)current_log_segment->segment_id);
 			}
 		} else if (KEY_SIZE(kv_addr) == 0) { /*padded space*/
-			log_info("End of segment id %llu padded space is  %llu", (LLU)current_log_segment->segment_id,
-				 (LLU)(BUFFER_SEGMENT_SIZE - (log_offset % BUFFER_SEGMENT_SIZE)));
+			log_debug("End of segment id %llu padded space is  %llu", (LLU)current_log_segment->segment_id,
+				  (LLU)(BUFFER_SEGMENT_SIZE - (log_offset % BUFFER_SEGMENT_SIZE)));
 			log_offset += (BUFFER_SEGMENT_SIZE - (log_offset % BUFFER_SEGMENT_SIZE));
 			if (log_offset >= db_desc->commit_log->kv_log_size)
 				break;
@@ -126,9 +126,9 @@ void recovery_worker(void *args)
 			}
 			current_log_segment = (segment_header *)(MAPPED + (uint64_t)current_log_segment->next_segment);
 			log_offset += sizeof(segment_header);
-			log_info("now recovering segment = %llu of db %s log offset %llu commit log offset %llu",
-				 (LLU)current_log_segment->segment_id, recover_req->db_desc->db_name, (LLU)log_offset,
-				 (LLU)db_desc->commit_log->kv_log_size);
+			log_debug("now recovering segment = %llu of db %s log offset %llu commit log offset %llu",
+				  (LLU)current_log_segment->segment_id, recover_req->db_desc->db_name, (LLU)log_offset,
+				  (LLU)db_desc->commit_log->kv_log_size);
 			assert(segment_id + 1 == current_log_segment->segment_id);
 
 			/*mark it as reserved. Due to restart allocation info has not survived*/
@@ -136,8 +136,8 @@ void recovery_worker(void *args)
 				   &bit_idx);
 		}
 	}
-	log_info("finished recovery for db %s log offset = %llu commit log offset = %llu",
-		 recover_req->db_desc->db_name, (LLU)log_offset, (LLU)db_desc->commit_log->kv_log_size);
+	log_debug("finished recovery for db %s log offset = %llu commit log offset = %llu",
+		  recover_req->db_desc->db_name, (LLU)log_offset, (LLU)db_desc->commit_log->kv_log_size);
 	assert(log_offset == (LLU)db_desc->commit_log->kv_log_size);
 	log_offset = recover_req->db_desc->KV_log_size;
 	MUTEX_UNLOCK(&handle.db_desc->lock_log);

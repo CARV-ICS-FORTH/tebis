@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <assert.h>
-#include <signal.h>
 #include "segment_allocator.h"
+#include <assert.h>
 #include <log.h>
+#include <signal.h>
 extern uint64_t MAPPED;
 
 static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_desc, uint8_t tree_id, uint32_t size,
@@ -51,7 +51,7 @@ static void *get_space(volume_descriptor *volume_desc, level_descriptor *level_d
 			assert(new_segment);
 		} else {
 			if (posix_memalign((void **)&new_segment, SEGMENT_SIZE, SEGMENT_SIZE) != 0) {
-				log_info("MEMALIGN FAILED");
+				log_fatal("MEMALIGN FAILED");
 				exit(EXIT_FAILURE);
 			}
 			assert(new_segment);
@@ -400,8 +400,8 @@ void seg_free_level(db_handle *handle, uint8_t level_id, uint8_t tree_id)
 		else
 			curr_segment = (struct segment_header *)(MAPPED + next_dev_offt);
 	}
-	log_info("Freed space %llu MB from db:%s level tree [%u][%u]", space_freed / (1024 * 1024),
-		 handle->db_desc->db_name, level_id, tree_id);
+	log_debug("Freed space %llu MB from db:%s level tree [%u][%u]", space_freed / (1024 * 1024),
+		  handle->db_desc->db_name, level_id, tree_id);
 	assert(handle->db_desc->levels[level_id].segments_allocated[tree_id] == freed_segments);
 	/*buffered tree out*/
 	handle->db_desc->levels[level_id].level_size[tree_id] = 0;

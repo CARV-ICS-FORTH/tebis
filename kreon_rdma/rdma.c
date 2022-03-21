@@ -373,7 +373,7 @@ void free_rdma_local_message(connection_rdma *conn)
 void disconnect_and_close_connection(connection_rdma *conn)
 {
 	//msg_header *disconnect_request = allocate_rdma_message(conn, 0, DISCONNECT);
-	log_info("REMINDER fix me");
+	log_debug("REMINDER fix me");
 	exit(EXIT_FAILURE);
 	/*send_rdma_message(conn, disconnect_request);
 	log_warn("Successfully sent disconnect message, bye bye Caution! Missing "
@@ -550,7 +550,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	/*free(host_copy);*/
 	switch (type) {
 	case MASTER_TO_REPLICA_CONNECTION:
-		log_info("Remote side accepted created a new MASTER_TO_REPLICA_CONNECTION");
+		log_debug("Remote side accepted created a new MASTER_TO_REPLICA_CONNECTION");
 		conn->type = MASTER_TO_REPLICA_CONNECTION;
 		// conn->rdma_memory_regions =
 		//	mrpool_get_static_buffer(rdma_cm_id, sizeof(struct ru_rdma_buffer) *
@@ -609,7 +609,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 #endif
 	switch (conn->type) {
 	case CLIENT_TO_SERVER_CONNECTION:
-		log_info("Initializing client communication circular buffer");
+		log_debug("Initializing client communication circular buffer");
 		conn->send_circular_buf =
 			create_and_init_circular_buffer(conn->rdma_memory_regions->local_memory_buffer,
 							conn->peer_mr->length, MESSAGE_SEGMENT_SIZE, SEND_BUFFER);
@@ -641,7 +641,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		break;
 
 	case MASTER_TO_REPLICA_CONNECTION:
-		log_info("Initializing master to replica communication circular buffer");
+		log_debug("Initializing master to replica communication circular buffer");
 		conn->send_circular_buf =
 			create_and_init_circular_buffer(conn->rdma_memory_regions->local_memory_buffer,
 							conn->peer_mr->length, MESSAGE_SEGMENT_SIZE, SC_SEND_BUFFER);
@@ -1158,22 +1158,22 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			}
 			break;
 		case IBV_WC_RDMA_READ:
-			log_info("IBV_WC_RDMA_READ code");
+			log_debug("IBV_WC_RDMA_READ code");
 			break;
 		case IBV_WC_COMP_SWAP:
-			log_info("IBV_WC_COMP_SWAP code");
+			log_debug("IBV_WC_COMP_SWAP code");
 			break;
 		case IBV_WC_FETCH_ADD:
-			log_info("IBV_WC_FETCH_ADD code");
+			log_debug("IBV_WC_FETCH_ADD code");
 			break;
 		case IBV_WC_BIND_MW:
-			log_info("IBV_WC_BIND_MW code");
+			log_debug("IBV_WC_BIND_MW code");
 			break;
 		case IBV_WC_RECV_RDMA_WITH_IMM:
-			log_info("IBV_WC_RECV_RDMA_WITH_IMM code");
+			log_debug("IBV_WC_RECV_RDMA_WITH_IMM code");
 			break;
 		default:
-			log_info("FATAL unknown code");
+			log_fatal("FATAL unknown code");
 			exit(EXIT_FAILURE);
 		}
 	} else {

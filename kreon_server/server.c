@@ -246,7 +246,7 @@ void *socket_thread(void *args)
 			log_info("We have a new client connection request");
 		} else if (incoming_connection_type == MASTER_TO_REPLICA_CONNECTION) {
 			incoming_connection_type = REPLICA_TO_MASTER_CONNECTION;
-			log_info("We have a new replica connection request");
+			log_debug("We have a new replica connection request");
 		} else {
 			log_fatal("bad connection type");
 			exit(EXIT_FAILURE);
@@ -334,7 +334,7 @@ void *socket_thread(void *args)
 		conn->responsible_spinning_thread_id = my_server->spinner.spinner_id;
 		pthread_mutex_unlock(&my_server->spinner.conn_list_lock);
 
-		log_info("Built new connection successfully for Server at port %d", rdma_port);
+		log_debug("Built new connection successfully for Server at port %d", rdma_port);
 	}
 	return NULL;
 }
@@ -578,18 +578,18 @@ static void print_task(struct krm_work_task *task)
 {
 	switch (task->kreon_operation_status) {
 	case SEGMENT_BARRIER:
-		log_info("SEGMENT_BARRIER state details follow");
+		log_debug("SEGMENT_BARRIER state details follow");
 		for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 			uint32_t remaining =
 				task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
 			remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
-			log_info(
+			log_debug(
 				"Sorry segment with replica %u not ready bytes remaining to replicate %llu task %p seg if %u key size is %u",
 				i, remaining, task, task->seg_id_to_flush, task->kv_size);
 		}
 		break;
 	default:
-		log_info("Sorry canoot provide additional info");
+		log_debug("Sorry canoot provide additional info");
 		return;
 	}
 }
@@ -641,17 +641,17 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 	while (b_detection) {
 		log_warn("Total halted tasks are: %u", utils_queue_used_slots(&spinner->resume_task_pool.task_buffers));
 		ds_check_idle_workers(spinner);
-		log_info("Client tasks state: *****");
+		log_debug("Client tasks state: *****");
 		for (int i = 0; i < UTILS_QUEUE_CAPACITY / 2; ++i) {
-			log_info("krm work task status[%d]: rescheduling counter: %llu", i,
-				 spinner->num_of_outstanding_client_req);
+			log_debug("krm work task status[%d]: rescheduling counter: %llu", i,
+				  spinner->num_of_outstanding_client_req);
 		}
-		log_info("Finally workers queue sizes");
+		log_debug("Finally workers queue sizes");
 		for (int i = 0; i < 8; ++i) {
-			log_info("Worker[%d] has %d tasks and its status is %d", i,
-				 utils_queue_used_slots(&spinner->worker[i].work_queue), spinner->worker[i].status);
+			log_debug("Worker[%d] has %d tasks and its status is %d", i,
+				  utils_queue_used_slots(&spinner->worker[i].work_queue), spinner->worker[i].status);
 		}
-		log_info("Client tasks state: ***** DONE");
+		log_debug("Client tasks state: ***** DONE");
 		sleep(4);
 	}
 }
@@ -794,8 +794,8 @@ static void *server_spinning_thread_kernel(void *args)
 				conn->control_location = hdr->reply;
 				conn->control_location_length = hdr->reply_length;
 				hdr->receive = 0;
-				log_info("SERVER: We have a new client control location %llu",
-					 (LLU)conn->control_location);
+				log_debug("SERVER: We have a new client control location %llu",
+					  (LLU)conn->control_location);
 				_zero_rendezvous_locations(hdr);
 				_update_rendezvous_location(conn, MESSAGE_SEGMENT_SIZE);
 				goto iterate_next_element;
@@ -840,7 +840,7 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 static void wait_for_replication_completion_callback(struct rdma_message_context *r_cnxt)
 {
 	if (r_cnxt->__is_initialized != 1) {
-		log_info("replication completion callback %u", r_cnxt->__is_initialized);
+		log_debug("replication completion callback %u", r_cnxt->__is_initialized);
 		assert(0);
 		exit(EXIT_FAILURE);
 	}
@@ -953,9 +953,9 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_UNINITIALIZED) {
-					log_info("Sending GET_LOG_BUFFER req to Server %s for DB %s",
-						 r_desc->region->backups[i].kreon_ds_hostname,
-						 r_desc->db->db_desc->db_name);
+					log_debug("Sending GET_LOG_BUFFER req to Server %s for DB %s",
+						  r_desc->region->backups[i].kreon_ds_hostname,
+						  r_desc->db->db_desc->db_name);
 
 					r_desc->m_state->r_buf[i].p = sc_allocate_rpc_pair(
 						conn,
@@ -1061,7 +1061,7 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 			for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++)
 				r_desc->m_state->r_buf[i].stat = RU_BUFFER_UNINITIALIZED;
 
-			log_info("Remote buffers ready initialize remote segments with current state");
+			log_debug("Remote buffers ready initialize remote segments with current state");
 
 			/* Prepare the context for the poller to later free the staff needed*/
 			for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
@@ -1086,12 +1086,12 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					exit(EXIT_FAILURE);
 				}
 
-				log_info("Sending last segment to server: %s",
-					 r_desc->region->backups[i].kreon_ds_hostname);
+				log_debug("Sending last segment to server: %s",
+					  r_desc->region->backups[i].kreon_ds_hostname);
 				// 2. rdma it to the remote
-				log_info("Sending last segment to %llu with rkey %lu",
-					 r_desc->m_state->r_buf[i].segment[0].mr.addr,
-					 r_desc->m_state->r_buf[i].segment[0].mr.rkey);
+				log_debug("Sending last segment to %llu with rkey %lu",
+					  r_desc->m_state->r_buf[i].segment[0].mr.addr,
+					  r_desc->m_state->r_buf[i].segment[0].mr.rkey);
 				while (1) {
 					int ret =
 						rdma_post_write(r_conn->rdma_cm_id, &task->msg_ctx[0], last_segment,
@@ -1108,8 +1108,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				}
 
 				/* Wait for the completion of the rdma operation above*/
-				log_info("Waiting for RDMA completion of the SEGMENT with server: %s",
-					 r_desc->region->backups[i].kreon_ds_hostname);
+				log_debug("Waiting for RDMA completion of the SEGMENT with server: %s",
+					  r_desc->region->backups[i].kreon_ds_hostname);
 				wait_for_value(&context->num_of_replies_needed, 0);
 				task->msg_ctx[0].__is_initialized = 0;
 				task->msg_ctx[0].on_completion_callback = NULL;
@@ -1118,8 +1118,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				free(context->memory);
 				free(context);
 
-				log_info("Successfully sent the last segment to server: %s for region %s",
-					 r_desc->region->backups[i].kreon_ds_hostname, r_desc->region->id);
+				log_debug("Successfully sent the last segment to server: %s for region %s",
+					  r_desc->region->backups[i].kreon_ds_hostname, r_desc->region->id);
 				r_desc->next_segment_to_flush = r_desc->db->db_desc->KV_log_size -
 								(r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);
 			}
@@ -2070,7 +2070,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 		exit(EXIT_FAILURE);
 	}
 
-	log_info("Region-master wants %d log buffer(s) for region %s", get_log->num_buffers, r_desc->region->id);
+	log_debug("Region-master wants %d log buffer(s) for region %s", get_log->num_buffers, r_desc->region->id);
 
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->r_state == NULL) {
@@ -2134,7 +2134,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	/*piggyback info for use with the client*/
 	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
 	assert(task->reply_msg->request_message_local_addr != NULL);
-	log_info("Region master wants a log buffer...DONE");
+	log_debug("Region master wants a log buffer...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -2156,9 +2156,9 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 	//	 "level %d of region %s",
 	// g_req->num_buffers, g_req->level_id, r_desc->region->id);
 
-	log_info("DB %s Allocating %u and registering with RDMA buffers for remote "
-		 "compaction",
-		 r_desc->region->id, g_req->num_buffers);
+	log_debug("DB %s Allocating %u and registering with RDMA buffers for remote "
+		  "compaction",
+		  r_desc->region->id, g_req->num_buffers);
 	for (int i = 0; i < g_req->num_buffers; i++) {
 		char *addr = NULL;
 		if (posix_memalign((void **)&addr, ALIGNMENT, SEGMENT_SIZE) != 0) {
@@ -2331,7 +2331,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 		while (!__sync_bool_compare_and_swap(&l->root_r[0], l->root_r[0], l->root_r[1])) {
 		}
 		l->root_r[1] = NULL;
-		log_info("Destroying mappings for index level %d useless now", f_req->level_id);
+		log_debug("Destroying mappings for index level %d useless now", f_req->level_id);
 
 		/*iterate over regions*/
 		struct krm_segment_entry *current, *tmp;
@@ -2792,7 +2792,7 @@ int main(int argc, char *argv[])
 	// A long long
 	sem_init(&exit_main, 0, 0);
 
-	log_info("Kreon server(S) ready");
+	log_debug("Kreon server(S) ready");
 	if (signal(SIGINT, sigint_handler) == SIG_ERR) {
 		log_fatal("can't catch SIGINT");
 		exit(EXIT_FAILURE);

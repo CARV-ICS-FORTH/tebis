@@ -1,14 +1,14 @@
 #define _GNU_SOURCE
-#include <pthread.h>
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
-#include <semaphore.h>
+#include "../utilities/list.h"
 #include "djb2.h"
 #include "globals.h"
 #include "metadata.h"
-#include "../utilities/list.h"
+#include <infiniband/verbs.h>
 #include <log.h>
+#include <pthread.h>
+#include <rdma/rdma_cma.h>
+#include <rdma/rdma_verbs.h>
+#include <semaphore.h>
 
 #define RCO_TASK_QUEUE_SIZE_THREASHOLD 8
 extern void on_completion_client(struct rdma_message_context *);
@@ -103,7 +103,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
@@ -193,7 +193,7 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
@@ -287,7 +287,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 #endif
 
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
 		ret = 0;
 		goto exit;
 	}
@@ -409,7 +409,7 @@ int rco_flush_last_log_segment(void *handle)
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	if (r_desc->region->num_of_backup == 0) {
-		log_info("Nothing to do for non-replicated region %s", r_desc->region->id);
+		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
 		return 1;
 	}
 
