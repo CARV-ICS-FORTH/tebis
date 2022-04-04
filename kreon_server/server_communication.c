@@ -1,12 +1,13 @@
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
+#include "../utilities/circular_buffer.h"
 #include "djb2.h"
 #include "globals.h"
 #include "metadata.h"
-#include "../utilities/circular_buffer.h"
 #include "uthash.h"
+#include <infiniband/verbs.h>
 #include <log.h>
+#include <rdma/rdma_cma.h>
+#include <rdma/rdma_verbs.h>
+#include <stdint.h>
 
 struct sc_conn_per_server {
 	uint64_t hash_key;
@@ -135,37 +136,33 @@ retry_allocate_reply:
 
 	while (i < 2) {
 		if (payload_size > 0) {
-			msg->pay_len = payload_size;
-			msg->padding_and_tail = padding + TU_TAIL_SIZE;
-			msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
-			msg->next = msg->data;
+			msg->payload_length = payload_size;
+			msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
 			/*set the tail to the proper value*/
 			if (i == 0) {
 				// this is the request
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
+				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->payload_length +
+					       msg->padding_and_tail_size) -
 					      sizeof(uint32_t)) = receive_type;
 				msg->receive = receive_type;
 			} else { // this is the reply
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
+				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->payload_length +
+					       msg->padding_and_tail_size) -
 					      sizeof(uint32_t)) = 0;
 				msg->receive = 0;
 			}
 		} else {
-			msg->pay_len = 0;
-			msg->padding_and_tail = 0;
-			msg->data = NULL;
-			msg->next = NULL;
+			msg->payload_length = 0;
+			msg->padding_and_tail_size = 0;
 		}
 
-		msg->type = msg_type;
+		msg->msg_type = msg_type;
 
-		msg->local_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-		msg->remote_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
+		msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
-		msg->ack_arrived = 0; //????? really?
-		msg->request_message_local_addr = NULL;
-		rep.request->reply = NULL;
-		rep.request->reply_length = 0;
+		msg->triggering_msg_offset_in_send_buffer = UINT32_MAX;
+		rep.request->offset_reply_in_recv_buffer = UINT32_MAX;
+		rep.request->reply_length_in_recv_buffer = UINT32_MAX;
 
 		c_buf = conn->recv_circular_buf;
 		msg = rep.reply;
@@ -175,8 +172,10 @@ retry_allocate_reply:
 		++i;
 	}
 
-	rep.request->reply = (char *)((uint64_t)rep.reply - (uint64_t)conn->recv_circular_buf->memory_region);
-	rep.request->reply_length = sizeof(msg_header) + rep.reply->pay_len + rep.reply->padding_and_tail;
+	rep.request->offset_reply_in_recv_buffer =
+		((uint64_t)rep.reply - (uint64_t)conn->recv_circular_buf->memory_region);
+	rep.request->reply_length_in_recv_buffer =
+		sizeof(msg_header) + rep.reply->payload_length + rep.reply->padding_and_tail_size;
 
 exit:
 	pthread_mutex_unlock(&conn->buffer_lock);
@@ -191,14 +190,15 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	msg_header *reply;
 	request = p->request;
 	reply = p->reply;
-	assert(request->reply_length != 0);
-	_zero_rendezvous_locations_l(reply, request->reply_length);
-	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply, request->reply_length);
+	assert(request->reply_length_in_recv_buffer != 0);
+	_zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
+	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply,
+					request->reply_length_in_recv_buffer);
 
-	if (request->pay_len == 0) {
+	if (request->payload_length == 0) {
 		size = MESSAGE_SEGMENT_SIZE;
 	} else {
-		size = TU_HEADER_SIZE + request->pay_len + request->padding_and_tail;
+		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
 		assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	}
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);

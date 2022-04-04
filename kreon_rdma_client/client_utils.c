@@ -1,15 +1,15 @@
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <zookeeper/zookeeper.h>
+#include "client_utils.h"
+#include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/zk_utils.h"
 #include "../utilities/spin_loop.h"
-#include "../kreon_server/djb2.h"
-#include "client_utils.h"
-#include <log.h>
 #include <cJSON.h>
+#include <log.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zookeeper/zookeeper.h>
 
 static int cu_is_connected = 0;
 static zhandle_t *cu_zh = NULL;
@@ -377,13 +377,12 @@ void cu_close_open_connections(void)
 			pthread_mutex_lock(&current->connections[i]->buffer_lock);
 			req_header = client_allocate_rdma_message(current->connections[i], 0, DISCONNECT);
 			pthread_mutex_unlock(&current->connections[i]->buffer_lock);
-			req_header->reply = NULL;
-			req_header->reply_length = 0;
-			req_header->got_send_completion = 0;
+			req_header->offset_reply_in_recv_buffer = UINT32_MAX;
+			req_header->reply_length_in_recv_buffer = 0;
 
 			if (client_send_rdma_message(current->connections[i], req_header) != KREON_SUCCESS) {
 				log_warn("failed to send message");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 
 			// FIXME calling free for the connection_rdma* isn't enough. We need to free the rest

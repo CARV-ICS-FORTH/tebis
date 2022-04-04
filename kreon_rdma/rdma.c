@@ -2,6 +2,7 @@
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
+#include <stdint.h>
 #define _GNU_SOURCE /* See feature_test_macros(7) */
 #include <arpa/inet.h>
 #include <assert.h>
@@ -57,41 +58,42 @@ void rdma_thread_events_ctx(void *args);
 
 void on_completion_server(struct rdma_message_context *msg_ctx);
 
-void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_type, uint32_t message_size,
-		       uint32_t message_payload_size, uint32_t padding)
+msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt)
 {
-	(void)message_size;
-	if (message_payload_size > 0) {
-		msg->pay_len = message_payload_size;
-		msg->padding_and_tail = padding + TU_TAIL_SIZE;
-		msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
-		msg->next = msg->data;
-		/*set the tail to the proper value*/
-		*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
-			      sizeof(uint32_t)) = TU_RDMA_REGULAR_MSG;
-	} else {
-		msg->pay_len = 0;
-		msg->padding_and_tail = 0;
-		msg->data = NULL;
-		msg->next = NULL;
-	}
+	return (msg_header *)&conn->send_circular_buf->memory_region[offt];
+}
 
-	msg->type = message_type;
-	msg->receive = TU_RDMA_REGULAR_MSG;
-	msg->local_offset = (uint64_t)msg - (uint64_t)conn->send_circular_buf->memory_region;
-	msg->remote_offset = (uint64_t)msg - (uint64_t)conn->send_circular_buf->memory_region;
+uint32_t real_address_to_triggering_msg_offt(connection_rdma *conn, struct msg_header *msg)
+{
+	return (uint64_t)msg - (uint64_t)conn->send_circular_buf->memory_region;
+}
 
-	// DPRINT("\t Sending to remote offset %llu\n", msg->remote_offset);
-	msg->ack_arrived = KR_REP_PENDING;
-	// conn->offset += message_size;
+void clear_receive_field(struct msg_header *msg)
+{
+	struct msg_header *last_msg_header =
+		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
+	last_msg_header->receive = 0;
+}
+
+void set_receive_field(struct msg_header *msg)
+{
+	struct msg_header *last_msg_header =
+		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
+	last_msg_header->receive = TU_RDMA_REGULAR_MSG;
+}
+
+uint8_t get_receive_field(struct msg_header *msg)
+{
+	struct msg_header *last_msg_header =
+		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
+	return last_msg_header->receive;
 }
 
 msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
 {
-	uint32_t message_size;
+	uint32_t message_size = 0;
 	uint32_t padding = 0;
-	uint32_t ack_arrived;
-	uint32_t receive_type;
+	uint32_t receive_type = 0;
 	uint32_t i = 0;
 	char *addr = NULL;
 	msg_header *msg;
@@ -106,7 +108,6 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case DELETE_REQUEST:
 	case TEST_REQUEST:
 		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_PENDING;
 		receive_type = TU_RDMA_REGULAR_MSG;
 		reset_rendezvous = 1;
 		break;
@@ -116,23 +117,15 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case MULTI_GET_REPLY:
 	case DELETE_REPLY:
 		c_buf = conn->recv_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
 		receive_type = 0;
 		break;
 	case DISCONNECT:
 		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
-		receive_type = CONNECTION_PROPERTIES;
-		break;
-	case I_AM_CLIENT:
-		c_buf = conn->send_circular_buf;
-		ack_arrived = KR_REP_DONT_CARE;
-		receive_type = TU_RDMA_REGULAR_MSG;
 		receive_type = CONNECTION_PROPERTIES;
 		break;
 	default:
 		log_fatal("unknown message type %d", message_type);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	if (message_payload_size > 0) {
@@ -148,9 +141,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		message_size = MESSAGE_SEGMENT_SIZE;
 		padding = 0;
 	}
-
 	addr = NULL;
-
 	while (1) {
 		stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
 		switch (stat) {
@@ -188,42 +179,29 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 init_message:
 	msg = (msg_header *)addr;
 	if (message_payload_size > 0) {
-		msg->pay_len = message_payload_size;
-		msg->padding_and_tail = padding + TU_TAIL_SIZE;
-		msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
-		msg->next = msg->data;
+		msg->payload_length = message_payload_size;
+		msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
 		/*set the tail to the proper value*/
-		*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
-			      sizeof(uint32_t)) = receive_type;
+		set_receive_field(msg);
 	} else {
-		msg->pay_len = 0;
-		msg->padding_and_tail = 0;
-		msg->data = NULL;
-		msg->next = NULL;
+		msg->payload_length = 0;
+		msg->padding_and_tail_size = 0;
 	}
 
-	msg->type = message_type;
+	msg->msg_type = message_type;
 	msg->receive = receive_type;
-	msg->local_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-	msg->remote_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-
-	// log_info("\t Sending to remote offset %llu\n", msg->remote_offset);
-	msg->ack_arrived = ack_arrived;
-	msg->request_message_local_addr = NULL;
+	msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
 	return msg;
 }
 
 int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg)
 {
-	msg->receive_options = BUSY_WAIT;
 	return __send_rdma_message(conn, msg, NULL);
 }
 
 int send_rdma_message(connection_rdma *conn, msg_header *msg)
 {
-	// sem_init(&msg->sem, 0, 0);
-	msg->receive_options = SYNC_REQUEST;
 	return __send_rdma_message(conn, msg, NULL);
 }
 
@@ -257,9 +235,9 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 	//	}
 	//}
 
-	size_t msg_len;
-	if (msg->pay_len) // FIXME This if shouldn't be necessary
-		msg_len = TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail;
+	size_t msg_len = 0;
+	if (msg->payload_length) // FIXME This if shouldn't be necessary
+		msg_len = TU_HEADER_SIZE + msg->payload_length + msg->padding_and_tail_size;
 	else
 		msg_len = TU_HEADER_SIZE;
 
@@ -268,9 +246,9 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
    * thread perform any operation
    * for us? For client PUT,GET,MULTI_GET,UPDATE,DELETE we don't
    * */
-	void *context;
+	void *context = NULL;
 	if (!msg_ctx && LIBRARY_MODE == SERVER_MODE) {
-		switch (msg->type) {
+		switch (msg->msg_type) {
 		case PUT_REQUEST:
 		case GET_REQUEST:
 		case MULTI_GET_REQUEST:
@@ -287,6 +265,7 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case REPLICA_INDEX_FLUSH_REP:
 		case PUT_REPLY:
 		case GET_REPLY:
+		case NO_OP:
 		case MULTI_GET_REPLY:
 		case DELETE_REPLY:
 		case TEST_REPLY:
@@ -294,19 +273,10 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case NO_OP_ACK:
 			context = NULL;
 			break;
-		case NO_OP: {
-			/*rest I care*/
-			struct rdma_message_context *msg_ctx = malloc(sizeof(struct rdma_message_context));
-			client_rdma_init_message_context(msg_ctx, msg);
-			msg_ctx->on_completion_callback = on_completion_server;
-			msg_ctx->args = (void *)conn;
-			context = msg_ctx;
-			break;
-		}
 		default:
 			assert(0);
-			log_fatal("Unhandled message type %d", msg->type);
-			exit(EXIT_FAILURE);
+			log_fatal("Unhandled message type %d", msg->msg_type);
+			_exit(EXIT_FAILURE);
 		}
 	} else {
 		context = (void *)msg_ctx;
@@ -317,7 +287,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 	while (1) {
 		ret = rdma_post_write(conn->rdma_cm_id, context, msg, msg_len,
 				      conn->rdma_memory_regions->local_memory_region, IBV_SEND_SIGNALED,
-				      ((uint64_t)conn->peer_mr->addr + msg->remote_offset), conn->peer_mr->rkey);
+				      ((uint64_t)conn->peer_mr->addr + msg->offset_in_send_and_target_recv_buffers),
+				      conn->peer_mr->rkey);
 		if (!ret) {
 			break;
 		}
@@ -325,7 +296,7 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		if (conn->status == CONNECTION_ERROR) {
 			log_fatal("connection failed !: %s\n", strerror(errno));
 			raise(SIGINT);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 	}
 
@@ -334,20 +305,20 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 
 void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
 {
-	uint32_t size;
-	msg_header *request;
-	request = (msg_header *)reply->request_message_local_addr;
-	assert(request->reply_length != 0);
-	free_space_from_circular_buffer(conn->recv_circular_buf, (char *)reply, request->reply_length);
+	msg_header *request = triggering_msg_offt_to_real_address(conn, reply->triggering_msg_offset_in_send_buffer);
+	/*GESALOUS CHECK THIS*/
+	//assert(request->payload_length != 0);
 
-	if (request->pay_len == 0) {
+	free_space_from_circular_buffer(conn->recv_circular_buf, (char *)reply, request->reply_length_in_recv_buffer);
+
+	uint32_t size = 0;
+	if (request->payload_length == 0) {
 		size = MESSAGE_SEGMENT_SIZE;
 	} else {
-		size = TU_HEADER_SIZE + request->pay_len + request->padding_and_tail;
+		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
 		assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	}
 	free_space_from_circular_buffer(conn->send_circular_buf, (char *)request, size);
-	return;
 }
 
 void free_rdma_received_message(connection_rdma *conn, msg_header *msg)
@@ -620,25 +591,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		/*Inform the server that you are a client, patch but now I am in a hurry*/
 		// log_info("CLIENT: Informing server that I am a client and about my
 		// control location\n");
-		pthread_mutex_lock(&conn->buffer_lock);
-		msg = client_allocate_rdma_message(conn, 0, I_AM_CLIENT);
-		pthread_mutex_unlock(&conn->buffer_lock);
 		/*control info*/
-		msg->reply = (char *)(conn->recv_circular_buf->bitmap_size * BITS_PER_BITMAP_WORD *
-				      (uint64_t)MESSAGE_SEGMENT_SIZE);
-		msg->reply -= MESSAGE_SEGMENT_SIZE;
-		msg->reply_length = MESSAGE_SEGMENT_SIZE;
-		conn->control_location = (char *)msg->reply;
-		conn->control_location_length = msg->reply_length;
-		msg->receive = I_AM_CLIENT;
-		if (client_send_rdma_message(conn, msg) != KREON_SUCCESS) {
-			log_fatal("RDMA Write error");
-			exit(EXIT_FAILURE);
-		}
-		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, MESSAGE_SEGMENT_SIZE);
-		log_info("Client Connection created successfully, no spinning thread will "
-			 "check it");
-		break;
 
 	case MASTER_TO_REPLICA_CONNECTION:
 		log_debug("Initializing master to replica communication circular buffer");
@@ -794,78 +747,44 @@ void ec_sig_handler(int signo)
 	sigaction(SIGINT, &sa, 0);
 }
 
-/************************************************************
- ***************** spinning thread helper functions ********/
 void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
 {
-	void *start_memory;
-	void *end_memory;
 	assert(length % MESSAGE_SEGMENT_SIZE == 0);
-	start_memory = (void *)msg;
-	end_memory = start_memory + length;
-
-	while (start_memory < end_memory) {
-		((msg_header *)start_memory)->receive = 4;
-		//((msg_header *)start_memory)->reply = (void *)0xF40F2;
-		//((msg_header *)start_memory)->reply_length = 0;
-		*(uint32_t *)(start_memory + (MESSAGE_SEGMENT_SIZE - TU_TAIL_SIZE)) = 0;
-		start_memory = start_memory + MESSAGE_SEGMENT_SIZE;
+	uint32_t num_of_msg_headers = length / MESSAGE_SEGMENT_SIZE;
+	for (uint32_t i = 0; i < num_of_msg_headers; i++) {
+		msg[i].receive = 0;
 	}
 }
 
 void _zero_rendezvous_locations(msg_header *msg)
 {
-	void *start_memory;
-	void *end_memory;
-	/*for acks that fit entirely in a header pay_len and padding_and_tail could be
+	/*for acks that fit entirely in a header payload_length and padding_and_tail_size could be
    * 0.
    * This is ok because we want to ommit sending extra useless bytes. However we
    * need to
    * zero their virtual tail which the initiator has allocated for safety
    */
 
-	assert((msg->pay_len == 0 && msg->padding_and_tail == 0) ||
-	       (TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) % MESSAGE_SEGMENT_SIZE == 0);
+	uint32_t msg_length = 0;
+	if (msg->payload_length > 0 || msg->padding_and_tail_size > 0)
+		msg_length = TU_HEADER_SIZE + msg->payload_length + msg->padding_and_tail_size;
+	else
+		msg_length = MESSAGE_SEGMENT_SIZE;
 
-	start_memory = (void *)msg;
-	if (msg->pay_len > 0 || msg->padding_and_tail > 0) {
-		end_memory = (void *)((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail);
-	} else {
-		end_memory = start_memory + MESSAGE_SEGMENT_SIZE;
-	}
-
-	while (start_memory < end_memory) {
-		((msg_header *)start_memory)->receive = 999;
-		//((msg_header *)start_memory)->reply = (void *)0xF40F2;
-		//((msg_header *)start_memory)->reply_length = 0;
-		*(uint32_t *)((start_memory + MESSAGE_SEGMENT_SIZE) - TU_TAIL_SIZE) = 999;
-		start_memory = start_memory + MESSAGE_SEGMENT_SIZE;
-	}
+	_zero_rendezvous_locations_l(msg, msg_length);
 }
 
 uint32_t wait_for_payload_arrival(msg_header *hdr)
 {
-	int message_size;
-	uint32_t *tail;
-	if (hdr->pay_len > 0) {
-		message_size = TU_HEADER_SIZE + hdr->pay_len + hdr->padding_and_tail;
-		tail = (uint32_t *)(((uint64_t)hdr + TU_HEADER_SIZE + hdr->pay_len + hdr->padding_and_tail) -
-				    sizeof(uint32_t));
-		/*calculate the address of the tail*/
-		// blocking style
-		//wait_for_value(tail, TU_RDMA_REGULAR_MSG);
-		// non-blocking style
-		if (*tail != TU_RDMA_REGULAR_MSG) {
+	int message_size = 0;
+	if (hdr->payload_length > 0) {
+		if (get_receive_field(hdr) != TU_RDMA_REGULAR_MSG)
 			return 0;
-		}
-		hdr->data = (void *)((uint64_t)hdr + TU_HEADER_SIZE);
-		hdr->next = hdr->data;
-	} else {
+		message_size = MESSAGE_SEGMENT_SIZE + hdr->payload_length + hdr->padding_and_tail_size;
+	} else
 		/*it's only a header*/
 		message_size = MESSAGE_SEGMENT_SIZE;
-		hdr->data = NULL;
-		hdr->next = NULL;
-	}
+
 	return message_size;
 }
 
@@ -886,7 +805,7 @@ void _update_rendezvous_location(connection_rdma *conn, int message_size)
 			conn->rendezvous = (void *)((uint64_t)conn->rendezvous + (uint32_t)message_size);
 	} else {
 		log_fatal("Faulty connection type");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -1131,7 +1050,7 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 		case IBV_WC_RDMA_WRITE:
 			msg = msg_ctx->msg;
 			if (msg) {
-				switch (msg->type) {
+				switch (msg->msg_type) {
 				/*server to server new school*/
 				case GET_LOG_BUFFER_REQ:
 				case GET_LOG_BUFFER_REP:
@@ -1140,20 +1059,10 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 					break;
 				/*client to server RPCs*/
 				case DISCONNECT:
-					msg->got_send_completion = 1;
 					break;
-				case I_AM_CLIENT:
-					/*client staff, app will decide when staff arrives*/
-					assert(0);
-					free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg,
-									MESSAGE_SEGMENT_SIZE);
-					reset_circular_buffer(conn->send_circular_buf);
-					break;
-
 				default:
-					log_fatal("Entered unplanned state FATAL for message type %d", msg->type);
-					raise(SIGINT);
-					exit(EXIT_FAILURE);
+					log_fatal("Entered unplanned state FATAL for message type %d", msg->msg_type);
+					_exit(EXIT_FAILURE);
 				}
 			}
 			break;
@@ -1187,11 +1096,10 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 	free(msg_ctx);
 }
 
-/* Set as the on_completion_callback for channels in client library mode.
- * It passes the work completion struct to the client through the message's
- * context and posts the
- * semaphore used to block until the message's completion has arrived
- */
+/* Set as the on_completion_callback for channels in client library mode.  * It
+passes the work completion struct to the client through the message's * context
+and posts the * semaphore used to block until the message's completion has
+arrived */
 void on_completion_client(struct rdma_message_context *msg_ctx)
 {
 	sem_post(&msg_ctx->wait_for_completion);

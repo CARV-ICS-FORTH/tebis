@@ -14,6 +14,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "conf.h"
+#include <stdint.h>
 #include <stdlib.h>
 #endif
 #include <alloca.h>
@@ -144,6 +145,29 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
 {
 	return root_server->numa_servers[my_desc->root_server_id]->channel;
+}
+
+/** Function filling replies from server to clients
+ *  payload and msg_type must be provided as they defer from msg to msg
+ *  */
+static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size, uint16_t msg_type)
+{
+	uint32_t reply_size = sizeof(msg_header) + payload_size + TU_TAIL_SIZE;
+	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
+
+	reply_msg->padding_and_tail_size = 0;
+	reply_msg->payload_length = payload_size;
+	if (reply_msg->payload_length != 0)
+		reply_msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
+
+	reply_msg->offset_reply_in_recv_buffer = UINT32_MAX;
+	reply_msg->reply_length_in_recv_buffer = UINT32_MAX;
+	reply_msg->offset_in_send_and_target_recv_buffers = task->msg->offset_reply_in_recv_buffer;
+	reply_msg->triggering_msg_offset_in_send_buffer = task->msg->triggering_msg_offset_in_send_buffer;
+	reply_msg->session_id = UINT32_MAX;
+	reply_msg->msg_type = msg_type;
+	reply_msg->op_status = 0;
+	reply_msg->receive = TU_RDMA_REGULAR_MSG;
 }
 
 void on_completion_notify(struct rdma_message_context *msg_ctx)
@@ -403,6 +427,11 @@ void *worker_thread_kernel(void *args)
 		handle_task(&root_server->numa_servers[worker->root_server_id]->meta_server, job);
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
+			if (job->msg->msg_type == PUT_REQUEST)
+				assert(job->reply_msg->msg_type == PUT_REPLY);
+			else
+				assert(job->reply_msg->msg_type == NO_OP_ACK);
+
 			_zero_rendezvous_locations(job->msg);
 			__send_rdma_message(job->conn, job->reply_msg, NULL);
 			switch (job->task_type) {
@@ -417,7 +446,7 @@ void *worker_thread_kernel(void *args)
 				break;
 			default:
 				log_fatal("Unkown pool type!");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			break;
 
@@ -449,7 +478,7 @@ static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_wo
 
 static int ds_is_server2server_job(struct msg_header *msg)
 {
-	switch (msg->type) {
+	switch (msg->msg_type) {
 	case REPLICA_INDEX_GET_BUFFER_REQ:
 	case REPLICA_INDEX_GET_BUFFER_REP:
 	case REPLICA_INDEX_FLUSH_REQ:
@@ -481,7 +510,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
 			job->task_type = KRM_SERVER_TASK;
 		} else {
-			if (spinner->num_of_outstanding_client_req >= MAX_OUTSTANDING_REQUESTS) {
+			if (spinner->num_of_outstanding_client_req > MAX_OUTSTANDING_REQUESTS) {
 				//log_debug("I am full, can not serve more");
 				return KREON_FAILURE;
 			}
@@ -558,7 +587,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		/*initialization of various fsm*/
 		job->server_id = spinner->root_server_id;
 		job->thread_id = worker_id;
-		job->notification_addr = (void *)job->msg->request_message_local_addr;
+		job->triggering_msg_offset = job->msg->triggering_msg_offset_in_send_buffer;
 	}
 
 	if (utils_queue_push(&(spinner->worker[worker_id].work_queue), (void *)job) == NULL) {
@@ -633,7 +662,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 		int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
 		if (rc == KREON_FAILURE) {
 			log_fatal("Failed to reschedule task");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		task = utils_queue_pop(&spinner->resume_task_pool.task_buffers);
 	}
@@ -669,7 +698,7 @@ static void *server_spinning_thread_kernel(void *args)
 	struct connection_rdma *conn = NULL;
 
 	uint32_t message_size = 0;
-	volatile uint32_t recv = 0;
+	uint8_t recv = 0;
 
 	int spinning_thread_id = 0; // = spinner->spinner_id;
 	int rc = 0;
@@ -763,7 +792,7 @@ static void *server_spinning_thread_kernel(void *args)
 					goto iterate_next_element;
 				}
 
-				if (hdr->type == DISCONNECT) {
+				if (hdr->msg_type == DISCONNECT) {
 					/* Warning! the guy that consumes/handles the message is responsible for zeroing the message's
 					 * segments for possible future rendezvous points. This is done inside free_rdma_received_message
 					 * function
@@ -784,21 +813,9 @@ static void *server_spinning_thread_kernel(void *args)
 				} else {
 					log_fatal("unknown message type for connetion properties unknown "
 						  "type is %d\n",
-						  hdr->type);
-					assert(0);
-					exit(EXIT_FAILURE);
+						  hdr->msg_type);
+					_exit(EXIT_FAILURE);
 				}
-			} else if (recv == I_AM_CLIENT) {
-				assert(conn->type == SERVER_TO_CLIENT_CONNECTION ||
-				       conn->type == REPLICA_TO_MASTER_CONNECTION);
-				conn->control_location = hdr->reply;
-				conn->control_location_length = hdr->reply_length;
-				hdr->receive = 0;
-				log_debug("SERVER: We have a new client control location %llu",
-					  (LLU)conn->control_location);
-				_zero_rendezvous_locations(hdr);
-				_update_rendezvous_location(conn, MESSAGE_SEGMENT_SIZE);
-				goto iterate_next_element;
 			}
 
 		iterate_next_element:
@@ -823,7 +840,7 @@ extern void on_completion_client(struct rdma_message_context *);
 
 struct recover_log_context {
 	struct msg_header header;
-	uint32_t num_of_replies_needed;
+	uint8_t num_of_replies_needed;
 	void *memory;
 	struct ibv_mr *mr;
 };
@@ -970,13 +987,14 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					/*inform the req about its buddy*/
 					msg_header *req_header = r_desc->m_state->r_buf[i].p.request;
 					msg_header *rep_header = r_desc->m_state->r_buf[i].p.reply;
-					req_header->request_message_local_addr = req_header;
-					req_header->ack_arrived = KR_REP_PENDING;
+					req_header->triggering_msg_offset_in_send_buffer =
+						real_address_to_triggering_msg_offt(conn, req_header);
 					/*location where server should put the reply*/
-					req_header->reply = (char *)((uint64_t)rep_header -
-								     (uint64_t)conn->recv_circular_buf->memory_region);
-					req_header->reply_length =
-						sizeof(msg_header) + rep_header->pay_len + rep_header->padding_and_tail;
+					req_header->offset_reply_in_recv_buffer =
+						(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
+					req_header->reply_length_in_recv_buffer = sizeof(msg_header) +
+										  rep_header->payload_length +
+										  rep_header->padding_and_tail_size;
 					/*time to send the message*/
 					req_header->session_id = (uint64_t)r_desc->region;
 					struct msg_get_log_buffer_req *g_req =
@@ -1000,8 +1018,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					/*check reply and process*/
 					// log_info("Waiting tail at offset: %d",
 					//	 (sizeof(struct msg_header) +
-					//	  r_desc->m_state->r_buf[i].p.reply->pay_len +
-					//	  r_desc->m_state->r_buf[i].p.reply->padding_and_tail) -
+					//	  r_desc->m_state->r_buf[i].p.reply->payload_length +
+					//	  r_desc->m_state->r_buf[i].p.reply->padding_and_tail_size) -
 					//		 TU_TAIL_SIZE);
 
 					/*wait first for the header and then the payload*/
@@ -1012,8 +1030,8 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 					uint32_t *tail =
 						(uint32_t *)(((uint64_t)r_desc->m_state->r_buf[i].p.reply +
 							      sizeof(struct msg_header) +
-							      r_desc->m_state->r_buf[i].p.reply->pay_len +
-							      r_desc->m_state->r_buf[i].p.reply->padding_and_tail) -
+							      r_desc->m_state->r_buf[i].p.reply->payload_length +
+							      r_desc->m_state->r_buf[i].p.reply->padding_and_tail_size) -
 							     TU_TAIL_SIZE);
 
 					if (*tail != TU_RDMA_REGULAR_MSG)
@@ -1342,14 +1360,15 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 									 .flush_cmd.request;
 					msg_header *rep_header =
 						r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].flush_cmd.reply;
-					req_header->request_message_local_addr = req_header;
-					req_header->ack_arrived = KR_REP_PENDING;
+					req_header->triggering_msg_offset_in_send_buffer =
+						real_address_to_triggering_msg_offt(r_conn, req_header);
 					/*location where server should put the reply*/
-					req_header->reply =
-						(char *)((uint64_t)rep_header -
-							 (uint64_t)r_conn->recv_circular_buf->memory_region);
-					req_header->reply_length =
-						sizeof(msg_header) + rep_header->pay_len + rep_header->padding_and_tail;
+					req_header->offset_reply_in_recv_buffer =
+						(uint64_t)rep_header -
+						(uint64_t)r_conn->recv_circular_buf->memory_region;
+					req_header->reply_length_in_recv_buffer = sizeof(msg_header) +
+										  rep_header->payload_length +
+										  rep_header->padding_and_tail_size;
 					/*time to send the message*/
 					req_header->session_id = (uint64_t)task->r_desc->region;
 					struct msg_flush_cmd_req *f_req =
@@ -1392,7 +1411,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				/*check if payload is there*/
 
 				uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-							       reply->pay_len + reply->padding_and_tail) -
+							       reply->payload_length + reply->padding_and_tail_size) -
 							      TU_TAIL_SIZE);
 
 				if (*tail != TU_RDMA_REGULAR_MSG) {
@@ -1563,7 +1582,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 	uint32_t key_length = 0;
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	assert(task->msg->type == PUT_REQUEST || task->msg->type == PUT_IF_EXISTS_REQUEST);
+	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
@@ -1575,11 +1594,11 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 
 		if (r_desc == NULL) {
 			log_fatal("Region not found for key size %u:%s", task->key->key_size, task->key->key);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		task->r_desc = (void *)r_desc;
 
-		if (task->msg->type == PUT_IF_EXISTS_REQUEST) {
+		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
 			int level_id;
 			if (find_kv_offt(r_desc->db, &task->key, &level_id)) {
 				log_warn("Key %s in update_if_exists for region %s not found!", task->key,
@@ -1600,53 +1619,37 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 
 		/*prepare the reply*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-					   (uint64_t)task->msg->reply);
+					   task->msg->reply_length_in_recv_buffer);
 
-		if (task->msg->reply_length >= actual_reply_size) {
-			task->reply_msg->pay_len = sizeof(msg_put_rep);
-
-			actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
+		actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
+		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
 			padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 			/*set tail to the proper value*/
-			*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) =
+			*(uint8_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) =
 				TU_RDMA_REGULAR_MSG;
-			task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-			task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-			task->reply_msg->next = task->reply_msg->data;
 
-			task->reply_msg->type = PUT_REPLY;
-
-			task->reply_msg->ack_arrived = KR_REP_PENDING;
-			task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-			task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-			task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
+			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
 			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-#ifdef DEBUG_RESET_RENDEZVOUS
-			put_rep->key_hash = djb2_hash((unsigned char *)task->key->key, task->key->key_size);
-#endif /* DEBUG_RESET_RENDEZVOUS */
 			put_rep->status = KREON_SUCCESS;
 		} else {
 			log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
-				  task->msg->reply_length);
-			exit(EXIT_FAILURE);
+				  task->msg->reply_length_in_recv_buffer);
+			_exit(EXIT_FAILURE);
 		}
-		/*piggyback info for use with the client*/
-		task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-		assert(task->reply_msg->request_message_local_addr != NULL);
 	}
 }
 
 static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
-	msg_get_req *get_req;
-	msg_get_rep *get_rep;
+	msg_get_req *get_req = NULL;
+	msg_get_rep *get_rep = NULL;
 	uint32_t actual_reply_size = 0;
-	uint32_t padding;
-	assert(task->msg->type == GET_REQUEST);
+	uint32_t padding = 0;
+	assert(task->msg->msg_type == GET_REQUEST);
 	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
 	int level_id;
 	/*kreon phase*/
-	get_req = (msg_get_req *)task->msg->data;
+	get_req = (struct msg_get_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_req->key, get_req->key_size);
 
 	if (r_desc == NULL) {
@@ -1660,15 +1663,14 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 		// later...
 		return;
 	}
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
-	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
+	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(struct msg_header));
 	uint64_t kv_offt = find_kv_offt(r_desc->db, &get_req->key_size, &level_id);
 	krm_leave_kreon(r_desc);
 
 	if (kv_offt == 0) {
-		// log_warn("key not found key %s : length %u", get_req->key,
-		// get_req->key_size);
+		log_warn("key not found key %s : length %u", get_req->key, get_req->key_size);
 
 		get_rep->key_found = 0;
 		get_rep->bytes_remaining = 0;
@@ -1716,19 +1718,15 @@ exit:
 		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
 	/*piggyback info for use with the client*/
 	/*finally fix the header*/
-	task->reply_msg->type = GET_REPLY;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->pay_len = sizeof(msg_get_rep) + get_rep->value_size;
+	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+	actual_reply_size = sizeof(msg_header) + payload_length + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
 
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
+
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -1740,8 +1738,8 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
 	zero_value.size = 0;
-	assert(task->msg->type == MULTI_GET_REQUEST);
-	multi_get = (msg_multi_get_req *)task->msg->data;
+	assert(task->msg->msg_type == MULTI_GET_REQUEST);
+	multi_get = (msg_multi_get_req *)(task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, multi_get->seek_key, multi_get->seek_key_size);
 
 	if (r_desc == NULL) {
@@ -1767,14 +1765,15 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	}
 
 	/*put the data in the buffer*/
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	msg_multi_get_rep *buf = (msg_multi_get_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	buf->curr_entry = 0;
 	buf->end_of_region = 0;
 	buf->buffer_overflow = 0;
 
-	buf->capacity = task->msg->reply_length - (sizeof(msg_header) + sizeof(msg_multi_get_rep) + TU_TAIL_SIZE);
+	buf->capacity = task->msg->reply_length_in_recv_buffer -
+			(sizeof(msg_header) + sizeof(msg_multi_get_rep) + TU_TAIL_SIZE);
 	buf->remaining = buf->capacity;
 	buf->pos = 0;
 	buf->num_entries = 0;
@@ -1824,14 +1823,11 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	krm_leave_kreon(r_desc);
 
 	/*finally fix the header*/
-	task->reply_msg->type = MULTI_GET_REPLY;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->pay_len = sizeof(msg_multi_get_rep) + (buf->capacity - buf->remaining);
 	/*set now the actual capacity*/
 	buf->capacity = buf->capacity - buf->remaining;
 	buf->remaining = buf->capacity;
 
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
 	if (actual_reply_size % MESSAGE_SEGMENT_SIZE == 0)
 		padding = 0;
 	else
@@ -1839,21 +1835,12 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 
 	/*set tail to the proper value*/
 	*(uint32_t *)((uint64_t)task->reply_msg + (actual_reply_size - TU_TAIL_SIZE) + padding) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
 
 	// assert((actual_reply_size + padding) % MESSAGE_SEGMENT_SIZE == 0);
 	// assert((actual_reply_size + padding) <= task->msg->reply_length);
 
-	// log_info("actual size %u padding and tail %u pay_len %u buf capacity
-	// %u
-	// buf remaining %u",
-	//	 actual_reply_size, task->reply_msg->padding_and_tail,
-	// task->reply_msg->pay_len, buf->capacity,
-	//	 buf->remaining);
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-	assert(task->reply_msg->request_message_local_addr != NULL);
+	fill_reply_msg(task->reply_msg, task, sizeof(msg_multi_get_rep) + (buf->capacity - buf->remaining),
+		       MULTI_GET_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -1861,8 +1848,9 @@ static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_t
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	msg_delete_req *del_req = (msg_delete_req *)task->msg->data;
-	assert(task->msg->type == DELETE_REQUEST);
+	/*GESALOUS is this a bug???*/
+	msg_delete_req *del_req = (msg_delete_req *)(task->msg + sizeof(msg_header));
+	assert(task->msg->msg_type == DELETE_REQUEST);
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, del_req->key, del_req->key_size);
 
 	if (r_desc == NULL) {
@@ -1877,28 +1865,18 @@ static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_t
 	}
 
 	krm_leave_kreon(r_desc);
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
 	/*piggyback info for use with the client*/
-	task->reply_msg->pay_len = sizeof(msg_delete_rep);
-
 	actual_reply_size = sizeof(msg_header) + sizeof(msg_delete_rep) + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-	task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->next = task->reply_msg->data;
 
-	task->reply_msg->type = DELETE_REPLY;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+
+	fill_reply_msg(task->reply_msg, task, sizeof(msg_delete_rep), DELETE_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// caution delete key needs KV_FORMAT!
 	if (delete_key(r_desc->db, &del_req->key_size) == SUCCESS) {
@@ -1914,7 +1892,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	assert(task->msg->type == FLUSH_COMMAND_REQ);
+	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
 	// log_info("Master orders a flush, obey your master!");
 	struct msg_flush_cmd_req *flush_req =
 		(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -2027,30 +2005,18 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
 	}
 	/*time for reply :-)*/
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
-
-	/*piggyback info for use with the client*/
-	task->reply_msg->pay_len = sizeof(struct msg_flush_cmd_rep);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
 	actual_reply_size = sizeof(msg_header) + sizeof(msg_delete_rep) + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-	task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->next = task->reply_msg->data;
-
-	task->reply_msg->type = FLUSH_COMMAND_REP;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 	struct msg_flush_cmd_rep *flush_rep =
 		(struct msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = KREON_SUCCESS;
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
+
+	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("Responded to server!");
 }
@@ -2060,7 +2026,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
 	void *addr;
-	assert(task->msg->type == GET_LOG_BUFFER_REQ);
+	assert(task->msg->msg_type == GET_LOG_BUFFER_REQ);
 	struct msg_get_log_buffer_req *get_log =
 		(struct msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2100,28 +2066,15 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	/*initialize message*/
-	task->reply_msg->pay_len =
-		sizeof(struct msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr));
-
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
 	// TU_TAIL_SIZE));
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-	task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->next = task->reply_msg->data;
-
-	task->reply_msg->type = GET_LOG_BUFFER_REP;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 
 	struct msg_get_log_buffer_rep *rep =
 		(struct msg_get_log_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
@@ -2132,8 +2085,9 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	}
 
 	/*piggyback info for use with the client*/
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-	assert(task->reply_msg->request_message_local_addr != NULL);
+	fill_reply_msg(task->reply_msg, task,
+		       sizeof(struct msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr)),
+		       GET_LOG_BUFFER_REP);
 	log_debug("Region master wants a log buffer...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
 }
@@ -2142,7 +2096,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	assert(task->msg->type == REPLICA_INDEX_GET_BUFFER_REQ);
+	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
 	struct msg_replica_index_get_buffer_req *g_req =
 		(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2177,27 +2131,15 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 		}
 	}
 
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	/*initialize message*/
-	task->reply_msg->pay_len = sizeof(struct msg_replica_index_get_buffer_rep);
-
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
 	// TU_TAIL_SIZE));
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-	task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->next = task->reply_msg->data;
-
-	task->reply_msg->type = REPLICA_INDEX_GET_BUFFER_REP;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 
 	struct msg_replica_index_get_buffer_rep *g_rep =
 		(struct msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
@@ -2206,12 +2148,11 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 	for (int i = 0; i < g_rep->num_buffers; i++)
 		g_rep->mr[i] = *r_desc->r_state->index_buffers[g_req->level_id][i];
 
-	/*piggyback info for use with the client*/
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-	assert(task->reply_msg->request_message_local_addr != NULL);
 	// log_info("REPLICA: DONE registering %d buffer for index transfer for
 	// region %s", g_rep->num_buffers,
 	// r_desc->region->id);
+	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_get_buffer_rep),
+		       REPLICA_INDEX_GET_BUFFER_REP);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -2219,7 +2160,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	assert(task->msg->type == REPLICA_INDEX_FLUSH_REQ);
+	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
 	struct msg_replica_index_flush_req *f_req =
 		(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2351,36 +2292,23 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 			*/
 	}
 
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	/*initialize message*/
-	task->reply_msg->pay_len = sizeof(struct msg_replica_index_flush_rep);
-
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->pay_len + TU_TAIL_SIZE;
+	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 	/*set tail to the proper value*/
 	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
 	// TU_TAIL_SIZE));
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->padding_and_tail = padding + TU_TAIL_SIZE;
-	task->reply_msg->data = (void *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	task->reply_msg->next = task->reply_msg->data;
-
-	task->reply_msg->type = REPLICA_INDEX_FLUSH_REP;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
 
 	struct msg_replica_index_flush_rep *rep =
 		(struct msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	rep->status = KREON_SUCCESS;
+	/*GESALOUS check this*/
 	rep->seg_id = f_req->seg_id;
 
-	/*piggyback info for use with the client*/
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-	assert(task->reply_msg->request_message_local_addr != NULL);
+	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_flush_rep), REPLICA_INDEX_FLUSH_REP);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("REPLICA: Successfully flushed index segment id %d",
 	// f_req->seg_id);
@@ -2389,77 +2317,59 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc);
-	assert(task->msg->type == TEST_REQUEST);
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
+	assert(task->msg->msg_type == TEST_REQUEST);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	/*initialize message*/
-	if (task->msg->reply_length < TU_HEADER_SIZE) {
+	if (task->msg->reply_length_in_recv_buffer < TU_HEADER_SIZE) {
 		log_fatal("CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
-			  task->msg->reply_length);
-		exit(EXIT_FAILURE);
+			  task->msg->reply_length_in_recv_buffer);
+		_exit(EXIT_FAILURE);
 	}
 
-	/*assert(task->msg->reply_length == 1024);*/
-	task->reply_msg->pay_len = task->msg->pay_len;
-	task->reply_msg->padding_and_tail = task->msg->padding_and_tail;
-	assert(TU_HEADER_SIZE + task->reply_msg->pay_len + task->reply_msg->padding_and_tail ==
-	       task->msg->reply_length);
-	task->reply_msg->data = NULL;
-	task->reply_msg->next = NULL;
-
-	task->reply_msg->type = TEST_REPLY;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
-
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->request_message_local_addr = NULL;
-	task->kreon_operation_status = TASK_COMPLETE;
-
-	uint32_t *tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->pay_len +
-				      task->reply_msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
+	uint32_t *tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->payload_length +
+				      task->reply_msg->padding_and_tail_size - TU_TAIL_SIZE + sizeof(msg_header));
 	/*log_info("tail - reply = %"PRId64"\n", (uint64_t)tail -
 * (uint64_t)task->reply_msg);*/
-	/*log_info("reply_msg = {.pay_len = %llu, padding_and_tail = %llu}",
-* task->reply_msg->pay_len, task->reply_msg->padding_and_tail);*/
+	/*log_info("reply_msg = {.payload_length = %llu, padding_and_tail_size = %llu}",
+* task->reply_msg->payload_length, task->reply_msg->padding_and_tail_size);*/
 	*tail = TU_RDMA_REGULAR_MSG;
 
-	/*piggyback info for use with the client*/
-	task->reply_msg->request_message_local_addr = task->notification_addr;
+	fill_reply_msg(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
+	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 void execute_test_req_fetch_payload(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	(void)mydesc;
 	(void)task;
-	assert(task->msg->type == TEST_REQUEST_FETCH_PAYLOAD);
+	assert(task->msg->msg_type == TEST_REQUEST_FETCH_PAYLOAD);
 	log_fatal("This message is not supported yet...");
 	exit(EXIT_FAILURE);
 }
 
+/** Function that acks a NO_OP operation. Client spins for server's reply.
+ *  This operation happens only when there is no space in server's recv circular buffer for a client to
+ * allocate and send its msg */
 void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc && task);
-	assert(task->msg->type == NO_OP);
+	assert(task->msg->msg_type == NO_OP);
 
 	//log_info("A NO OP HAS COME");
 	task->kreon_operation_status = TASK_NO_OP;
-	task->reply_msg =
-		(void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer + (uint64_t)task->msg->reply);
-	task->reply_msg->pay_len = 0;
-	task->reply_msg->padding_and_tail = MESSAGE_SEGMENT_SIZE;
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	task->reply_msg->data = NULL;
-	task->reply_msg->next = NULL;
-	task->reply_msg->type = NO_OP_ACK;
-	task->reply_msg->receive = TU_RDMA_REGULAR_MSG;
-	task->reply_msg->ack_arrived = KR_REP_PENDING;
-	task->reply_msg->local_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->remote_offset = (uint64_t)task->msg->reply;
-	task->reply_msg->request_message_local_addr = task->msg->request_message_local_addr;
-	uint32_t *msg_tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->pay_len +
-					  task->reply_msg->padding_and_tail - TU_TAIL_SIZE + sizeof(msg_header));
-	*msg_tail = TU_RDMA_REGULAR_MSG;
+	fill_reply_msg(task->reply_msg, task, 0, NO_OP_ACK);
+
+	if (task->reply_msg->payload_length != 0) {
+		uint8_t *msg_tail =
+			(uint8_t *)((uint64_t)task->reply_msg + task->reply_msg->payload_length +
+				    task->reply_msg->padding_and_tail_size - TU_TAIL_SIZE + sizeof(msg_header));
+		*msg_tail = TU_RDMA_REGULAR_MSG;
+	}
+
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -2486,22 +2396,24 @@ execute_task *task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buf
    * fail, that we can resume later. The idea
    * behind this
    * */
+uint64_t requests_handled = 0;
 static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	enum message_type type;
-	if (task->msg->type == PUT_IF_EXISTS_REQUEST)
+	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)
 		type = PUT_REQUEST; /*will handle the IF_EXIST internally*/
 	else
-		type = task->msg->type;
+		type = task->msg->msg_type;
 
 	task_dispatcher[type](mydesc, task);
 
 	// free_rdma_received_message(rdma_conn, data_message);
 	// assert(reply_data_message->request_message_local_addr);
-	if (task->kreon_operation_status == TASK_COMPLETE)
+	if (task->kreon_operation_status == TASK_COMPLETE) {
 		stats_update(task->server_id, task->thread_id);
-
-	return;
+		if (task->msg->msg_type == PUT_REQUEST)
+			__sync_fetch_and_add(&requests_handled, 1);
+	}
 }
 
 /*helper functions*/

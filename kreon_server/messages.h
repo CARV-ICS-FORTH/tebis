@@ -13,7 +13,7 @@
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
 
-#define MESSAGE_SEGMENT_SIZE 128
+#define MESSAGE_SEGMENT_SIZE 32
 #define NUMBER_OF_TASKS 11
 
 enum message_type {
@@ -41,7 +41,6 @@ enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REP,
 	REPLICA_INDEX_FLUSH_REP,
 	/*control stuff*/
-	I_AM_CLIENT,
 	DISCONNECT,
 	/*test messages*/
 	TEST_REPLY,
@@ -50,7 +49,8 @@ enum message_type {
 	//RECOVER_LOG_CONTEXT
 };
 
-typedef enum receive_options { SYNC_REQUEST = 2, ASYNC_REQUEST, BUSY_WAIT } receive_options;
+/* XXX TODO XXX remove this */
+typedef enum receive_options { SYNC_REQUEST, ASYNC_REQUEST, BUSY_WAIT } receive_options;
 
 typedef struct msg_key {
 	uint32_t size;
@@ -64,39 +64,30 @@ typedef struct msg_value {
 
 typedef struct msg_header {
 	/*Inform server where we expect the reply*/
-	void *reply;
-	volatile uint32_t reply_length;
+	uint32_t offset_reply_in_recv_buffer;
+	uint32_t reply_length_in_recv_buffer;
 
-	uint32_t pay_len; //Size of the payload
-	uint32_t padding_and_tail; //padding so as MESSAGE total size is a multiple of MESSAGE_SEGMENT_SIZE
-	uint16_t type; // Type of the message: PUT_REQUEST, PUT_REPLY, GET_QUERY, GET_REPLY, etc.
-	uint8_t error_code;
-
-	volatile uint64_t local_offset; //Offset regarding the local Memory region
-	volatile uint64_t remote_offset; //Offset regarding the remote Memory region
-
-	/* This field contains the local memory address of this message.
-	  It is piggybacked by the remote side to its
-	  corresponding reply message. In this way
-	incoming messages can be associated with
-																			 *  the initial request messages*/
-	volatile void *request_message_local_addr;
-	/*gesalous staff also*/
-	volatile int32_t ack_arrived;
-	/*from most significant byte to less: <FUTURE_EXTENSION>, <FUTURE_EXTENSION>,
-	 * <FUTUTE_EXTENSION>, SYNC/ASYNC(indicates if this is  a synchronous or asynchronous request*/
-	volatile uint32_t got_send_completion;
-	volatile uint8_t receive_options;
-#ifdef CHECKSUM_DATA_MESSAGES
-	unsigned long hash; // [mvard] hash of data buffer
-#endif
-	/*Pointer to the first element of the Payload*/
-	void *data;
-	/*Pointer to the "current" element of the payload. Initially equal to data*/
-	void *next;
-	/*groups related messages. 0 for independent*/
-	uint64_t session_id;
-	uint32_t receive;
+	/*size of the payload*/
+	uint32_t payload_length;
+	/*padding so as MESSAGE total size is a multiple of MESSAGE_SEGMENT_SIZE*/
+	uint32_t padding_and_tail_size;
+	/*Offset in send buffer which is the same in the target's recv buffer*/
+	uint32_t offset_in_send_and_target_recv_buffers;
+	/**
+	*  This fields contains the offset in the send buffer(if any) of the message
+	*  that generated this message. Typically send in the reply messages of the
+	*  protocol. Otherwise is set to 0
+	*/
+	uint32_t triggering_msg_offset_in_send_buffer;
+	/**
+	 * Groups messages that must be processed in FIFO order from the receiving
+	 * side. Set to 0 if you do not need FIFO ordering
+	*/
+	uint32_t session_id;
+	/*Type of the message: PUT_REQUEST, PUT_REPLY, GET_QUERY, GET_REPLY, etc.*/
+	uint16_t msg_type;
+	uint8_t op_status;
+	uint8_t receive;
 } __attribute__((packed, aligned(MESSAGE_SEGMENT_SIZE))) msg_header;
 
 static_assert(MESSAGE_SEGMENT_SIZE == sizeof(struct msg_header),

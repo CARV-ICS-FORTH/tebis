@@ -112,7 +112,7 @@ struct krm_work_task {
 	struct krm_region_desc *r_desc;
 	struct msg_put_key *key;
 	struct msg_put_value *value;
-	void *notification_addr;
+	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;
 	struct krm_replica_index_state *index;

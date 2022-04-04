@@ -1,13 +1,13 @@
+#include "circular_buffer.h"
+#include "macros.h"
+#include <assert.h>
+#include <log.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <strings.h>
-#include <assert.h>
-#include <stdio.h>
-#include <pthread.h>
-#include "macros.h"
-#include "circular_buffer.h"
-#include <log.h>
 #define BITS_PER_BITMAP_WORD 64
 
 static void mark_used_space_in_bitmap(circular_buffer *c, char *address, uint32_t size);
@@ -22,11 +22,10 @@ circular_buffer *create_and_init_circular_buffer(char *memory_region, uint32_t m
 						 uint32_t memory_size_represented_per_bit, circular_buffer_type type)
 {
 	assert(memory_region_size % (BITS_PER_BITMAP_WORD * memory_size_represented_per_bit) == 0);
-	int bitmap_size;
-	bitmap_size = (memory_region_size / memory_size_represented_per_bit);
+	int bitmap_size = (memory_region_size / memory_size_represented_per_bit);
 	assert(bitmap_size % BITS_PER_BITMAP_WORD == 0);
 	bitmap_size = bitmap_size / BITS_PER_BITMAP_WORD;
-	circular_buffer *c = (circular_buffer *)malloc(sizeof(circular_buffer) + (bitmap_size * sizeof(uint64_t)));
+	circular_buffer *c = (circular_buffer *)calloc(1, sizeof(circular_buffer) + (bitmap_size * sizeof(uint64_t)));
 	c->bitmap_size = bitmap_size;
 	c->total_memory_size = memory_region_size;
 	c->remaining_space = memory_region_size;
@@ -124,7 +123,7 @@ static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circ
 		 * (although not sufficient) is free
 		 */
 		if (check_if_space_is_free(c, c->last_addr, c->remaining_space)) {
-			*addr = c->last_addr;
+			*addr = NULL;
 			return NOT_ENOUGH_SPACE_AT_THE_END;
 		} else {
 			return SPACE_NOT_READY_YET;
@@ -141,9 +140,6 @@ static int check_if_space_is_free(circular_buffer *c, char *address, uint32_t si
 	uint32_t bit_inside_word;
 	uint64_t mask;
 
-	if (size == 0) {
-		return 1;
-	}
 	addr = address;
 	end = address + size;
 
