@@ -1,7 +1,7 @@
 #pragma once
-#include <stdint.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #define KRC_GET_OFFT_DEFAULT_SIZE 2048
 
@@ -62,7 +62,7 @@ uint8_t krc_scan_is_valid(krc_scannerp sc);
 void krc_scan_close(krc_scannerp sc);
 
 /*asynchronous staff*/
-uint8_t krc_start_async_thread(int num_queues, int bufs_per_queue);
+uint8_t krc_start_async_thread(void);
 typedef void (*callback)(void *);
 krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context);
 krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
