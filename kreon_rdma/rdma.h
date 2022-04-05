@@ -66,7 +66,7 @@ typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_RE
 #define TU_RDMA_MSG_DONE 0
 #define TU_RDMA_REGULAR_MSG_READY 3
 #define TU_RDMA_DISCONNECT_MSG_READY 5
-#define TU_RDMA_REGULAR_MSG 9
+#define TU_RDMA_REGULAR_MSG UINT8_MAX
 #define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
@@ -227,6 +227,7 @@ typedef struct connection_rdma {
 	SIMPLE_CONCURRENT_LIST *list;
 #ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
 	pthread_mutex_t buffer_lock;
+	pthread_mutex_t allocation_lock;
 #else
 	pthread_spinlock_t buffer_lock;
 #endif

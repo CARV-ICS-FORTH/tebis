@@ -93,13 +93,14 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 {
 	uint32_t message_size = 0;
 	uint32_t padding = 0;
-	uint32_t receive_type = 0;
+	uint8_t receive_type = 0;
 	uint32_t i = 0;
 	char *addr = NULL;
 	msg_header *msg;
 	circular_buffer *c_buf;
 	circular_buffer_op_status stat;
 	uint8_t reset_rendezvous = 0;
+	uint32_t space_not_ready = 0;
 	switch (message_type) {
 	case PUT_REQUEST:
 	case PUT_IF_EXISTS_REQUEST:
@@ -107,6 +108,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case MULTI_GET_REQUEST:
 	case DELETE_REQUEST:
 	case TEST_REQUEST:
+	case NO_OP:
 		c_buf = conn->send_circular_buf;
 		receive_type = TU_RDMA_REGULAR_MSG;
 		reset_rendezvous = 1;
@@ -116,6 +118,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case GET_REPLY:
 	case MULTI_GET_REPLY:
 	case DELETE_REPLY:
+	case NO_OP_ACK:
 		c_buf = conn->recv_circular_buf;
 		receive_type = 0;
 		break;
@@ -143,6 +146,9 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	}
 	addr = NULL;
 	while (1) {
+		if (space_not_ready)
+			pthread_mutex_lock(&conn->allocation_lock);
+
 		stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
 		switch (stat) {
 		case ALLOCATION_IS_SUCCESSFULL:
@@ -157,7 +163,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 			reset_circular_buffer(c_buf);
 			break;
 		case SPACE_NOT_READY_YET:
-			if (++i % 10000000 == 0) {
+			/*if (++i % 10000000 == 0) {
 				for (i = 0; i < c_buf->bitmap_size; i++) {
 					if (c_buf->bitmap[i] != (uint32_t)0xFFFFFFFF) {
 						// if (++k % 100000000 == 0)
@@ -167,12 +173,14 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 						// conn->rdma_memory_regions->remote_memory_buffer);
 					}
 				}
-			}
+				}*/
+			space_not_ready = 1;
+			pthread_mutex_unlock(&conn->allocation_lock);
 			break;
 
 		default:
 			log_fatal("Unhandled state");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 	}
 
@@ -575,6 +583,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 
 #ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
 	pthread_mutex_init(&conn->buffer_lock, NULL);
+	pthread_mutex_init(&conn->allocation_lock, NULL);
 #else
 	pthread_spin_init(&conn->buffer_lock, PTHREAD_PROCESS_PRIVATE);
 #endif
@@ -753,6 +762,7 @@ void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
 	uint32_t num_of_msg_headers = length / MESSAGE_SEGMENT_SIZE;
 	for (uint32_t i = 0; i < num_of_msg_headers; i++) {
 		msg[i].receive = 0;
+		msg[i].msg_type = UINT16_MAX;
 	}
 }
 

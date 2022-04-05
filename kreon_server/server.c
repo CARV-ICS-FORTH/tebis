@@ -427,10 +427,6 @@ void *worker_thread_kernel(void *args)
 		handle_task(&root_server->numa_servers[worker->root_server_id]->meta_server, job);
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
-			if (job->msg->msg_type == PUT_REQUEST)
-				assert(job->reply_msg->msg_type == PUT_REPLY);
-			else
-				assert(job->reply_msg->msg_type == NO_OP_ACK);
 
 			_zero_rendezvous_locations(job->msg);
 			__send_rdma_message(job->conn, job->reply_msg, NULL);
@@ -1624,11 +1620,9 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 		actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
 			padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-			/*set tail to the proper value*/
-			*(uint8_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) =
-				TU_RDMA_REGULAR_MSG;
 
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
+			set_receive_field(task->reply_msg);
 			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 			put_rep->status = KREON_SUCCESS;
 		} else {
@@ -2358,18 +2352,14 @@ void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 
 	//log_info("A NO OP HAS COME");
 	task->kreon_operation_status = TASK_NO_OP;
-	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
 
 	fill_reply_msg(task->reply_msg, task, 0, NO_OP_ACK);
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg);
 
-	if (task->reply_msg->payload_length != 0) {
-		uint8_t *msg_tail =
-			(uint8_t *)((uint64_t)task->reply_msg + task->reply_msg->payload_length +
-				    task->reply_msg->padding_and_tail_size - TU_TAIL_SIZE + sizeof(msg_header));
-		*msg_tail = TU_RDMA_REGULAR_MSG;
-	}
-
+	assert(task->msg->reply_length_in_recv_buffer == MESSAGE_SEGMENT_SIZE);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
