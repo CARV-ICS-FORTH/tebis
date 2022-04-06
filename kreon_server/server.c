@@ -1622,7 +1622,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 			padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
-			set_receive_field(task->reply_msg);
+			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 			put_rep->status = KREON_SUCCESS;
 		} else {
@@ -2357,7 +2357,7 @@ void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 
 	fill_reply_msg(task->reply_msg, task, 0, NO_OP_ACK);
 	if (task->reply_msg->payload_length != 0)
-		set_receive_field(task->reply_msg);
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
 	assert(task->msg->reply_length_in_recv_buffer == MESSAGE_SEGMENT_SIZE);
 	task->kreon_operation_status = TASK_COMPLETE;

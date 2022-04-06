@@ -203,7 +203,7 @@ static msg_header *send_no_op_operation(connection_rdma *conn)
  *  In case where server's recv circular buffer does no have enough space a NO_OP message is send, allocating
  *  the remaining space of the buffer. Client spins for a NO_OP_ACK.  */
 static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
-			      int rep_msg_type, uint32_t rep_size)
+			      int rep_msg_type, int rep_size)
 {
 	msg_header *no_op_request = NULL;
 	pthread_mutex_lock(&conn->buffer_lock);
@@ -225,7 +225,6 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 
 		struct msg_header *no_op_reply = (struct msg_header *)&conn->recv_circular_buf
 							 ->memory_region[no_op_request->offset_reply_in_recv_buffer];
-		//reset_circular_buffer(conn->send_circular_buf);
 		/*zero and free the reply and req*/
 		_zero_rendezvous_locations(no_op_reply);
 		client_free_rpc_pair(conn, no_op_reply);

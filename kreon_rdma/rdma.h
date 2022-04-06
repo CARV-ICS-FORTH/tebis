@@ -288,7 +288,7 @@ int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg);
 void free_rdma_local_message(connection_rdma *conn);
 void free_rdma_received_message(connection_rdma *conn, msg_header *msg);
 void clear_receive_field(struct msg_header *msg);
-void set_receive_field(struct msg_header *msg);
+void set_receive_field(struct msg_header *msg, uint8_t value);
 uint8_t get_receive_field(struct msg_header *msg);
 
 void client_free_rpc_pair(connection_rdma *conn, msg_header *msg);

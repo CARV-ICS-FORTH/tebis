@@ -75,11 +75,16 @@ void clear_receive_field(struct msg_header *msg)
 	last_msg_header->receive = 0;
 }
 
-void set_receive_field(struct msg_header *msg)
+void set_receive_field(struct msg_header *msg, uint8_t value)
 {
+	msg->receive = value;
+
+	if (!msg->payload_length)
+		return;
+
 	struct msg_header *last_msg_header =
 		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
-	last_msg_header->receive = TU_RDMA_REGULAR_MSG;
+	last_msg_header->receive = value;
 }
 
 uint8_t get_receive_field(struct msg_header *msg)
@@ -89,18 +94,8 @@ uint8_t get_receive_field(struct msg_header *msg)
 	return last_msg_header->receive;
 }
 
-msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
+static int is_a_send_request(int message_type)
 {
-	uint32_t message_size = 0;
-	uint32_t padding = 0;
-	uint8_t receive_type = 0;
-	uint32_t i = 0;
-	char *addr = NULL;
-	msg_header *msg;
-	circular_buffer *c_buf;
-	circular_buffer_op_status stat;
-	uint8_t reset_rendezvous = 0;
-	uint32_t space_not_ready = 0;
 	switch (message_type) {
 	case PUT_REQUEST:
 	case PUT_IF_EXISTS_REQUEST:
@@ -109,71 +104,63 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 	case DELETE_REQUEST:
 	case TEST_REQUEST:
 	case NO_OP:
-		c_buf = conn->send_circular_buf;
-		receive_type = TU_RDMA_REGULAR_MSG;
-		reset_rendezvous = 1;
-		break;
+	case DISCONNECT:
+		return 1;
 	case TEST_REPLY:
 	case PUT_REPLY:
 	case GET_REPLY:
 	case MULTI_GET_REPLY:
 	case DELETE_REPLY:
 	case NO_OP_ACK:
-		c_buf = conn->recv_circular_buf;
-		receive_type = 0;
-		break;
-	case DISCONNECT:
-		c_buf = conn->send_circular_buf;
-		receive_type = CONNECTION_PROPERTIES;
-		break;
+		return 0;
 	default:
 		log_fatal("unknown message type %d", message_type);
 		_exit(EXIT_FAILURE);
 	}
+}
 
+msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type)
+{
+	uint32_t message_size = MESSAGE_SEGMENT_SIZE;
+	uint32_t padding = 0;
 	if (message_payload_size > 0) {
 		message_size = TU_HEADER_SIZE + message_payload_size + TU_TAIL_SIZE;
 		if (message_size % MESSAGE_SEGMENT_SIZE != 0) {
 			/*need to pad */
 			padding = (MESSAGE_SEGMENT_SIZE - (message_size % MESSAGE_SEGMENT_SIZE));
 			message_size += padding;
-			assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
-		} else
-			padding = 0;
-	} else {
-		message_size = MESSAGE_SEGMENT_SIZE;
-		padding = 0;
+		}
 	}
-	addr = NULL;
-	while (1) {
-		if (space_not_ready)
-			pthread_mutex_lock(&conn->allocation_lock);
 
-		stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
+	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
+
+	uint8_t is_send_request = is_a_send_request(message_type);
+
+	circular_buffer *c_buf = conn->send_circular_buf;
+	if (!is_send_request)
+		c_buf = conn->recv_circular_buf;
+
+	char *addr = NULL;
+	uint8_t space_not_ready = 0;
+	while (1) {
+		if (space_not_ready) {
+			pthread_mutex_lock(&conn->allocation_lock);
+			space_not_ready = 0;
+		}
+
+		circular_buffer_op_status stat = allocate_space_from_circular_buffer(c_buf, message_size, &addr);
+
 		switch (stat) {
 		case ALLOCATION_IS_SUCCESSFULL:
 			goto init_message;
 
 		case NOT_ENOUGH_SPACE_AT_THE_END:
-			if (reset_rendezvous)
+			if (is_send_request)
 				return NULL;
 
-			/*only replies reach here*/
-			addr = NULL;
 			reset_circular_buffer(c_buf);
 			break;
 		case SPACE_NOT_READY_YET:
-			/*if (++i % 10000000 == 0) {
-				for (i = 0; i < c_buf->bitmap_size; i++) {
-					if (c_buf->bitmap[i] != (uint32_t)0xFFFFFFFF) {
-						// if (++k % 100000000 == 0)
-						// DPRINT("bitmap[%d] = 0x%x waiting for reply at
-						// %llu\n",i,conn->send_circular_buf->bitmap[i],
-						// (char*)conn->rendezvous -
-						// conn->rdma_memory_regions->remote_memory_buffer);
-					}
-				}
-				}*/
 			space_not_ready = 1;
 			pthread_mutex_unlock(&conn->allocation_lock);
 			break;
@@ -184,22 +171,24 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 		}
 	}
 
+	struct msg_header *msg = NULL;
+
 init_message:
 	msg = (msg_header *)addr;
-	if (message_payload_size > 0) {
+	msg->payload_length = 0;
+	msg->padding_and_tail_size = 0;
+	if (message_payload_size) {
 		msg->payload_length = message_payload_size;
 		msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
-		/*set the tail to the proper value*/
-		set_receive_field(msg);
-	} else {
-		msg->payload_length = 0;
-		msg->padding_and_tail_size = 0;
 	}
-
 	msg->msg_type = message_type;
-	msg->receive = receive_type;
 	msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
+	return msg;
 
+	if (is_send_request)
+		set_receive_field(msg, TU_RDMA_REGULAR_MSG);
+	else
+		set_receive_field(msg, 0);
 	return msg;
 }
 

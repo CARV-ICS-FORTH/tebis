@@ -45,22 +45,6 @@ circular_buffer *create_and_init_circular_buffer(char *memory_region, uint32_t m
 
 circular_buffer_op_status allocate_space_from_circular_buffer(circular_buffer *c, uint32_t size, char **addr)
 {
-	switch (c->type) {
-	case SEND_BUFFER:
-	case SC_SEND_BUFFER:
-		return __allocate_space_from_send_circular_buffer(c, size, addr);
-	case RECEIVE_BUFFER:
-	case SC_RECEIVE_BUFFER:
-		return __allocate_space_from_recv_circular_buffer(c, size, addr);
-	default:
-		log_fatal("Unknown %d buffer type", c->type);
-		exit(EXIT_FAILURE);
-	}
-}
-
-static circular_buffer_op_status __allocate_space_from_send_circular_buffer(circular_buffer *c, uint32_t size,
-									    char **addr)
-{
 	assert(size % c->memory_size_represented_per_bit == 0);
 	assert(size <= c->total_memory_size);
 
@@ -78,61 +62,18 @@ static circular_buffer_op_status __allocate_space_from_send_circular_buffer(circ
 			c->remaining_space -= size;
 			c->last_addr += size;
 			return ALLOCATION_IS_SUCCESSFULL;
-		} else {
-			/*space not freed yet*/
-			return SPACE_NOT_READY_YET;
 		}
-	} else {
-		/*
-		 * space not enough, however for correctness we need to check if remaining space
-		 * (although not sufficient) is free
-		 */
-		if (check_if_space_is_free(c, c->last_addr, c->remaining_space)) {
-			*addr = NULL;
-			return NOT_ENOUGH_SPACE_AT_THE_END;
-		} else {
-			return SPACE_NOT_READY_YET;
-		}
+		return SPACE_NOT_READY_YET;
 	}
-}
-
-static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circular_buffer *c, uint32_t size,
-									    char **addr)
-{
-	assert(size % c->memory_size_represented_per_bit == 0);
-	assert(size <= c->total_memory_size);
-	if (c->remaining_space == 0) {
-		/*silently reset the buffer*/
-		c->remaining_space = c->total_memory_size;
-		c->last_addr = c->memory_region;
+	/**
+	 * space not enough, however for correctness we need to check if remaining space
+	 * (although not sufficient) is free
+	*/
+	if (check_if_space_is_free(c, c->last_addr, c->remaining_space)) {
 		*addr = NULL;
+		return NOT_ENOUGH_SPACE_AT_THE_END;
 	}
-
-	if (c->remaining_space >= size) {
-		if (check_if_space_is_free(c, c->last_addr, size)) {
-			mark_used_space_in_bitmap(c, c->last_addr, size);
-			*addr = c->last_addr;
-			c->remaining_space -= size;
-			c->last_addr += size;
-			return ALLOCATION_IS_SUCCESSFULL;
-		} else {
-			/*space not freed yet*/
-			//log_warn("Space not ready size requested %u remaining %u preallocated control space %u\n", size,
-			//	 c->remaining_space, preallocated_control_space);
-			return SPACE_NOT_READY_YET;
-		}
-	} else {
-		/*
-		 * space not enough, however for correctness we need to check if remaining space
-		 * (although not sufficient) is free
-		 */
-		if (check_if_space_is_free(c, c->last_addr, c->remaining_space)) {
-			*addr = NULL;
-			return NOT_ENOUGH_SPACE_AT_THE_END;
-		} else {
-			return SPACE_NOT_READY_YET;
-		}
-	}
+	return SPACE_NOT_READY_YET;
 }
 
 static int check_if_space_is_free(circular_buffer *c, char *tail_offt, uint32_t size)
