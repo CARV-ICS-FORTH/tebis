@@ -66,7 +66,7 @@ typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_RE
 #define TU_RDMA_MSG_DONE 0
 #define TU_RDMA_REGULAR_MSG_READY 3
 #define TU_RDMA_DISCONNECT_MSG_READY 5
-#define TU_RDMA_REGULAR_MSG UINT8_MAX
+#define TU_RDMA_REGULAR_MSG 10
 #define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
