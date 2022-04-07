@@ -183,12 +183,12 @@ init_message:
 	}
 	msg->msg_type = message_type;
 	msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-	return msg;
 
-	if (is_send_request)
-		set_receive_field(msg, TU_RDMA_REGULAR_MSG);
-	else
-		set_receive_field(msg, 0);
+	uint8_t expected_receive_field = TU_RDMA_REGULAR_MSG;
+	if (!is_send_request)
+		expected_receive_field = 0;
+
+	set_receive_field(msg, expected_receive_field);
 	return msg;
 }
 
@@ -280,6 +280,9 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 	}
 
 	int ret;
+	if (LIBRARY_MODE == CLIENT_MODE)
+		msg->session_id =
+			djb2_hash((unsigned char *)&msg->offset_reply_in_recv_buffer, msg_len - sizeof(uint32_t));
 
 	while (1) {
 		ret = rdma_post_write(conn->rdma_cm_id, context, msg, msg_len,
@@ -303,9 +306,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
 {
 	msg_header *request = triggering_msg_offt_to_real_address(conn, reply->triggering_msg_offset_in_send_buffer);
-	/*GESALOUS CHECK THIS*/
-	//assert(request->payload_length != 0);
 
+	memset(reply, 0xFF, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(conn->recv_circular_buf, (char *)reply, request->reply_length_in_recv_buffer);
 
 	uint32_t size = 0;
@@ -315,6 +317,7 @@ void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
 		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
 		assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	}
+	memset(request, 0xFF, size);
 	free_space_from_circular_buffer(conn->send_circular_buf, (char *)request, size);
 }
 

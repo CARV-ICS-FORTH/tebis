@@ -164,7 +164,7 @@ static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, ui
 	reply_msg->reply_length_in_recv_buffer = UINT32_MAX;
 	reply_msg->offset_in_send_and_target_recv_buffers = task->msg->offset_reply_in_recv_buffer;
 	reply_msg->triggering_msg_offset_in_send_buffer = task->msg->triggering_msg_offset_in_send_buffer;
-	reply_msg->session_id = UINT32_MAX;
+	reply_msg->session_id = task->msg->session_id;
 	reply_msg->msg_type = msg_type;
 	reply_msg->op_status = 0;
 	reply_msg->receive = TU_RDMA_REGULAR_MSG;
@@ -380,7 +380,7 @@ static inline size_t diff_timespec_usec(struct timespec *start, struct timespec 
 	}
 	return result.tv_sec * 1000000 + (size_t)(result.tv_nsec / (double)1000) + 1;
 }
-
+uint32_t no_ops_acks_send = 0;
 void *worker_thread_kernel(void *args)
 {
 	struct krm_work_task *job = NULL;
