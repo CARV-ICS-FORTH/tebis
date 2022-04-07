@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-uint8_t _read_value(volatile uint32_t *value_addr)
+uint8_t _read_value(uint8_t *value_addr)
 {
 	return *value_addr;
 }
@@ -16,7 +16,7 @@ void spin_loop(volatile int64_t *counter, int64_t threashold)
 	}
 }
 
-void wait_for_value(volatile uint32_t *value_addr, uint8_t value)
+void wait_for_value(uint8_t *value_addr, uint8_t value)
 {
 	while (_read_value(value_addr) != value) {
 	}

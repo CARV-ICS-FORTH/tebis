@@ -974,7 +974,7 @@ void *krm_metadata_server(void *args)
 		exit(EXIT_FAILURE);
 	}
 	/*now fix your kreon hostname*/
-	sprintf(my_desc->name.kreon_ds_hostname, "%s:%d", my_desc->name.hostname, my_desc->RDMA_port);
+	sprintf(my_desc->name.kreon_ds_hostname, "%s:%lu", my_desc->name.hostname, my_desc->RDMA_port);
 	krm_get_IP_Addresses(my_desc);
 	char *mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, my_desc->name.kreon_ds_hostname);
@@ -997,9 +997,9 @@ void *krm_metadata_server(void *args)
 			if (my_desc->zh == NULL) {
 				log_fatal("failed to connect to zk %s", globals_get_zk_host());
 				perror("Reason");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
-			wait_for_value((uint32_t *)&my_desc->zconn_state, KRM_CONNECTED);
+			wait_for_value(&my_desc->zconn_state, KRM_CONNECTED);
 
 			int zk_rc;
 			int rc = krm_zk_get_server_name(my_desc->name.kreon_ds_hostname, my_desc, &my_desc->name,
@@ -1011,7 +1011,7 @@ void *krm_metadata_server(void *args)
 				else
 					log_fatal("Error while parsing my entry's json string (dataserver name = %s)",
 						  my_desc->name.kreon_ds_hostname);
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 
 			if (my_desc->name.epoch == 0) {
@@ -1037,11 +1037,11 @@ void *krm_metadata_server(void *args)
 			rc = zoo_get_children(my_desc->zh, leader_path, 0, leader);
 			if (rc != ZOK) {
 				log_fatal("Can't find leader! error %s", zku_op2String(rc));
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			if (leader->count == 0) {
 				log_fatal("leader hostname is missing!");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			strcpy(my_desc->name.kreon_leader, leader->data[0]);
 			free(leader);

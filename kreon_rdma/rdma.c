@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/messages.h"
 #include "../kreon_server/metadata.h"
@@ -344,8 +345,10 @@ void free_rdma_local_message(connection_rdma *conn)
 void disconnect_and_close_connection(connection_rdma *conn)
 {
 	//msg_header *disconnect_request = allocate_rdma_message(conn, 0, DISCONNECT);
+	/* XXX FIXME XXX fill the disconect function*/
+	(void)conn;
 	log_debug("REMINDER fix me");
-	exit(EXIT_FAILURE);
+	_exit(EXIT_FAILURE);
 	/*send_rdma_message(conn, disconnect_request);
 	log_warn("Successfully sent disconnect message, bye bye Caution! Missing "
 	       "deallocation of resources follows...\n");
@@ -408,7 +411,7 @@ struct ibv_context *get_rdma_device_context(char *devname)
 
 	if (!rdma_dev) {
 		log_fatal("Cannot find RDMA device %s", devname);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	rdma_free_devices(dev_list);
@@ -428,7 +431,6 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 {
 	(void)num_hosts;
 	struct ibv_qp_init_attr qp_init_attr;
-	msg_header *msg;
 	if (!strcmp(hosts[0], "127.0.0.1")) {
 		log_warn("Connection with local host?");
 		return;
@@ -593,6 +595,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		// log_info("CLIENT: Informing server that I am a client and about my
 		// control location\n");
 		/*control info*/
+		break;
 
 	case MASTER_TO_REPLICA_CONNECTION:
 		log_debug("Initializing master to replica communication circular buffer");

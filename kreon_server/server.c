@@ -1576,8 +1576,7 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
 	uint32_t key_length = 0;
-	uint32_t actual_reply_size = 0;
-	uint32_t padding;
+
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
@@ -1617,10 +1616,8 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 					   task->msg->reply_length_in_recv_buffer);
 
-		actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
+		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
-			padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
 			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));

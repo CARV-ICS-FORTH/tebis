@@ -87,7 +87,7 @@ typedef struct msg_header {
 	/*Type of the message: PUT_REQUEST, PUT_REPLY, GET_QUERY, GET_REPLY, etc.*/
 	uint16_t msg_type;
 	uint8_t op_status;
-	volatile uint8_t receive;
+	uint8_t receive;
 	char pad[28];
 } __attribute__((packed, aligned(MESSAGE_SEGMENT_SIZE))) msg_header;
 

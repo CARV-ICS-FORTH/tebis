@@ -340,7 +340,7 @@ struct krm_server_desc {
 	uint8_t RDMA_IP[IP_SIZE];
 	enum krm_server_role role;
 	enum krm_server_state state;
-	volatile uint32_t zconn_state;
+	uint8_t zconn_state;
 	uint32_t RDMA_port;
 	/*entry in the root table of my dad (numa_server)*/
 	int root_server_id;

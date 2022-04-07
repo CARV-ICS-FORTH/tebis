@@ -17,12 +17,8 @@
 
 static void mark_used_space_in_bitmap(circular_buffer *c, char *address, uint32_t size);
 static int check_if_space_is_free(circular_buffer *c, char *addr, uint32_t size);
-static circular_buffer_op_status __allocate_space_from_send_circular_buffer(circular_buffer *c, uint32_t size,
-									    char **addr);
-static circular_buffer_op_status __allocate_space_from_recv_circular_buffer(circular_buffer *c, uint32_t size,
-									    char **addr);
-/*Note bit 1 unit free, 0 unit in use*/
 
+/*Note bit 1 unit free, 0 unit in use*/
 circular_buffer *create_and_init_circular_buffer(char *memory_region, uint32_t memory_region_size,
 						 uint32_t memory_size_represented_per_bit, circular_buffer_type type)
 {
