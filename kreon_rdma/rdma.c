@@ -182,7 +182,11 @@ init_message:
 		msg->payload_length = message_payload_size;
 		msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
 	}
-	msg->msg_type = message_type;
+
+	if (is_send_request)
+		msg->msg_type = message_type;
+	else
+		msg->msg_type = UINT16_MAX;
 	msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
 	uint8_t expected_receive_field = TU_RDMA_REGULAR_MSG;
@@ -280,16 +284,17 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		context = (void *)msg_ctx;
 	}
 
-	int ret;
-	if (LIBRARY_MODE == CLIENT_MODE)
+#if VALIDATE_CHECKSUMS
+	if (LIBRARY_MODE == CLIENT_MODE) {
 		msg->session_id =
-			djb2_hash((unsigned char *)&msg->offset_reply_in_recv_buffer, msg_len - sizeof(uint32_t));
-
+			djb2_hash((unsigned char *)&msg->offset_reply_in_recv_buffer, msg_len - sizeof(uint64_t));
+	}
+#endif
 	while (1) {
-		ret = rdma_post_write(conn->rdma_cm_id, context, msg, msg_len,
-				      conn->rdma_memory_regions->local_memory_region, IBV_SEND_SIGNALED,
-				      ((uint64_t)conn->peer_mr->addr + msg->offset_in_send_and_target_recv_buffers),
-				      conn->peer_mr->rkey);
+		int ret = rdma_post_write(conn->rdma_cm_id, context, msg, msg_len,
+					  conn->rdma_memory_regions->local_memory_region, IBV_SEND_SIGNALED,
+					  ((uint64_t)conn->peer_mr->addr + msg->offset_in_send_and_target_recv_buffers),
+					  conn->peer_mr->rkey);
 		if (!ret) {
 			break;
 		}

@@ -13,7 +13,6 @@
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
 
-#define MESSAGE_SEGMENT_SIZE 64
 #define NUMBER_OF_TASKS 11
 
 enum message_type {
@@ -67,7 +66,11 @@ typedef struct msg_header {
 	 * Groups messages that must be processed in FIFO order from the receiving
 	 * side. Set to 0 if you do not need FIFO ordering
 	*/
+#if VALIDATE_CHECKSUMS
 	uint64_t session_id;
+#else
+	uint32_t session_id;
+#endif
 	/*Inform server where we expect the reply*/
 	uint32_t offset_reply_in_recv_buffer;
 	uint32_t reply_length_in_recv_buffer;
@@ -87,12 +90,13 @@ typedef struct msg_header {
 	/*Type of the message: PUT_REQUEST, PUT_REPLY, GET_QUERY, GET_REPLY, etc.*/
 	uint16_t msg_type;
 	uint8_t op_status;
-	uint8_t receive;
+#if VALIDATE_CHECKSUMS
 	char pad[28];
-} __attribute__((packed, aligned(MESSAGE_SEGMENT_SIZE))) msg_header;
+#endif
+	uint8_t receive;
+} __attribute__((packed)) msg_header;
 
-static_assert(MESSAGE_SEGMENT_SIZE == sizeof(struct msg_header),
-	      "Message segment size has to be equal to the size of the messae header");
+#define MESSAGE_SEGMENT_SIZE sizeof(struct msg_header)
 
 /*put related*/
 typedef struct msg_put_key {

@@ -6,15 +6,15 @@
 #define _POSIX_C_SOURCE 200112L // required for posix_memalign
 #include <assert.h>
 #include <infiniband/verbs.h>
-#include <rdma/rdma_verbs.h>
-#include <stdlib.h>
 #include <numa.h>
+#include <rdma/rdma_verbs.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
-#include "memory_region_pool.h"
+#include "../kreon_server/conf.h" // FIXME only included for the priority macros
 #include "../utilities/list.h"
 #include "../utilities/macros.h"
-#include "../kreon_server/conf.h" // FIXME only included for the priority macros
+#include "memory_region_pool.h"
 #include <log.h>
 
 #define ALLOC_LOCAL 1 // if true use numa_alloc_local, otherwise use posix_memalign

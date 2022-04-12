@@ -1614,7 +1614,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 
 		/*prepare the reply*/
 		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-					   task->msg->reply_length_in_recv_buffer);
+					   task->msg->offset_reply_in_recv_buffer);
 
 		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
@@ -2356,23 +2356,22 @@ void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 	if (task->reply_msg->payload_length != 0)
 		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
-	assert(task->msg->reply_length_in_recv_buffer == MESSAGE_SEGMENT_SIZE);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 typedef void execute_task(struct krm_server_desc *mydesc, struct krm_work_task *task);
 
-execute_task *task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
-						   execute_replica_index_flush_req,
-						   execute_get_log_buffer_req,
-						   execute_flush_command_req,
-						   execute_put_req,
-						   execute_delete_req,
-						   execute_get_req,
-						   execute_multi_get_req,
-						   execute_test_req,
-						   execute_test_req_fetch_payload,
-						   execute_no_op };
+execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
+							 execute_replica_index_flush_req,
+							 execute_get_log_buffer_req,
+							 execute_flush_command_req,
+							 execute_put_req,
+							 execute_delete_req,
+							 execute_get_req,
+							 execute_multi_get_req,
+							 execute_test_req,
+							 execute_test_req_fetch_payload,
+							 execute_no_op };
 
 /*
    * KreonR main processing function of networkrequests.

@@ -32,6 +32,7 @@
 #define MAX_USEC_BEFORE_SLEEPING 5000000
 
 #define TU_CONNECTION_RC 1 // 1 -> RC, 0 -> UC
+#define VALIDATE_CHECKSUMS 0
 
 // Allow to perform our own Reliable Connection. It can be used with TU_CONNECTION_RC 1 or 0
 //#define TU_CONNECTION_RC_CONTROL 1 // 1 will control time per msg, 0 will not control nothing
