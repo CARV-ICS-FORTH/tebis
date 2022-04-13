@@ -3,7 +3,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 #include "zk_utils.h"
 #include <log.h>
 char *zk_error_code[] = { "ZOK", "ZNONODE", "UNKNOWN_CODE", "ZBADARGUMENTS", "ZNODEEXISTS" };
