@@ -2,7 +2,7 @@
 #include "metadata.h"
 #include "zk_utils.h"
 #include <log.h>
-#include <zookeeper.h>
+#include <zookeeper/zookeeper.h>
 uint8_t is_connected = 0;
 
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)

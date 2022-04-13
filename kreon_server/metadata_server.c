@@ -13,8 +13,8 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
-#include <zookeeper.h>
-#include <zookeeper.jute.h>
+#include <zookeeper/zookeeper.h>
+#include <zookeeper/zookeeper.jute.h>
 
 uint64_t ds_hash_key;
 

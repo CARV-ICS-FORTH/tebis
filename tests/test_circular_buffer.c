@@ -1,11 +1,11 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <assert.h>
-#include <string.h>
 #include "../utilities/circular_buffer.h"
 #include "../utilities/macros.h"
-#include <zookeeper.h>
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zookeeper/zookeeper.h>
 #define MEMORY_SIZE 32 * 1024 * 1024
 #define SEGMENT_SIZE 256
 #define NUM_OF_ALLOCATIONS 4000000

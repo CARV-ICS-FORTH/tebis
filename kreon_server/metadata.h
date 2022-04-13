@@ -8,7 +8,6 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
-#include <zookeeper.h>
 #include <zookeeper/zookeeper.h>
 #define KRM_MAX_REGIONS 1024
 #define KRM_MAX_DS_REGIONS 512
