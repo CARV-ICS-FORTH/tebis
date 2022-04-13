@@ -32,6 +32,7 @@
 #define MAX_USEC_BEFORE_SLEEPING 5000000
 
 #define TU_CONNECTION_RC 1 // 1 -> RC, 0 -> UC
+#define VALIDATE_CHECKSUMS 0
 
 // Allow to perform our own Reliable Connection. It can be used with TU_CONNECTION_RC 1 or 0
 //#define TU_CONNECTION_RC_CONTROL 1 // 1 will control time per msg, 0 will not control nothing
@@ -66,7 +67,7 @@ typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_RE
 #define TU_RDMA_MSG_DONE 0
 #define TU_RDMA_REGULAR_MSG_READY 3
 #define TU_RDMA_DISCONNECT_MSG_READY 5
-#define TU_RDMA_REGULAR_MSG 17
+#define TU_RDMA_REGULAR_MSG 10
 #define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
@@ -220,15 +221,14 @@ typedef struct connection_rdma {
 	/*new feature circular_buffer, only clients use it*/
 	circular_buffer *send_circular_buf;
 	circular_buffer *recv_circular_buf;
-	char *control_location;
 	char *reset_point;
-	uint32_t control_location_length;
 	volatile connection_type type;
 	/*To add to the list of connections open that handles the channel*/
 
 	SIMPLE_CONCURRENT_LIST *list;
 #ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
 	pthread_mutex_t buffer_lock;
+	pthread_mutex_t allocation_lock;
 #else
 	pthread_spinlock_t buffer_lock;
 #endif
@@ -282,15 +282,15 @@ void crdma_init_client_connection_list_hosts(struct connection_rdma *conn, char 
 					     struct channel_rdma *channel, connection_type type);
 
 msg_header *allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
-void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_type, uint32_t message_size,
-		       uint32_t message_payload_size, uint32_t padding);
-
 msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
 
 int send_rdma_message(connection_rdma *conn, msg_header *msg);
 int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg);
 void free_rdma_local_message(connection_rdma *conn);
 void free_rdma_received_message(connection_rdma *conn, msg_header *msg);
+void clear_receive_field(struct msg_header *msg);
+void set_receive_field(struct msg_header *msg, uint8_t value);
+uint8_t get_receive_field(struct msg_header *msg);
 
 void client_free_rpc_pair(connection_rdma *conn, msg_header *msg);
 
@@ -320,6 +320,10 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length);
 void _zero_rendezvous_locations(msg_header *msg);
 void _update_rendezvous_location(struct connection_rdma *conn, int message_size);
+
+msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt);
+
+uint32_t real_address_to_triggering_msg_offt(connection_rdma *conn, struct msg_header *msg);
 
 /*for starting a separate channel for each numa server*/
 struct ibv_context *get_rdma_device_context(char *devname);

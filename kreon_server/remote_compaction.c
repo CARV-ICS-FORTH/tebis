@@ -149,15 +149,15 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		}
 		memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 		rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
-		rpc_pair.request->request_message_local_addr = rpc_pair.request;
+		rpc_pair.request->triggering_msg_offset_in_send_buffer = rpc_pair.request;
 		rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 		__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 		// Wait for reply header
 		wait_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
 		// Wait for payload arrival
 		struct msg_header *reply = rpc_pair.reply;
-		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->pay_len +
-					       reply->padding_and_tail) -
+		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
+					       reply->padding_and_tail_size) -
 					      TU_TAIL_SIZE);
 		wait_for_value(tail, TU_RDMA_REGULAR_MSG);
 		/*unroll the reply*/
@@ -215,9 +215,9 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 	wait_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc->reply;
-	uint32_t *tail =
-		(uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->pay_len + reply->padding_and_tail) -
-			     TU_TAIL_SIZE);
+	uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
+				       reply->padding_and_tail_size) -
+				      TU_TAIL_SIZE);
 	wait_for_value(tail, TU_RDMA_REGULAR_MSG);
 	// Check status returned by the replica
 	struct msg_replica_index_flush_rep *f_rep =
@@ -371,7 +371,8 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		}
 		memcpy(f_req->region_key, r_desc->region->min_key, f_req->region_key_size);
 
-		r_desc->rpc[i][level_id].request->request_message_local_addr = r_desc->rpc[i][level_id].request;
+		r_desc->rpc[i][level_id].request->triggering_msg_offset_in_send_buffer =
+			r_desc->rpc[i][level_id].request;
 		r_desc->rpc[i][level_id].request->session_id = (uint64_t)r_desc->region + level_id;
 
 		f_req->seg_hash = s[i];
@@ -507,12 +508,12 @@ int rco_flush_last_log_segment(void *handle)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		msg_header *req_header = p[i].request;
 		msg_header *rep_header = p[i].reply;
-		req_header->request_message_local_addr = req_header;
-		req_header->ack_arrived = KR_REP_PENDING;
+		req_header->triggering_msg_offset_in_send_buffer = req_header;
 		/*location where server should put the reply*/
-		req_header->reply =
+		req_header->offset_reply_in_recv_buffer =
 			(char *)((uint64_t)rep_header - (uint64_t)p[i].conn->recv_circular_buf->memory_region);
-		req_header->reply_length = sizeof(msg_header) + rep_header->pay_len + rep_header->padding_and_tail;
+		req_header->reply_length_in_recv_buffer =
+			sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 		/*time to send the message*/
 		struct msg_flush_cmd_req *f_req =
 			(struct msg_flush_cmd_req *)((uint64_t)req_header + sizeof(struct msg_header));
@@ -537,8 +538,8 @@ int rco_flush_last_log_segment(void *handle)
 		msg_header *reply = p[i].reply;
 		wait_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
 		/*check if payload is there*/
-		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->pay_len +
-					       reply->padding_and_tail) -
+		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
+					       reply->padding_and_tail_size) -
 					      TU_TAIL_SIZE);
 		wait_for_value(tail, TU_RDMA_REGULAR_MSG);
 	}
@@ -675,7 +676,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			memcpy(g_req->region_key, task->r_desc->region->min_key, g_req->region_key_size);
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->session_id =
 				(uint64_t)task->r_desc->region + task->level_id;
-			task->rpc[task->replica_id_cnt][0].rdma_buf.request->request_message_local_addr =
+			task->rpc[task->replica_id_cnt][0].rdma_buf.request->triggering_msg_offset_in_send_buffer =
 				task->rpc[task->replica_id_cnt][0].rdma_buf.request;
 			__send_rdma_message(task->rpc[task->replica_id_cnt][0].rdma_buf.conn,
 					    task->rpc[task->replica_id_cnt][0].rdma_buf.request, NULL);
@@ -688,8 +689,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			if (task->rpc[task->replica_id_cnt][0].rdma_buf.request->receive != TU_RDMA_REGULAR_MSG)
 				return;
 			struct msg_header *reply = task->rpc[task->replica_id_cnt][0].rdma_buf.reply;
-			uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->pay_len +
-						       reply->padding_and_tail) -
+			uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
+						       reply->payload_length + reply->padding_and_tail_size) -
 						      TU_TAIL_SIZE);
 
 			if (*tail != TU_RDMA_REGULAR_MSG)
@@ -735,9 +736,10 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 					if (task->rpc[i][seg_id].rdma_buf.request->receive != TU_RDMA_REGULAR_MSG)
 						return;
 					struct msg_header *reply = task->rpc[i][seg_id].rdma_buf.reply;
-					uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-								       reply->pay_len + reply->padding_and_tail) -
-								      TU_TAIL_SIZE);
+					uint32_t *tail =
+						(uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
+							      reply->payload_length + reply->padding_and_tail_size) -
+							     TU_TAIL_SIZE);
 
 					if (*tail != TU_RDMA_REGULAR_MSG)
 						return;
@@ -847,7 +849,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 						struct msg_header *reply = task->rpc[i][j].rdma_buf.reply;
 						uint32_t *tail =
 							(uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-								      reply->pay_len + reply->padding_and_tail) -
+								      reply->payload_length +
+								      reply->padding_and_tail_size) -
 								     TU_TAIL_SIZE);
 
 						if (*tail != TU_RDMA_REGULAR_MSG) {
@@ -948,7 +951,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				}
 				memcpy(f_req->region_key, task->r_desc->region->min_key, f_req->region_key_size);
 
-				task->rpc[i][seg_id].rdma_buf.request->request_message_local_addr =
+				task->rpc[i][seg_id].rdma_buf.request->triggering_msg_offset_in_send_buffer =
 					task->rpc[i][seg_id].rdma_buf.request;
 				task->rpc[i][seg_id].rdma_buf.request->session_id =
 					(uint64_t)task->r_desc->region + task->level_id;
