@@ -14,10 +14,10 @@ typedef enum kreon_op_status {
 //TODO move properties to a configuration file
 #define RDMA_IP_FILTER "192.168.4."
 
-#define NUM_OF_CONNECTIONS_PER_SERVER 4
+#define NUM_OF_CONNECTIONS_PER_SERVER 1
 
 #define TU_HEADER_SIZE (sizeof(struct msg_header))
-#define TU_TAIL_SIZE (sizeof(uint32_t))
+#define TU_TAIL_SIZE (sizeof(uint8_t))
 
 /* The following two definitions enable three distinct operating modes in Tebis.
  * 1. RCO_DISABLE_REMOTE_COMPATIONS = 0, RCO_BUILD_INDEX_AT_REPLICA = 0

@@ -1110,7 +1110,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	req_header->offset_reply_in_recv_buffer =
 		(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
 	req_header->reply_length_in_recv_buffer =
-		sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
+		sizeof(struct msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 
 	krc_send_async_request(conn, req_header, rep_header, t, context, NULL, NULL);
 	return KRC_SUCCESS;
@@ -1144,7 +1144,6 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 
 	// Check header
 	if (req->reply->receive == TU_RDMA_REGULAR_MSG) {
-		assert(req->reply->msg_type == PUT_REPLY);
 		// Header has arrived
 		if (!req->reply->payload_length)
 			return true;
@@ -1285,12 +1284,13 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	m_get->fetch_value = 1;
 	m_get->bytes_to_read = reply_size;
 
-	req_header->triggering_msg_offset_in_send_buffer = (uint64_t)req_header;
+	/*inform the req about its buddy*/
+	req_header->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req_header);
+	/*location where server should put the reply*/
 	req_header->offset_reply_in_recv_buffer =
 		(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
 	req_header->reply_length_in_recv_buffer =
 		sizeof(struct msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
-	rep_header->receive = 0;
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
 	return KRC_SUCCESS;
 }
