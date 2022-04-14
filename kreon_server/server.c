@@ -150,7 +150,7 @@ struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
  *  */
 static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size, uint16_t msg_type)
 {
-	uint32_t reply_size = sizeof(msg_header) + payload_size + TU_TAIL_SIZE;
+	uint32_t reply_size = sizeof(struct msg_header) + payload_size + TU_TAIL_SIZE;
 	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
 
 	reply_msg->padding_and_tail_size = 0;
@@ -1520,7 +1520,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				    task->msg_ctx[i].wc.status != IBV_WC_WR_FLUSH_ERR) {
 					log_fatal("Replication RDMA write error: %s",
 						  ibv_wc_status_str(task->msg_ctx[i].wc.status));
-					exit(EXIT_FAILURE);
+					_exit(EXIT_FAILURE);
 				}
 
 				/*count bytes replicated for this segment*/
@@ -1560,7 +1560,7 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 		if (bytes_written == -1) {
 			log_fatal("Failed to writed segment for leaf nodes reason follows");
 			perror("Reason");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		total_bytes_written += bytes_written;
 	}
@@ -1569,15 +1569,13 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 
 static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
 {
-	uint32_t key_length = 0;
-
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
 		task->key = (msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
 		task->value = (msg_put_value *)((uint64_t)task->key + sizeof(msg_put_key) + task->key->key_size);
-		key_length = task->key->key_size;
+		uint32_t key_length = task->key->key_size;
 		assert(key_length != 0);
 		struct krm_region_desc *r_desc = krm_get_region(mydesc, task->key->key, task->key->key_size);
 
@@ -1628,8 +1626,6 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 {
 	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
-	uint32_t actual_reply_size = 0;
-	uint32_t padding = 0;
 	assert(task->msg->msg_type == GET_REQUEST);
 	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
 	int level_id;
@@ -1639,7 +1635,7 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 
 	if (r_desc == NULL) {
 		log_fatal("Region not found for key %s", get_req->key);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	task->kreon_operation_status = TASK_GET_KEY;
@@ -1701,18 +1697,14 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 exit:
 	if (L.in_tail)
 		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
+
+	task->kreon_operation_status = TASK_COMPLETE;
 	/*piggyback info for use with the client*/
 	/*finally fix the header*/
 	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
-	actual_reply_size = sizeof(msg_header) + payload_length + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
-
-	task->kreon_operation_status = TASK_COMPLETE;
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 }
 
 static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
@@ -1920,7 +1912,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 			// This op should follow after a partial write
 			if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
 				log_fatal("Corruption");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			exists = 1;
 		} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
@@ -1929,7 +1921,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
 			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
 			assert(0);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		//log_info("Flushing segment %llu padding is %llu primary offset %llu local diff is %llu ",
@@ -1982,7 +1974,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 				    SEGMENT_SIZE - sizeof(struct segment_header),
 				    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header), FD)) {
 				log_fatal("Failed to write segment with explicit I/O");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 		}
 
