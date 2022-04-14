@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
 	/*init zookeeper connection*/
 	log_info("Connecting to zookeeper server: %s", argv[1]);
 	zhandle_t *zh = zookeeper_init(argv[1], zk_watcher, 15000, 0, 0, 0);
-	wait_for_value(&is_connected, 1);
+	field_spin_for_value(&is_connected, 1);
 
 	if (strcmp(argv[3], "-oo") == 0) {
 		region.min_key_size = 1;

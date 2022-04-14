@@ -209,7 +209,7 @@ struct ru_replica_state {
 struct krm_server_name {
 	char hostname[KRM_HOSTNAME_SIZE];
 	/*kreon hostname - RDMA port*/
-	char kreon_ds_hostname[KRM_HOSTNAME_SIZE];
+	char kreon_ds_hostname[KRM_HOSTNAME_SIZE * 2];
 	char kreon_leader[KRM_HOSTNAME_SIZE];
 	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
 	uint32_t kreon_ds_hostname_length;

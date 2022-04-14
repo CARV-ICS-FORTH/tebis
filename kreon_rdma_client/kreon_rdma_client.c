@@ -392,14 +392,14 @@ krc_value *krc_get(uint32_t key_size, void *key, uint32_t reply_length, uint32_t
 		exit(EXIT_FAILURE);
 	}
 	/*Spin until header arrives*/
-	wait_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
 
 	/*Spin until payload arrives*/
 	uint32_t *tail = (uint32_t *)(((uint64_t)rep_header + sizeof(msg_header) + rep_header->payload_length +
 				       rep_header->padding_and_tail_size) -
 				      TU_TAIL_SIZE);
 
-	wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(tail, TU_RDMA_REGULAR_MSG);
 
 	msg_get_rep *get_rep = (msg_get_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
@@ -460,14 +460,14 @@ krc_value *krc_get_with_offset(uint32_t key_size, void *key, uint32_t offset, ui
 		exit(EXIT_FAILURE);
 	}
 	/*Spin until header arrives*/
-	wait_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
 
 	/*Spin until payload arrives*/
 	uint32_t *tail = (uint32_t *)(((uint64_t)rep_header + sizeof(msg_header) + rep_header->payload_length +
 				       rep_header->padding_and_tail_size) -
 				      TU_TAIL_SIZE);
 
-	wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(tail, TU_RDMA_REGULAR_MSG);
 
 	msg_get_offt_rep *get_offt_rep = (msg_get_offt_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
@@ -667,14 +667,14 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 		_exit(EXIT_FAILURE);
 	}
 	/*Spin until header arrives*/
-	wait_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(&rep_header->receive, TU_RDMA_REGULAR_MSG);
 
 	/*Spin until payload arrives*/
 	uint8_t *tail = (uint8_t *)(((uint64_t)rep_header + sizeof(msg_header) + rep_header->payload_length +
 				     rep_header->padding_and_tail_size) -
 				    TU_TAIL_SIZE);
 
-	wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(tail, TU_RDMA_REGULAR_MSG);
 
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
@@ -1224,7 +1224,7 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 
 static void *krc_reply_checker(void *args)
 {
-	//uint32_t next_id = 1;
+	(void)args; /*nullify warning of unused variable since args are not used*/
 	pthread_setname_np(pthread_self(), "reply_checker");
 
 	spinner = (struct krc_spinner *)calloc(1, sizeof(struct krc_spinner));

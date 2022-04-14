@@ -319,7 +319,7 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 
 void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length);
 void _zero_rendezvous_locations(msg_header *msg);
-void _update_rendezvous_location(struct connection_rdma *conn, int message_size);
+void _update_rendezvous_location(struct connection_rdma *conn, uint32_t message_size);
 
 msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt);
 

@@ -15,7 +15,7 @@ typedef struct space_descriptor {
 	uint32_t size;
 } space_descriptor;
 
-int main()
+int main(void)
 {
 	space_descriptor *allocations;
 	char *last_allocation = NULL;

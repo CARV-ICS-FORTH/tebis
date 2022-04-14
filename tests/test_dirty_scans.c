@@ -1,11 +1,11 @@
-#include <assert.h>
-#include <stdio.h>
-#include <alloca.h>
-#include <string.h>
-#include <stdlib.h>
-#include <log.h>
 #include "../kreon_lib/btree/btree.h"
 #include "../kreon_lib/scanner/scanner.h"
+#include <alloca.h>
+#include <assert.h>
+#include <log.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #define TOTAL_KEYS 1000000
 #define KEY_PREFIX "userakias_computerakias"
 #define KV_SIZE 1024
@@ -23,7 +23,7 @@ typedef struct value {
 	char value_buf[0];
 } value;
 
-int main()
+int main(void)
 {
 	bt_insert_req req;
 	//stackElementT element;
@@ -104,7 +104,7 @@ int main()
 		if (memcmp(k->key_buf, keyptr + sizeof(uint32_t), k->key_size) != 0) {
 			log_fatal("Test failed key %s not found scanner instead returned %d:%s", k->key_buf,
 				  *(uint32_t *)keyptr, keyptr + sizeof(uint32_t));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		done_with_kv_pointer(sc);
 		//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));

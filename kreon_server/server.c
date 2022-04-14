@@ -1124,7 +1124,7 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				/* Wait for the completion of the rdma operation above*/
 				log_debug("Waiting for RDMA completion of the SEGMENT with server: %s",
 					  r_desc->region->backups[i].kreon_ds_hostname);
-				wait_for_value(&context->num_of_replies_needed, 0);
+				field_spin_for_value(&context->num_of_replies_needed, 0);
 				task->msg_ctx[0].__is_initialized = 0;
 				task->msg_ctx[0].on_completion_callback = NULL;
 				// destroy context
@@ -1247,11 +1247,10 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 					task->kreon_operation_status = FLUSH_REPLICA_BUFFERS;
 				} else
 					task->kreon_operation_status = REPLICATE;
-				break;
-			} else {
+			} else
 				task->kreon_operation_status = TASK_COMPLETE;
-				break;
-			}
+
+			break;
 		}
 
 		case FLUSH_REPLICA_BUFFERS: {
@@ -1303,7 +1302,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 
 			if (task->seg_id_to_flush != 0) {
 				log_fatal("No appropriate remote segment id found for flush, what?");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			/*sent flush command to all motherfuckers*/
 			task->kreon_operation_status = SEGMENT_BARRIER;
@@ -1324,9 +1323,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 					return;
 				}
 			}
-			// pthread_mutex_lock(&task->r_desc->region_lock);
-			// task->r_desc->region_halted = 1;
-			// pthread_mutex_unlock(&task->r_desc->region_lock);
 			task->last_replica_to_ack = 0;
 			task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 			break;

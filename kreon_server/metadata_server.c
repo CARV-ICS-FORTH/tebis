@@ -971,7 +971,7 @@ void *krm_metadata_server(void *args)
 		exit(EXIT_FAILURE);
 	}
 	/*now fix your kreon hostname*/
-	sprintf(my_desc->name.kreon_ds_hostname, "%s:%lu", my_desc->name.hostname, my_desc->RDMA_port);
+	sprintf(my_desc->name.kreon_ds_hostname, "%s:%u", my_desc->name.hostname, my_desc->RDMA_port);
 	krm_get_IP_Addresses(my_desc);
 	char *mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, my_desc->name.kreon_ds_hostname);
@@ -996,7 +996,7 @@ void *krm_metadata_server(void *args)
 				perror("Reason");
 				_exit(EXIT_FAILURE);
 			}
-			wait_for_value(&my_desc->zconn_state, KRM_CONNECTED);
+			field_spin_for_value(&my_desc->zconn_state, KRM_CONNECTED);
 
 			int zk_rc;
 			int rc = krm_zk_get_server_name(my_desc->name.kreon_ds_hostname, my_desc, &my_desc->name,
@@ -1198,8 +1198,8 @@ void *krm_metadata_server(void *args)
 					     &region_json_string_length, &stat);
 				if (rc != ZOK) {
 					log_fatal("Failed to retrieve region %s from Zookeeper", region_path);
-					exit(EXIT_FAILURE);
-				} else if (stat.dataLength > sizeof(region_json_string)) {
+					_exit(EXIT_FAILURE);
+				} else if (stat.dataLength > (int64_t)sizeof(region_json_string)) {
 					log_fatal(
 						"Statically allocated buffer is not large enough to hold the json region entry."
 						"Json region entry length is %d and buffer size is %d",

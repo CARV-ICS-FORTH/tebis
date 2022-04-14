@@ -798,7 +798,7 @@ uint32_t wait_for_payload_arrival(msg_header *hdr)
 	return message_size;
 }
 
-void _update_rendezvous_location(connection_rdma *conn, int message_size)
+void _update_rendezvous_location(connection_rdma *conn, uint32_t message_size)
 {
 	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
 

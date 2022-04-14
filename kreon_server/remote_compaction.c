@@ -149,11 +149,12 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		}
 		memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 		rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
-		rpc_pair.request->triggering_msg_offset_in_send_buffer = rpc_pair.request;
+		rpc_pair.request->triggering_msg_offset_in_send_buffer =
+			real_address_to_triggering_msg_offt(r_conn, rpc_pair.request);
 		rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 		__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 		// Wait for reply header
-		wait_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
+		field_spin_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
 		// Wait for payload arrival
 		struct msg_header *reply = rpc_pair.reply;
 		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
@@ -212,7 +213,7 @@ exit:
 
 static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 {
-	wait_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc->reply;
 	uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
@@ -372,7 +373,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		memcpy(f_req->region_key, r_desc->region->min_key, f_req->region_key_size);
 
 		r_desc->rpc[i][level_id].request->triggering_msg_offset_in_send_buffer =
-			r_desc->rpc[i][level_id].request;
+			real_address_to_triggering_msg_offt(r_conn, r_desc->rpc[i][level_id].request);
 		r_desc->rpc[i][level_id].request->session_id = (uint64_t)r_desc->region + level_id;
 
 		f_req->seg_hash = s[i];
@@ -508,10 +509,11 @@ int rco_flush_last_log_segment(void *handle)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		msg_header *req_header = p[i].request;
 		msg_header *rep_header = p[i].reply;
-		req_header->triggering_msg_offset_in_send_buffer = req_header;
+		req_header->triggering_msg_offset_in_send_buffer =
+			real_address_to_triggering_msg_offt(p[i].conn, req_header);
 		/*location where server should put the reply*/
 		req_header->offset_reply_in_recv_buffer =
-			(char *)((uint64_t)rep_header - (uint64_t)p[i].conn->recv_circular_buf->memory_region);
+			(uint64_t)rep_header - (uint64_t)p[i].conn->recv_circular_buf->memory_region;
 		req_header->reply_length_in_recv_buffer =
 			sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 		/*time to send the message*/
@@ -536,7 +538,7 @@ int rco_flush_last_log_segment(void *handle)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 		/*check if header is there*/
 		msg_header *reply = p[i].reply;
-		wait_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
+		field_spin_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
 		/*check if payload is there*/
 		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
 					       reply->padding_and_tail_size) -
@@ -671,13 +673,15 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			g_req->region_key_size = task->r_desc->region->min_key_size;
 			if (g_req->region_key_size > RU_REGION_KEY_SIZE) {
 				log_fatal("Max region key overflow");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			memcpy(g_req->region_key, task->r_desc->region->min_key, g_req->region_key_size);
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->session_id =
 				(uint64_t)task->r_desc->region + task->level_id;
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->triggering_msg_offset_in_send_buffer =
-				task->rpc[task->replica_id_cnt][0].rdma_buf.request;
+				real_address_to_triggering_msg_offt(
+					task->conn[task->replica_id_cnt],
+					task->rpc[task->replica_id_cnt][0].rdma_buf.request);
 			__send_rdma_message(task->rpc[task->replica_id_cnt][0].rdma_buf.conn,
 					    task->rpc[task->replica_id_cnt][0].rdma_buf.request, NULL);
 
@@ -947,12 +951,13 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				f_req->region_key_size = task->r_desc->region->min_key_size;
 				if (f_req->region_key_size > RU_REGION_KEY_SIZE) {
 					log_fatal("Max region key overflow");
-					exit(EXIT_FAILURE);
+					_exit(EXIT_FAILURE);
 				}
 				memcpy(f_req->region_key, task->r_desc->region->min_key, f_req->region_key_size);
 
 				task->rpc[i][seg_id].rdma_buf.request->triggering_msg_offset_in_send_buffer =
-					task->rpc[i][seg_id].rdma_buf.request;
+					real_address_to_triggering_msg_offt(task->conn[i],
+									    task->rpc[i][seg_id].rdma_buf.request);
 				task->rpc[i][seg_id].rdma_buf.request->session_id =
 					(uint64_t)task->r_desc->region + task->level_id;
 				__send_rdma_message(task->rpc[i][seg_id].rdma_buf.conn,
