@@ -55,8 +55,6 @@
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 #define MAX_OUTSTANDING_REQUESTS (UTILS_QUEUE_CAPACITY / 2)
 
-extern char *DB_NO_SPILLING;
-
 typedef struct prefix_table {
 	char prefix[PREFIX_SIZE];
 } prefix_table;
@@ -428,7 +426,7 @@ void *worker_thread_kernel(void *args)
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
 
-			_zero_rendezvous_locations(job->msg);
+			zero_rendezvous_locations(job->msg);
 			__send_rdma_message(job->conn, job->reply_msg, NULL);
 			switch (job->task_type) {
 			case KRM_CLIENT_TASK:
@@ -780,7 +778,7 @@ static void *server_spinning_thread_kernel(void *args)
 				/* Set the new rendezvous point, be careful for the case that the rendezvous is outsize of the
 				 * rdma_memory_regions->remote_memory_buffer
 				 */
-				_update_rendezvous_location(conn, message_size);
+				update_rendezvous_location(conn, message_size);
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
@@ -802,8 +800,8 @@ static void *server_spinning_thread_kernel(void *args)
 					// Decrement spinning thread's connections and total connections
 					--channel->spin_num[channel->spinning_conn % channel->spinning_num_th];
 					--channel->spinning_conn;
-					_zero_rendezvous_locations(hdr);
-					_update_rendezvous_location(conn, message_size);
+					zero_rendezvous_locations(hdr);
+					update_rendezvous_location(conn, message_size);
 					close_and_free_RDMA_connection(channel, conn);
 					goto iterate_next_element;
 				} else {

@@ -290,9 +290,9 @@ void free_rdma_local_message(connection_rdma *conn);
 void free_rdma_received_message(connection_rdma *conn, msg_header *msg);
 void clear_receive_field(struct msg_header *msg);
 void set_receive_field(struct msg_header *msg, uint8_t value);
-uint8_t get_receive_field(struct msg_header *msg);
+uint8_t get_receive_field(volatile struct msg_header *msg);
 
-void client_free_rpc_pair(connection_rdma *conn, msg_header *msg);
+void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *msg);
 
 struct rdma_message_context {
 	struct msg_header *msg;
@@ -317,9 +317,9 @@ void ec_sig_handler(int signo);
 uint32_t wait_for_payload_arrival(msg_header *hdr);
 int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_message_context *msg_ctx);
 
-void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length);
-void _zero_rendezvous_locations(msg_header *msg);
-void _update_rendezvous_location(struct connection_rdma *conn, uint32_t message_size);
+void zero_rendezvous_locations_l(volatile msg_header *msg, uint32_t length);
+void zero_rendezvous_locations(volatile msg_header *msg);
+void update_rendezvous_location(struct connection_rdma *conn, uint32_t message_size);
 
 msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt);
 

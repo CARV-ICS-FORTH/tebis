@@ -88,7 +88,7 @@ void set_receive_field(struct msg_header *msg, uint8_t value)
 	last_msg_header->receive = value;
 }
 
-uint8_t get_receive_field(struct msg_header *msg)
+uint8_t get_receive_field(volatile struct msg_header *msg)
 {
 	struct msg_header *last_msg_header =
 		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
@@ -309,21 +309,18 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 	return KREON_SUCCESS;
 }
 
-void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
+void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply)
 {
 	msg_header *request = triggering_msg_offt_to_real_address(conn, reply->triggering_msg_offset_in_send_buffer);
 
-	memset(reply, 0xFF, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(conn->recv_circular_buf, (char *)reply, request->reply_length_in_recv_buffer);
 
-	uint32_t size = 0;
-	if (request->payload_length == 0) {
-		size = MESSAGE_SEGMENT_SIZE;
-	} else {
+	uint32_t size = MESSAGE_SEGMENT_SIZE;
+	if (request->payload_length)
 		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
-		assert(size % MESSAGE_SEGMENT_SIZE == 0);
-	}
-	memset(request, 0xFF, size);
+
+	assert(size % MESSAGE_SEGMENT_SIZE == 0);
+
 	free_space_from_circular_buffer(conn->send_circular_buf, (char *)request, size);
 }
 
@@ -331,7 +328,7 @@ void free_rdma_received_message(connection_rdma *conn, msg_header *msg)
 {
 	(void)conn;
 	// assert(conn->pending_received_messages > 0);
-	_zero_rendezvous_locations(msg);
+	zero_rendezvous_locations(msg);
 	//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
 }
 
@@ -756,7 +753,7 @@ void ec_sig_handler(int signo)
 	sigaction(SIGINT, &sa, 0);
 }
 
-void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
+void zero_rendezvous_locations_l(volatile msg_header *msg, uint32_t length)
 {
 	assert(length % MESSAGE_SEGMENT_SIZE == 0);
 	uint32_t num_of_msg_headers = length / MESSAGE_SEGMENT_SIZE;
@@ -766,7 +763,7 @@ void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
 	}
 }
 
-void _zero_rendezvous_locations(msg_header *msg)
+void zero_rendezvous_locations(volatile msg_header *msg)
 {
 	/*for acks that fit entirely in a header payload_length and padding_and_tail_size could be
    * 0.
@@ -781,7 +778,7 @@ void _zero_rendezvous_locations(msg_header *msg)
 	else
 		msg_length = MESSAGE_SEGMENT_SIZE;
 
-	_zero_rendezvous_locations_l(msg, msg_length);
+	zero_rendezvous_locations_l(msg, msg_length);
 }
 
 uint32_t wait_for_payload_arrival(msg_header *hdr)
@@ -798,7 +795,7 @@ uint32_t wait_for_payload_arrival(msg_header *hdr)
 	return message_size;
 }
 
-void _update_rendezvous_location(connection_rdma *conn, uint32_t message_size)
+void update_rendezvous_location(connection_rdma *conn, uint32_t message_size)
 {
 	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
 
