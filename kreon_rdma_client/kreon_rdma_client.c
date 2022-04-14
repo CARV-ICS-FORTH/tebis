@@ -147,13 +147,6 @@ static int krc_rdma_write_spin_wait_for_header_tail(struct rdma_cm_id *rdma_cm_i
 	return ret;
 }
 
-void spin_for_msg_reply(msg_header *msg)
-{
-	//log_info("Waiting for rep message with pay_len%d and pad %d", msg->pay_len, msg->padding_and_tail);
-	while (wait_for_payload_arrival(msg) == 0)
-		;
-}
-
 static int krc_wait_for_message_reply(struct msg_header *req, struct connection_rdma *conn)
 {
 	volatile struct msg_header *rep_header =
