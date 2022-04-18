@@ -154,7 +154,7 @@ string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
 string(
   APPEND
   CMAKE_C_FLAGS
-  " -Wstrict-prototypes -Wall -Werror -Wextra -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
+  " -Wstrict-prototypes -Wall -Werror -Wextra -ansi -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")

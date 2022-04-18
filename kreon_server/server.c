@@ -55,10 +55,6 @@
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 #define MAX_OUTSTANDING_REQUESTS (UTILS_QUEUE_CAPACITY / 2)
 
-typedef struct prefix_table {
-	char prefix[PREFIX_SIZE];
-} prefix_table;
-
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
 
 struct ds_task_buffer_pool {
@@ -127,7 +123,7 @@ struct ds_root_server {
 /*root of everything*/
 static struct ds_root_server *root_server = NULL;
 
-static void handle_task(struct krm_server_desc *my_server, struct krm_work_task *task);
+static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_task *task);
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 
 static void crdma_server_create_connection_inuse(struct connection_rdma *conn, struct channel_rdma *channel,
@@ -137,10 +133,9 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 	memset(conn, 0, sizeof(struct connection_rdma));
 	conn->type = type;
 	conn->channel = channel;
-	return;
 }
 
-struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
+struct channel_rdma *ds_get_channel(struct krm_server_desc const *my_desc)
 {
 	return root_server->numa_servers[my_desc->root_server_id]->channel;
 }
@@ -383,7 +378,7 @@ void *worker_thread_kernel(void *args)
 {
 	struct krm_work_task *job = NULL;
 	struct ds_worker_thread *worker;
-	const int spin_time_usec = globals_get_worker_spin_time_usec();
+	const size_t spin_time_usec = globals_get_worker_spin_time_usec();
 
 	worker = (struct ds_worker_thread *)args;
 	char name[16];
@@ -399,8 +394,8 @@ void *worker_thread_kernel(void *args)
 
 		if (!(job = utils_queue_pop(&worker->work_queue))) {
 			// Try for a few more usecs
-			struct timespec start, end;
-			int local_idle_time;
+			struct timespec start;
+			struct timespec end;
 			clock_gettime(CLOCK_MONOTONIC, &start);
 			while (1) {
 				// I could have a for loop with a few iterations to avoid constantly
@@ -408,7 +403,7 @@ void *worker_thread_kernel(void *args)
 				if ((job = utils_queue_pop(&worker->work_queue)))
 					break;
 				clock_gettime(CLOCK_MONOTONIC, &end);
-				local_idle_time = diff_timespec_usec(&start, &end);
+				size_t local_idle_time = diff_timespec_usec(&start, &end);
 				if (local_idle_time > spin_time_usec)
 					worker->idle_time = local_idle_time;
 				if (worker->status == IDLE_SLEEPING) {
@@ -884,7 +879,7 @@ static void wait_for_replication_completion_callback(struct rdma_message_context
 	return;
 }
 
-static int init_replica_connections(struct krm_server_desc *server, struct krm_work_task *task)
+static int init_replica_connections(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	while (1) {
 		switch (task->kreon_operation_status) {
@@ -1214,10 +1209,9 @@ static void krm_leave_kreon(struct krm_region_desc *r_desc)
 	if (r_desc->region->num_of_backup == 0)
 		return;
 	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
-	return;
 }
 
-static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
+static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	//############## fsm state logic follows ###################
 	while (1) {
@@ -1466,8 +1460,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 						struct connection_rdma *r_conn = sc_get_data_conn(
 							server, r_desc->region->backups[i].kreon_ds_hostname);
 
-						int ret;
-
 						client_rdma_init_message_context(&task->msg_ctx[i], NULL);
 
 						task->msg_ctx[i].args = task;
@@ -1477,7 +1469,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 							&r_desc->m_state->r_buf[i].segment[j].replicated_bytes;
 						task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 						while (1) {
-							ret = rdma_post_write(
+							int ret = rdma_post_write(
 								r_conn->rdma_cm_id, &task->msg_ctx[i], task->key,
 								task->kv_size,
 								task->conn->rdma_memory_regions->remote_memory_region,
@@ -1554,9 +1546,9 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t dev_offt, int fd)
 {
 	ssize_t total_bytes_written = 0;
-	ssize_t bytes_written = 0;
 	while (total_bytes_written < num_bytes) {
-		bytes_written = pwrite(fd, buf, num_bytes - total_bytes_written, dev_offt + total_bytes_written);
+		ssize_t bytes_written =
+			pwrite(fd, buf, num_bytes - total_bytes_written, dev_offt + total_bytes_written);
 		if (bytes_written == -1) {
 			log_fatal("Failed to writed segment for leaf nodes reason follows");
 			perror("Reason");
@@ -1567,7 +1559,7 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 	return 1;
 }
 
-static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
@@ -1622,7 +1614,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 	}
 }
 
-static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
@@ -1707,7 +1699,7 @@ exit:
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 }
 
-static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	msg_multi_get_req *multi_get;
 	scannerHandle *sc;
@@ -1764,7 +1756,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 			value = (msg_value *)&zero_value;
 		else
 			// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
-			value = (struct msg_value *)(kv_pointer + key->size + sizeof(struct msg_key));
+			value = (struct msg_value *)((char *)kv_pointer + key->size + sizeof(struct msg_key));
 		int rc = msg_push_to_multiget_buf(key, value, buf);
 		done_with_kv_pointer(sc);
 
@@ -1781,7 +1773,8 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 					value = (msg_value *)&zero_value;
 				else
 					// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
-					value = (struct msg_value *)(kv_pointer + key->size + sizeof(struct msg_key));
+					value = (struct msg_value *)((char *)kv_pointer + key->size +
+								     sizeof(struct msg_key));
 
 				rc = msg_push_to_multiget_buf(key, value, buf);
 				done_with_kv_pointer(sc);
@@ -1821,7 +1814,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -1865,7 +1858,7 @@ static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_t
 	}
 }
 
-static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -1998,7 +1991,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 	// log_info("Responded to server!");
 }
 
-static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2069,7 +2062,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2133,7 +2126,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2198,8 +2191,8 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 			if (index_entry == NULL) {
 				log_fatal("Cannot translate root_r for primary's segment %llu of db %s",
 					  primary_segment_offt, r_desc->db->db_desc->db_name);
-				raise(SIGINT);
-				exit(EXIT_FAILURE);
+				/*raise(SIGINT);*/
+				_exit(EXIT_FAILURE);
 			}
 			r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] =
 				(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
@@ -2220,7 +2213,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 		free(r_desc->r_state->index_buffers[f_req->level_id][0]->addr);
 		if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][0])) {
 			log_fatal("Failed to deregister rdma buffer");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		r_desc->r_state->index_buffers[f_req->level_id][0] = NULL;
 		if (f_req->level_id > 1) {
@@ -2283,7 +2276,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 	// f_req->seg_id);
 }
 
-static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc);
 	assert(task->msg->msg_type == TEST_REQUEST);
@@ -2308,19 +2301,19 @@ static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_tas
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-void execute_test_req_fetch_payload(struct krm_server_desc *mydesc, struct krm_work_task *task)
+void execute_test_req_fetch_payload(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	(void)mydesc;
 	(void)task;
 	assert(task->msg->msg_type == TEST_REQUEST_FETCH_PAYLOAD);
 	log_fatal("This message is not supported yet...");
-	exit(EXIT_FAILURE);
+	_exit(EXIT_FAILURE);
 }
 
 /** Function that acks a NO_OP operation. Client spins for server's reply.
  *  This operation happens only when there is no space in server's recv circular buffer for a client to
  * allocate and send its msg */
-void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
+void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc && task);
 	assert(task->msg->msg_type == NO_OP);
@@ -2337,7 +2330,7 @@ void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-typedef void execute_task(struct krm_server_desc *mydesc, struct krm_work_task *task);
+typedef void execute_task(struct krm_server_desc const *mydesc, struct krm_work_task *task);
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
@@ -2361,7 +2354,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
    * behind this
    * */
 uint64_t requests_handled = 0;
-static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	enum message_type type;
 	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)

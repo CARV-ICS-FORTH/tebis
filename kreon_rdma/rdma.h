@@ -289,7 +289,10 @@ int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg);
 void set_receive_field(struct msg_header *msg, uint8_t value);
 uint8_t get_receive_field(volatile struct msg_header *msg);
 
-void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *msg);
+/** Free the space allocated from send/recv circular buffers for a specific rpc pair.
+ *  we found the request msg from the reply's triggering msg
+ *  reply must be volatile as it is receive via the network */
+void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply);
 
 struct rdma_message_context {
 	struct msg_header *msg;

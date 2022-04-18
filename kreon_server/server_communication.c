@@ -200,10 +200,10 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
 }
 
-extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
-				  int *zk_rc);
+extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,
+				  struct krm_server_name *dst, int *zk_rc);
 
-static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname,
+static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
 	struct sc_conn_per_server *cps = NULL;
@@ -236,7 +236,7 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 	return cps->conn;
 }
 
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname)
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname)
 {
 	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
 }

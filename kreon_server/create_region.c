@@ -63,8 +63,8 @@ int main(int argc, char *argv[])
 	for (uint32_t i = 0; i < region.num_of_backup; i++) {
 		strcpy(region.backups[i].kreon_ds_hostname, argv[6 + i]);
 		region.backups[i].kreon_ds_hostname_length = strlen(region.backups[i].kreon_ds_hostname);
-		char *token = strtok(argv[6 + i], "-");
-		strcpy(region.backups[i].hostname, token);
+		char *hostname_token = strtok(argv[6 + i], "-");
+		strcpy(region.backups[i].hostname, hostname_token);
 
 		region.backups[i].epoch = 0;
 	}
@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
 	int rc = zoo_create(zh, zk_path, (char *)&region, sizeof(struct krm_region), &ZOO_OPEN_ACL_UNSAFE, 0, NULL, 0);
 	if (rc != ZOK) {
 		log_fatal("failed to create region %s with status %d", argv[3], rc);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	free(zk_path);
 	return EXIT_SUCCESS;

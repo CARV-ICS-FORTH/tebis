@@ -1,13 +1,13 @@
 #define _GNU_SOURCE
 #include "stats.h"
 
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <pthread.h>
-#include <inttypes.h>
-#include <assert.h>
 
 #define OUT_FILE "ops.txt"
 

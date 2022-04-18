@@ -26,15 +26,6 @@ const size_t MR_PREALLOCATE_COUNT = 128; // FIXME unused
 static int _mrpool_preallocate_mr(memory_region_pool *);
 static void _mrpool_initialize_mem_region(memory_region *, struct ibv_pd *, size_t);
 
-memory_region *mrpool_get_static_buffer(struct rdma_cm_id *id, uint32_t size)
-{
-	(void)id;
-	(void)size;
-	log_fatal("method not implemented!");
-	assert(0);
-	return NULL;
-}
-
 /**
  * Initialize a memory region pool. The mrpool struct is allocated by the caller
  * and not in this function
@@ -89,13 +80,11 @@ memory_region *mrpool_allocate_memory_region(memory_region_pool *pool, struct rd
    *
    * Perhaps we could asign the preallocation as a task to a worker
    */
-	struct klist *freelist;
-	struct klist_node *freelist_node;
 	memory_region *mr = NULL;
 
 	if (pool->type == PREALLOCATED) {
-		freelist = pool->free_mrs;
-		freelist_node = klist_get_first(freelist);
+		struct klist *freelist = pool->free_mrs;
+		struct klist_node *freelist_node = klist_get_first(freelist);
 		if (freelist_node) {
 			mr = (memory_region *)freelist_node->data;
 		}

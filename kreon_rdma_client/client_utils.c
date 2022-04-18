@@ -170,17 +170,17 @@ static uint8_t cu_fetch_region_table(void)
 		rc = zoo_get(cu_zh, region_path, 0, region_json_string, &region_json_string_length, &stat);
 		if (rc != ZOK) {
 			log_fatal("Failed to retrieve region %s from Zookeeper", region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		} else if (stat.dataLength > region_json_string_size) {
 			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
 				  "Json region entry length is %d and buffer size is %d",
 				  stat.dataLength, sizeof(region_json_string));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		cJSON *region_json = cJSON_ParseWithLength(region_json_string, region_json_string_length);
 		if (cJSON_IsInvalid(region_json)) {
 			log_fatal("Failed to parse json string %s of region %s", region_json_string, region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		cJSON *id = cJSON_GetObjectItem(region_json, "id");
 		cJSON *min_key = cJSON_GetObjectItem(region_json, "min_key");
@@ -191,7 +191,7 @@ static uint8_t cu_fetch_region_table(void)
 		if (!cJSON_IsString(id) || !cJSON_IsString(min_key) || !cJSON_IsString(max_key) ||
 		    !cJSON_IsString(primary) || !cJSON_IsArray(backups) || !cJSON_IsNumber(status)) {
 			log_fatal("Failed to parse json string of region %s", region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		struct krm_region r;
 		strncpy(r.id, cJSON_GetStringValue(id), KRM_MAX_REGION_ID_SIZE);
@@ -206,10 +206,9 @@ static uint8_t cu_fetch_region_table(void)
 		r.max_key_size = strlen(r.max_key);
 		r.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
 		// Find primary's krm_server_name struct
-		int rc = cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary);
-		if (rc != 0) {
+		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary) != 0) {
 			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		r_desc.region = r;
@@ -292,16 +291,6 @@ retry:
 		exit(EXIT_FAILURE);
 	}
 	return region;
-}
-
-struct cu_region_desc *cu_get_first_region(void)
-{
-	struct cu_regions *cli_regions = &client_regions;
-	if (cli_regions->num_regions == 0) {
-		log_warn("Sorry no regions");
-		return NULL;
-	}
-	return &cli_regions->r_desc[0];
 }
 
 static void cu_add_conn_for_server(struct krm_server_name *server, uint64_t hash_key)

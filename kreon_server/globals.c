@@ -1,21 +1,20 @@
 #define _LARGEFILE64_SOURCE
-#include <sys/types.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <linux/hdreg.h>
-#include <linux/fs.h>
-#include <sys/ioctl.h>
+#include "globals.h"
 #include "../kreon_lib/allocator/allocator.h"
+#include "../kreon_rdma/rdma.h"
 #include "../utilities/macros.h"
 #include "conf.h"
-#include "globals.h"
-#include "../kreon_rdma/rdma.h"
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <linux/hdreg.h>
 #include <log.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 struct globals {
 	char *zk_host_port;
@@ -106,34 +105,9 @@ int globals_get_connections_per_server(void)
 	return global_vars.connections_per_server;
 }
 
-void globals_set_connections_per_server(int connections_per_server)
-{
-	if (pthread_mutex_lock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-
-	if (global_vars.connections_per_server != -1)
-		log_warn("Connections per server is already set to %d! New value is %d.",
-			 global_vars.connections_per_server, connections_per_server);
-	global_vars.connections_per_server = connections_per_server;
-
-	if (pthread_mutex_unlock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-}
-
 int globals_get_job_scheduling_max_queue_depth(void)
 {
 	return global_vars.job_scheduling_max_queue_depth;
-}
-
-void globals_set_job_scheduling_max_queue_depth(int job_scheduling_max_queue_depth)
-{
-	log_warn("Parameter job_scheduling_max_queue_depth changed from %d to %d",
-		 global_vars.job_scheduling_max_queue_depth, job_scheduling_max_queue_depth);
-	global_vars.job_scheduling_max_queue_depth = job_scheduling_max_queue_depth;
 }
 
 int globals_get_worker_spin_time_usec(void)
@@ -141,16 +115,11 @@ int globals_get_worker_spin_time_usec(void)
 	return global_vars.worker_spin_time_usec;
 }
 
-void globals_set_worker_spin_time_usec(int worker_spin_time_usec)
-{
-	global_vars.worker_spin_time_usec = worker_spin_time_usec;
-}
-
 void globals_set_dev(char *dev)
 {
 	if (pthread_mutex_lock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.dev == NULL)
 		global_vars.dev = strdup(dev);
@@ -163,12 +132,12 @@ void globals_set_dev(char *dev)
 	if (FD == -1) {
 		log_fatal("failed to open %s reason follows", dev);
 		perror("Reason");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (strncmp(dev, "/dev/", 5) == 0) {
 		if (ioctl(FD, BLKGETSIZE64, &global_vars.volume_size) == -1) {
 			log_fatal("failed to determine volume's size", dev);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		log_info("%s is a block device of size %llu", dev, global_vars.volume_size);
 
@@ -178,7 +147,7 @@ void globals_set_dev(char *dev)
 		if (end_of_file == -1) {
 			log_fatal("failed to determine file's %s size exiting...", dev);
 			perror("ioctl");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		global_vars.volume_size = end_of_file;
 		log_info("%s is a file of size %llu", dev, global_vars.volume_size);
@@ -188,12 +157,12 @@ void globals_set_dev(char *dev)
 	if (FD == -1) {
 		log_fatal("failed to open %s reason follows");
 		perror("Reason");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	if (pthread_mutex_unlock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -223,24 +192,6 @@ void globals_create_rdma_channel(void)
 	}
 }
 
-void globals_set_rdma_channel(struct channel_rdma *channel)
-{
-	if (pthread_mutex_lock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-
-	if (global_vars.channel == NULL)
-		global_vars.channel = channel;
-	else
-		log_warn("rdma channel already set");
-
-	if (pthread_mutex_unlock(&g_lock) != 0) {
-		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
-	}
-}
-
 struct channel_rdma *globals_get_rdma_channel(void)
 {
 	return global_vars.channel;
@@ -250,11 +201,11 @@ void globals_init_volume(void)
 {
 	if (pthread_mutex_lock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.dev == NULL) {
 		log_fatal("Device is not set yet!");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.is_volume_init) {
 		log_warn("Volume/File %s already initialized probably by another numa server", global_vars.dev);
@@ -265,14 +216,14 @@ void globals_init_volume(void)
 	int fd = open(global_vars.dev, O_RDWR);
 	if (fd == -1) {
 		perror("open");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (strlen(global_vars.dev) >= 5 && strncmp(global_vars.dev, "/dev/", 5) == 0) {
 		log_info("Volume is a device %s", global_vars.dev);
 		if (ioctl(fd, BLKGETSIZE64, &size) == -1) {
 			log_fatal("Failed to determine underlying block device size %s", global_vars.dev);
 			perror("ioctl");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		log_info("underyling volume is a block device %s of size %ld bytes", global_vars.dev, size);
 		volume_init(global_vars.dev, 0, size, 0);
@@ -282,7 +233,7 @@ void globals_init_volume(void)
 		if (size == -1) {
 			log_fatal("failed to determine file size exiting...");
 			perror("ioctl");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		log_info("Volume is a file %s of size %ld bytes", global_vars.dev, size);
 		close(fd);
@@ -296,7 +247,7 @@ exit:
 	//initializing volume this erases everything!
 	if (pthread_mutex_unlock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -320,9 +271,9 @@ uint32_t globals_get_growth_factor(void)
 	return global_vars.growth_factor;
 }
 
-void globals_set_send_index(int flag)
+void globals_set_send_index(int enable)
 {
-	global_vars.send_index = flag;
+	global_vars.send_index = enable;
 }
 
 int globals_get_send_index(void)

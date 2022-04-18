@@ -233,7 +233,6 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 
 static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 {
-	int64_t ret;
 	uint32_t size;
 
 	if (key1->key_size > key2->key_size)
@@ -241,18 +240,19 @@ static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 	else
 		size = key1->key_size;
 
-	ret = memcmp(key2->key_buf, key1->key_buf, size);
+	int64_t ret = memcmp(key2->key_buf, key1->key_buf, size);
 	if (ret != 0)
 		return ret;
-	else if (ret == 0 && key1->key_size == key2->key_size)
+
+	/*keys are equal check sizes*/
+	if (key1->key_size == key2->key_size)
 		return 0;
-	else {
-		/*larger key wins*/
-		if (key2->key_size > key1->key_size)
-			return 1;
-		else
-			return -1;
-	}
+
+	/*larger key wins*/
+	if (key2->key_size > key1->key_size)
+		return 1;
+
+	return -1;
 }
 
 static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
@@ -682,10 +682,10 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 }
 
 /*scanner staff*/
-krc_scannerp krc_scan_init(uint32_t prefetch_num_entries, uint32_t prefetch_mem_size)
+krc_scannerp krc_scan_init(uint32_t prefetch_num_entries, uint32_t prefetch_mem_size_hint)
 {
 	uint32_t padding;
-	uint32_t actual_size = sizeof(msg_header) + sizeof(msg_multi_get_rep) + prefetch_mem_size + TU_TAIL_SIZE;
+	uint32_t actual_size = sizeof(msg_header) + sizeof(msg_multi_get_rep) + prefetch_mem_size_hint + TU_TAIL_SIZE;
 	/*round it as the rdma allocator will*/
 	if (actual_size % MESSAGE_SEGMENT_SIZE != 0)
 		padding = MESSAGE_SEGMENT_SIZE - (actual_size % MESSAGE_SEGMENT_SIZE);
@@ -693,7 +693,7 @@ krc_scannerp krc_scan_init(uint32_t prefetch_num_entries, uint32_t prefetch_mem_
 		padding = 0;
 	struct krc_scanner *scanner = (struct krc_scanner *)malloc(sizeof(struct krc_scanner) + actual_size + padding);
 	scanner->actual_mem_size = actual_size + padding;
-	scanner->prefetch_mem_size = prefetch_mem_size;
+	scanner->prefetch_mem_size = prefetch_mem_size_hint;
 	scanner->prefix_key = NULL;
 	scanner->start_key = NULL;
 	scanner->stop_key = NULL;
