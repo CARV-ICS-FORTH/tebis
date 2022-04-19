@@ -248,27 +248,19 @@ struct cu_region_desc *cu_get_region(char *key, uint32_t key_size)
 {
 	struct cu_regions *cli_regions = &client_regions;
 	struct cu_region_desc *region = NULL;
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
 
 	uint64_t lc2, lc1;
 retry:
 	lc2 = client_regions.lc.c2;
 
-#if REGIONS_HASH_BASED
-	uint64_t s = djb2_hash((unsigned char *)key, key_size);
-	region = &cli_regions->r_desc[s % cli_regions->num_regions];
-#else
-	start_idx = 0;
-	end_idx = cli_regions->num_regions - 1;
+	int start_idx = 0;
+	int end_idx = cli_regions->num_regions - 1;
 	region = NULL;
 
 	while (start_idx <= end_idx) {
-		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
-				  cli_regions->r_desc[middle].region.min_key, key_size, key);
+		int middle = (start_idx + end_idx) / 2;
+		int ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
+				      cli_regions->r_desc[middle].region.min_key, key_size, key);
 		//log_info("Comparing region min %s with key %s ret %ld",
 		//	 kreon_regions[middle]->ID_region.minimum_range + 4, key, ret);
 		if (ret < 0 || ret == 0) {
@@ -281,7 +273,6 @@ retry:
 		} else
 			end_idx = middle - 1;
 	}
-#endif
 	lc1 = client_regions.lc.c1;
 	if (lc1 != lc2)
 		goto retry;
@@ -353,8 +344,8 @@ retry:
 
 void cu_close_open_connections(void)
 {
-	struct cu_conn_per_server *current = NULL;
-	struct cu_conn_per_server *tmp = NULL;
+	struct cu_conn_per_server *current;
+	struct cu_conn_per_server *tmp;
 	msg_header *req_header;
 	int i;
 	/*iterate all open connections and send the disconnect message*/

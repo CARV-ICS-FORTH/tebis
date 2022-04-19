@@ -247,45 +247,13 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 
 	if (db_entry == NULL) {
 		log_fatal("Cannot find pool for db id %llu", db_id);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
-
-#if 0
-	log_info("Sending index segment for region %s", r_desc->region->id);
-	char *tmp = (char *)seg; //r_desc->local_buffer[level_id]->addr;
-	struct node_header *n = (struct node_header *)((uint64_t)tmp + sizeof(struct segment_header));
-	switch (n->type) {
-	case leafNode:
-	case leafRootNode: {
-		log_info("Sending leaf segment to replica for DB:%s", r_desc->db->db_desc->db_name);
-		uint32_t decoded_bytes = 4096;
-		do {
-			assert(n->type == leafNode || n->type == leafRootNode || n->type == paddedSpace);
-			n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
-			//log_info("Decoded now are %u", decoded_bytes);
-			decoded_bytes += LEAF_NODE_SIZE;
-		} while (decoded_bytes < SEGMENT_SIZE);
-		assert(decoded_bytes == SEGMENT_SIZE);
-		break;
-	}
-	case internalNode:
-	case rootNode:
-		log_info("Sending index segment to replica for DB:%s", r_desc->db->db_desc->db_name);
-		break;
-	case paddedSpace:
-		log_info("Sending padded Space to replica for DB:%s", r_desc->db->db_desc->db_name);
-		break;
-	default:
-		log_fatal("This is bullshit");
-		assert(0);
-		exit(EXIT_FAILURE);
-	}
-#endif
 
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
@@ -314,11 +282,11 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		while (1) {
 			//client_rdma_init_message_context(&r_desc->rpc_ctx[0][level_id], NULL);
 			//r_desc->rpc_ctx[0][level_id].on_completion_callback = on_completion_client;
-			int ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&r_desc->rpc_ctx[0][level_id]*/,
-						  r_desc->local_buffer[level_id]->addr, SEGMENT_SIZE,
-						  r_desc->local_buffer[level_id], IBV_SEND_SIGNALED,
-						  (uint64_t)r_desc->remote_mem_buf[i][level_id].addr,
-						  r_desc->remote_mem_buf[i][level_id].rkey);
+			ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&r_desc->rpc_ctx[0][level_id]*/,
+					      r_desc->local_buffer[level_id]->addr, SEGMENT_SIZE,
+					      r_desc->local_buffer[level_id], IBV_SEND_SIGNALED,
+					      (uint64_t)r_desc->remote_mem_buf[i][level_id].addr,
+					      r_desc->remote_mem_buf[i][level_id].rkey);
 
 			if (ret == 0)
 				break;
@@ -829,7 +797,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				task->is_seg_last = 1;
 			} else {
 				task->curr_index_segment =
-					(struct segment_header *)(MAPPED + task->curr_index_segment->next_segment);
+					(struct segment_header *)(MAPPED +
+								  (uint64_t)task->curr_index_segment->next_segment);
 				// log_info("Done sending seg %lu more to come with rdma write "
 				//	 "now send a flush command",
 				//		 task->seg_id_to_send);

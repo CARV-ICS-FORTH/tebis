@@ -128,14 +128,14 @@ void globals_set_dev(char *dev)
 		return;
 	}
 
-	int FD = open(dev, O_RDWR);
-	if (FD == -1) {
+	int file_descriptor = open(dev, O_RDWR);
+	if (file_descriptor == -1) {
 		log_fatal("failed to open %s reason follows", dev);
 		perror("Reason");
 		_exit(EXIT_FAILURE);
 	}
 	if (strncmp(dev, "/dev/", 5) == 0) {
-		if (ioctl(FD, BLKGETSIZE64, &global_vars.volume_size) == -1) {
+		if (ioctl(file_descriptor, BLKGETSIZE64, &global_vars.volume_size) == -1) {
 			log_fatal("failed to determine volume's size", dev);
 			_exit(EXIT_FAILURE);
 		}
@@ -143,7 +143,7 @@ void globals_set_dev(char *dev)
 
 	} else {
 		off64_t end_of_file;
-		end_of_file = lseek64(FD, 0, SEEK_END);
+		end_of_file = lseek64(file_descriptor, 0, SEEK_END);
 		if (end_of_file == -1) {
 			log_fatal("failed to determine file's %s size exiting...", dev);
 			perror("ioctl");
@@ -153,8 +153,8 @@ void globals_set_dev(char *dev)
 		log_info("%s is a file of size %llu", dev, global_vars.volume_size);
 		global_vars.mount_point = strdup(dev);
 	}
-	FD = close(FD);
-	if (FD == -1) {
+	file_descriptor = close(file_descriptor);
+	if (file_descriptor == -1) {
 		log_fatal("failed to open %s reason follows");
 		perror("Reason");
 		_exit(EXIT_FAILURE);

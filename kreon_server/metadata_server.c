@@ -1267,7 +1267,7 @@ void *krm_metadata_server(void *args)
 							    r_desc->region->id, CREATE_DB, globals_get_l0_size(),
 							    globals_get_growth_factor());
 
-				assert(r_desc->status = KRM_OPENING);
+				assert(r_desc->status == KRM_OPENING);
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
@@ -1456,22 +1456,14 @@ struct krm_region_desc *krm_get_region(struct krm_server_desc const *server_desc
 	uint64_t lc2, lc1;
 retry:
 	lc2 = server_desc->ds_regions->lamport_counter_2;
-#if REGIONS_HASH_BASED
-	uint64_t s = djb2_hash((unsigned char *)key, key_size);
-	r_desc = desc->ds_regions->r_desc[s % desc->ds_regions->num_ds_regions];
-#else
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
-	start_idx = 0;
-	end_idx = server_desc->ds_regions->num_ds_regions - 1;
+	int start_idx = 0;
+	int end_idx = server_desc->ds_regions->num_ds_regions - 1;
 	r_desc = NULL;
 	/*log_info("start %d end %d", start_idx, end_idx);*/
 	while (start_idx <= end_idx) {
-		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->min_key_size,
-				  server_desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
+		int middle = (start_idx + end_idx) / 2;
+		int ret = zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->min_key_size,
+				      server_desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
 
 		if (ret < 0 || ret == 0) {
 			/*log_info("got 0 checking with max key %s",
@@ -1504,7 +1496,6 @@ retry:
 		if (ret1 >= 0 && ret2 < 0)
 			r_desc = server_desc->ds_regions->r_desc[end_idx];
 	}
-#endif
 
 	lc1 = server_desc->ds_regions->lamport_counter_2;
 

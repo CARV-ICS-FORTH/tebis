@@ -269,10 +269,8 @@ krc_ret_code krc_init(char *zookeeper_host)
 {
 	if (!krc_lib_init) {
 		pthread_mutex_lock(&lib_lock);
-		if (!krc_lib_init) {
-			cu_init(zookeeper_host);
-			krc_lib_init = 1;
-		}
+		cu_init(zookeeper_host);
+		krc_lib_init = 1;
 		pthread_mutex_unlock(&lib_lock);
 	}
 	return KRC_SUCCESS;
@@ -789,7 +787,7 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 			if (sc->prefix_key == NULL) {
 				sc->state = KRC_ADVANCE;
 				goto exit;
-			} else if (sc->prefix_key != NULL && krc_prefix_match(sc->prefix_key, sc->curr_key)) {
+			} else if (krc_prefix_match(sc->prefix_key, sc->curr_key)) {
 				sc->state = KRC_ADVANCE;
 				goto exit;
 			} else {
@@ -846,7 +844,6 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 			/*copy to local buffer to free rdma communication buffer*/
 			//assert(rep_header->payload_length <= sc->actual_mem_size);
 
-			multi_kv_buf = m_get_rep;
 			memcpy(sc->multi_kv_buf, m_get_rep, rep_header->payload_length);
 			zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 

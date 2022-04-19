@@ -119,15 +119,23 @@ endif()
 # -DCUSTOM_ZOOKEEPER_LIB_PATH=/home/user/zookeeper/usr/local/lib e.g.
 # -DCUSTOM_ZOOKEEPER_INCLUDE_PATH=/home/user/zookeeper/usr/local/include/zookeeper
 if(NOT CUSTOM_ZOOKEEPER_LIB_PATH)
-  set(CUSTOM_ZOOKEEPER_LIB_PATH "")
-  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH "")
+  set(CUSTOM_ZOOKEEPER_LIB_PATH
+      "/home1/public/geostyl/zookeeper_3.5.9_c_binding/lib")
+  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH
+      "/home1/public/geostyl/zookeeper_3.5.9_c_binding/include")
 endif()
 
-set(Zookeeper_LIB_PATHS /home1/public/geostyl/zookeeper_3.5.9_c_binding/lib
+set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu
                         ${CUSTOM_ZOOKEEPER_LIB_PATH})
-find_path(Zookeeper_INCLUDE_DIR zookeeper.h
-          /home1/public/geostyl/zookeeper_3.5.9_c_binding/include/zookeeper
-          ${CUSTOM_ZOOKEEPER_INCLUDE_PATH})
+find_path(
+  Zookeeper_INCLUDE_DIR
+  zookeeper.h
+  /usr/local/include
+  /usr/include
+  /usr/include/zookeeper
+  /usr/local/include/zookeeper
+  ${CUSTOM_ZOOKEEPER_INCLUDE_PATH})
+
 find_library(
   Zookeeper_LIBRARY
   NAMES libzookeeper_mt.a
@@ -154,7 +162,7 @@ string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
 string(
   APPEND
   CMAKE_C_FLAGS
-  " -Wstrict-prototypes -Wall -Werror -Wextra -ansi -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
+  " -Wstrict-prototypes -Wall -Werror -Wextra -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")

@@ -48,10 +48,9 @@ static void di_write_segment(struct krm_region_desc *r_desc, char *buffer, uint6
 		_exit(EXIT_FAILURE);
 	}
 	ssize_t total_bytes_written = sizeof(struct segment_header);
-	ssize_t bytes_written = 0;
 	while (total_bytes_written < SEGMENT_SIZE) {
-		bytes_written = pwrite(fd, &buffer[total_bytes_written], SEGMENT_SIZE - total_bytes_written,
-				       entry->my_seg + total_bytes_written);
+		ssize_t bytes_written = pwrite(fd, &buffer[total_bytes_written], SEGMENT_SIZE - total_bytes_written,
+					       entry->my_seg + total_bytes_written);
 		if (bytes_written == -1) {
 			log_fatal("Failed to write segment for leaf nodes reason follows");
 			perror("Reason");
@@ -167,7 +166,6 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 				return 0;
 			}
 			index->p[buf->curr_entry].pivot = index_entry->my_seg + primary_segment_offt;
-			buf->state = DI_INDEX_NODE_PIVOT;
 
 			if (buf->curr_entry == index->header.numberOfEntriesInNode - 1) {
 				//log_info("Decoded idx %u entries last %u height %u", buf->curr_entry,
