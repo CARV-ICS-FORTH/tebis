@@ -166,6 +166,17 @@ static int krc_wait_for_message_reply(struct msg_header *req, struct connection_
 	return KREON_SUCCESS;
 }
 
+/** This function fills the fields of a request msg that relate to its reply
+ *  request must know where its reply is at the recv circular buffer etc*/
+static void fill_request_msg(connection_rdma *conn, struct msg_header *req, struct msg_header *rep)
+{
+	/*inform the req about its buddy*/
+	req->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req);
+	/*location where server should put the reply*/
+	req->offset_reply_in_recv_buffer = (uint64_t)rep - (uint64_t)conn->recv_circular_buf->memory_region;
+	req->reply_length_in_recv_buffer = sizeof(struct msg_header) + rep->payload_length + rep->padding_and_tail_size;
+}
+
 /*allocate a message for reseting the rendezvous(recv circular buffer of the server).
  *return this msg for later use*/
 static void send_no_op_operation(connection_rdma *conn)
@@ -518,14 +529,7 @@ krc_ret_code krc_get(uint32_t key_size, char *key, char **buffer, uint32_t *size
 		get_req->fetch_value = 1;
 		get_req->bytes_to_read = reply_size;
 		/*the reply part*/
-		//rep_header = allocate_rdma_message(conn, sizeof(msg_get_rep) + reply_size, TU_GET_REPLY);
-		req_header->offset_reply_in_recv_buffer =
-			(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
-		req_header->reply_length_in_recv_buffer =
-			sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
-
-		req_header->triggering_msg_offset_in_send_buffer =
-			real_address_to_triggering_msg_offt(conn, req_header);
+		fill_request_msg(conn, req_header, rep_header);
 		rep_header->receive = 0;
 
 		/*send the request*/
@@ -600,13 +604,7 @@ uint8_t krc_exists(uint32_t key_size, void *key)
 	get_req->offset = 0;
 	get_req->fetch_value = 0;
 	/*the reply part*/
-	//rep_header = allocate_rdma_message(conn, sizeof(msg_get_rep), TU_GET_REPLY);
-	req_header->offset_reply_in_recv_buffer =
-		(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
-	req_header->reply_length_in_recv_buffer =
-		sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
-
-	req_header->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req_header);
+	fill_request_msg(conn, req_header, rep_header);
 	rep_header->receive = 0;
 	/*send the request*/
 	if (client_send_rdma_message(conn, req_header) != KREON_SUCCESS) {
@@ -1094,14 +1092,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
 	put_rep->status = KR_REP_PENDING;
 
-	/*inform the req about its buddy*/
-	req_header->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req_header);
-	/*location where server should put the reply*/
-	req_header->offset_reply_in_recv_buffer =
-		(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
-	req_header->reply_length_in_recv_buffer =
-		sizeof(struct msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
-
+	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, NULL, NULL);
 	return KRC_SUCCESS;
 }
@@ -1274,13 +1265,7 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	m_get->fetch_value = 1;
 	m_get->bytes_to_read = reply_size;
 
-	/*inform the req about its buddy*/
-	req_header->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req_header);
-	/*location where server should put the reply*/
-	req_header->offset_reply_in_recv_buffer =
-		(uint64_t)rep_header - (uint64_t)conn->recv_circular_buf->memory_region;
-	req_header->reply_length_in_recv_buffer =
-		sizeof(struct msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
+	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
 	return KRC_SUCCESS;
 }
