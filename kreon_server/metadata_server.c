@@ -280,6 +280,17 @@ static void krm_resend_open_command(struct krm_server_desc *desc, struct krm_reg
 	free(path);
 }
 
+static struct krm_leader_ds_region_map *init_region_map(struct krm_region *region, enum krm_region_role role)
+{
+	struct krm_leader_ds_region_map *region_map =
+		(struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
+	region_map->lr_state.region = region;
+	region_map->lr_state.role = role;
+	region_map->lr_state.status = KRM_OPENING;
+	region_map->hash_key = djb2_hash((unsigned char *)region->id, strlen(region->id));
+	return region_map;
+}
+
 static void krm_send_open_command(struct krm_server_desc *desc, struct krm_region *region)
 {
 	int rc;
@@ -302,11 +313,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 			log_fatal("entry missing for DataServer (which is me?) %s", region->primary.kreon_ds_hostname);
 			_exit(EXIT_FAILURE);
 		}
-		region_map = (struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
-		region_map->lr_state.region = region;
-		region_map->lr_state.role = KRM_PRIMARY;
-		region_map->lr_state.status = KRM_OPENING;
-		region_map->hash_key = djb2_hash((unsigned char *)region->id, strlen(region->id));
+		region_map = init_region_map(region, KRM_PRIMARY);
 		log_debug("Adding region %s (As a primary) for server %s hash key %x", region->id,
 			  dataserver->server_id.kreon_ds_hostname, dataserver->hash_key);
 		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
@@ -327,11 +334,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 			_exit(EXIT_FAILURE);
 		}
 		msg.epoch = dataserver->server_id.epoch;
-		region_map = (struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
-		region_map->lr_state.region = region;
-		region_map->lr_state.role = KRM_PRIMARY;
-		region_map->lr_state.status = KRM_OPENING;
-		region_map->hash_key = djb2_hash((unsigned char *)region->id, strlen(region->id));
+		region_map = init_region_map(region, KRM_PRIMARY);
 		log_info("Adding region %s (As a primary) for server %s hash key %x", region->id,
 			 region->primary.kreon_ds_hostname, region_map->hash_key);
 		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
@@ -365,13 +368,8 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 					  region->primary.kreon_ds_hostname);
 				_exit(EXIT_FAILURE);
 			}
-			region_map =
-				(struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
-			region_map->lr_state.region = region;
-			region_map->lr_state.role = KRM_BACKUP;
-			region_map->lr_state.status = KRM_OPENING;
-			region_map->hash_key = djb2_hash((unsigned char *)region->id, strlen(region->id));
-			log_info("Adding region %s (As a backup) for server %s hash key %x", region->id,
+			region_map = init_region_map(region, KRM_BACKUP);
+			log_info("Adding region %s (As a backup) for server %s hash key %x", region->id, /*  */
 				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
 			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
 		} else {
@@ -389,12 +387,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 				log_fatal("entry missing for DataServer %s", region->backups[i].kreon_ds_hostname);
 				_exit(EXIT_FAILURE);
 			}
-			region_map =
-				(struct krm_leader_ds_region_map *)calloc(1, sizeof(struct krm_leader_ds_region_map));
-			region_map->lr_state.region = region;
-			region_map->lr_state.role = KRM_BACKUP;
-			region_map->lr_state.status = KRM_OPENING;
-			region_map->hash_key = djb2_hash((unsigned char *)region->id, strlen(region->id));
+			region_map = init_region_map(region, KRM_BACKUP);
 			log_info("Adding region %s (As a backup) for server %s hash key %x", region->id,
 				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
 			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
@@ -1267,7 +1260,6 @@ void *krm_metadata_server(void *args)
 							    r_desc->region->id, CREATE_DB, globals_get_l0_size(),
 							    globals_get_growth_factor());
 
-				assert(r_desc->status == KRM_OPENING);
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;

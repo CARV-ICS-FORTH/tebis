@@ -82,29 +82,32 @@ struct rco_task {
 static void *rco_compaction_worker(void *args);
 static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task);
 
+static struct rco_db_map_entry *find_db_entry_in_db_map(uint64_t db_id)
+{
+	struct rco_db_map_entry *entry;
+	pthread_mutex_lock(&db_map_lock);
+	HASH_FIND_PTR(db_map, &db_id, entry);
+	if (entry == NULL) {
+		log_fatal("Cannot find pool for db with id %llu", db_id);
+		_exit(EXIT_FAILURE);
+	}
+	pthread_mutex_unlock(&db_map_lock);
+	return entry;
+}
+
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 {
 	if (!globals_get_send_index())
 		return 0;
 
-	int ret;
 	// find krm_region_desc
-	// in which pool does this kreon db belongs to?
-	struct rco_db_map_entry *db_entry;
-	pthread_mutex_lock(&db_map_lock);
-	HASH_FIND_PTR(db_map, &db_id, db_entry);
-	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db with id %llu", db_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&db_map_lock);
-
+	int ret = 0;
+	struct rco_db_map_entry *db_entry = find_db_entry_in_db_map(db_id);
 	/*Create an rdma local buffer*/
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
-		ret = 0;
 		goto exit;
 	}
 	struct connection_rdma *r_conn =
@@ -145,7 +148,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		g_req->region_key_size = r_desc->region->min_key_size;
 		if (g_req->region_key_size > RU_REGION_KEY_SIZE) {
 			log_fatal("Max region key overflow");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 		rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
@@ -180,28 +183,19 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 	if (!globals_get_send_index())
 		return 0;
 
-	int ret;
+	int ret = 0;
 	// in which pool does this kreon db belongs to?
-	struct rco_db_map_entry *db_entry;
-	pthread_mutex_lock(&db_map_lock);
-	HASH_FIND_PTR(db_map, &db_id, db_entry);
-	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db with id %llu", db_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&db_map_lock);
-
+	struct rco_db_map_entry *db_entry = find_db_entry_in_db_map(db_id);
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
-		ret = 0;
 		goto exit;
 	}
 	char *addr = r_desc->local_buffer[level_id]->addr;
 	if (rdma_dereg_mr(r_desc->local_buffer[level_id])) {
 		log_info("Failed to deregister buffer");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	free(addr);
 	r_desc->local_buffer[level_id] = NULL;
@@ -519,7 +513,7 @@ int rco_flush_last_log_segment(void *handle)
 	/*Release guard lock*/
 	if (RWLOCK_UNLOCK(&hd->db_desc->levels[0].guard_of_level.rx_lock)) {
 		log_fatal("Failed to release guard lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	pthread_rwlock_wrlock(&r_desc->kreon_lock);
