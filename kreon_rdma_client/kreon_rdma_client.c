@@ -1162,16 +1162,10 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		break;
 	}
 	case GET_REPLY: {
-		/*uint32_t size = TU_HEADER_SIZE + req->reply->payload_length +*/
-		/*req->reply->padding_and_tail_size;*/
 		struct msg_get_rep *msg_rep = (struct msg_get_rep *)((uint64_t)req->reply + sizeof(struct msg_header));
-		//log_info(
-		//	"Value size is %lu offset_too_large? %lu bytes_remaining %lu",
-		//	msg_rep->value_size, msg_rep->offset_too_large,
-		//	msg_rep->bytes_remaining);
 		if (!msg_rep->key_found) {
 			log_fatal("Key not found!");
-			/*exit(EXIT_FAILURE);*/
+			_exit(EXIT_FAILURE);
 		}
 
 		if (msg_rep->value_size > *req->buf_size) {
@@ -1194,13 +1188,12 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 	}
 	zero_rendezvous_locations(req->reply);
 	pthread_mutex_lock(&req->conn->allocation_lock);
-	/*FIXME*/
 	client_free_rpc_pair(req->conn, req->reply);
 	pthread_mutex_unlock(&req->conn->allocation_lock);
 
 	memset(req, 0, sizeof(struct krc_async_req));
-	__sync_fetch_and_sub(&spinner->outstanding_requests, 1);
 	__sync_fetch_and_add(&replies_arrived, 1);
+	__sync_fetch_and_sub(&spinner->outstanding_requests, 1);
 }
 
 static void *krc_reply_checker(void *args)

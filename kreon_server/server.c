@@ -1690,13 +1690,13 @@ exit:
 	if (L.in_tail)
 		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
 
-	task->kreon_operation_status = TASK_COMPLETE;
 	/*piggyback info for use with the client*/
 	/*finally fix the header*/
 	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
