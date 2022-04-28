@@ -82,29 +82,32 @@ struct rco_task {
 static void *rco_compaction_worker(void *args);
 static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task);
 
+static struct rco_db_map_entry *find_db_entry_in_db_map(uint64_t db_id)
+{
+	struct rco_db_map_entry *entry;
+	pthread_mutex_lock(&db_map_lock);
+	HASH_FIND_PTR(db_map, &db_id, entry);
+	if (entry == NULL) {
+		log_fatal("Cannot find pool for db with id %llu", db_id);
+		_exit(EXIT_FAILURE);
+	}
+	pthread_mutex_unlock(&db_map_lock);
+	return entry;
+}
+
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 {
 	if (!globals_get_send_index())
 		return 0;
 
-	int ret;
 	// find krm_region_desc
-	// in which pool does this kreon db belongs to?
-	struct rco_db_map_entry *db_entry;
-	pthread_mutex_lock(&db_map_lock);
-	HASH_FIND_PTR(db_map, &db_id, db_entry);
-	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db with id %llu", db_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&db_map_lock);
-
+	int ret = 0;
+	struct rco_db_map_entry *db_entry = find_db_entry_in_db_map(db_id);
 	/*Create an rdma local buffer*/
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
-		ret = 0;
 		goto exit;
 	}
 	struct connection_rdma *r_conn =
@@ -145,15 +148,16 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		g_req->region_key_size = r_desc->region->min_key_size;
 		if (g_req->region_key_size > RU_REGION_KEY_SIZE) {
 			log_fatal("Max region key overflow");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 		rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
-		rpc_pair.request->triggering_msg_offset_in_send_buffer = rpc_pair.request;
+		rpc_pair.request->triggering_msg_offset_in_send_buffer =
+			real_address_to_triggering_msg_offt(r_conn, rpc_pair.request);
 		rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 		__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 		// Wait for reply header
-		wait_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
+		field_spin_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
 		// Wait for payload arrival
 		struct msg_header *reply = rpc_pair.reply;
 		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
@@ -179,28 +183,19 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 	if (!globals_get_send_index())
 		return 0;
 
-	int ret;
+	int ret = 0;
 	// in which pool does this kreon db belongs to?
-	struct rco_db_map_entry *db_entry;
-	pthread_mutex_lock(&db_map_lock);
-	HASH_FIND_PTR(db_map, &db_id, db_entry);
-	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db with id %llu", db_id);
-		exit(EXIT_FAILURE);
-	}
-	pthread_mutex_unlock(&db_map_lock);
-
+	struct rco_db_map_entry *db_entry = find_db_entry_in_db_map(db_id);
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
-		ret = 0;
 		goto exit;
 	}
 	char *addr = r_desc->local_buffer[level_id]->addr;
 	if (rdma_dereg_mr(r_desc->local_buffer[level_id])) {
 		log_info("Failed to deregister buffer");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	free(addr);
 	r_desc->local_buffer[level_id] = NULL;
@@ -212,7 +207,7 @@ exit:
 
 static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 {
-	wait_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
+	field_spin_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc->reply;
 	uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
@@ -246,45 +241,13 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 
 	if (db_entry == NULL) {
 		log_fatal("Cannot find pool for db id %llu", db_id);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
 
 	struct krm_region_desc *r_desc = db_entry->r_desc;
 
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
-
-#if 0
-	log_info("Sending index segment for region %s", r_desc->region->id);
-	char *tmp = (char *)seg; //r_desc->local_buffer[level_id]->addr;
-	struct node_header *n = (struct node_header *)((uint64_t)tmp + sizeof(struct segment_header));
-	switch (n->type) {
-	case leafNode:
-	case leafRootNode: {
-		log_info("Sending leaf segment to replica for DB:%s", r_desc->db->db_desc->db_name);
-		uint32_t decoded_bytes = 4096;
-		do {
-			assert(n->type == leafNode || n->type == leafRootNode || n->type == paddedSpace);
-			n = (struct node_header *)((uint64_t)n + LEAF_NODE_SIZE);
-			//log_info("Decoded now are %u", decoded_bytes);
-			decoded_bytes += LEAF_NODE_SIZE;
-		} while (decoded_bytes < SEGMENT_SIZE);
-		assert(decoded_bytes == SEGMENT_SIZE);
-		break;
-	}
-	case internalNode:
-	case rootNode:
-		log_info("Sending index segment to replica for DB:%s", r_desc->db->db_desc->db_name);
-		break;
-	case paddedSpace:
-		log_info("Sending padded Space to replica for DB:%s", r_desc->db->db_desc->db_name);
-		break;
-	default:
-		log_fatal("This is bullshit");
-		assert(0);
-		exit(EXIT_FAILURE);
-	}
-#endif
 
 	if (r_desc->region->num_of_backup == 0) {
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
@@ -313,11 +276,11 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		while (1) {
 			//client_rdma_init_message_context(&r_desc->rpc_ctx[0][level_id], NULL);
 			//r_desc->rpc_ctx[0][level_id].on_completion_callback = on_completion_client;
-			int ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&r_desc->rpc_ctx[0][level_id]*/,
-						  r_desc->local_buffer[level_id]->addr, SEGMENT_SIZE,
-						  r_desc->local_buffer[level_id], IBV_SEND_SIGNALED,
-						  (uint64_t)r_desc->remote_mem_buf[i][level_id].addr,
-						  r_desc->remote_mem_buf[i][level_id].rkey);
+			ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&r_desc->rpc_ctx[0][level_id]*/,
+					      r_desc->local_buffer[level_id]->addr, SEGMENT_SIZE,
+					      r_desc->local_buffer[level_id], IBV_SEND_SIGNALED,
+					      (uint64_t)r_desc->remote_mem_buf[i][level_id].addr,
+					      r_desc->remote_mem_buf[i][level_id].rkey);
 
 			if (ret == 0)
 				break;
@@ -372,7 +335,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		memcpy(f_req->region_key, r_desc->region->min_key, f_req->region_key_size);
 
 		r_desc->rpc[i][level_id].request->triggering_msg_offset_in_send_buffer =
-			r_desc->rpc[i][level_id].request;
+			real_address_to_triggering_msg_offt(r_conn, r_desc->rpc[i][level_id].request);
 		r_desc->rpc[i][level_id].request->session_id = (uint64_t)r_desc->region + level_id;
 
 		f_req->seg_hash = s[i];
@@ -508,10 +471,11 @@ int rco_flush_last_log_segment(void *handle)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		msg_header *req_header = p[i].request;
 		msg_header *rep_header = p[i].reply;
-		req_header->triggering_msg_offset_in_send_buffer = req_header;
+		req_header->triggering_msg_offset_in_send_buffer =
+			real_address_to_triggering_msg_offt(p[i].conn, req_header);
 		/*location where server should put the reply*/
 		req_header->offset_reply_in_recv_buffer =
-			(char *)((uint64_t)rep_header - (uint64_t)p[i].conn->recv_circular_buf->memory_region);
+			(uint64_t)rep_header - (uint64_t)p[i].conn->recv_circular_buf->memory_region;
 		req_header->reply_length_in_recv_buffer =
 			sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 		/*time to send the message*/
@@ -536,7 +500,7 @@ int rco_flush_last_log_segment(void *handle)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 		/*check if header is there*/
 		msg_header *reply = p[i].reply;
-		wait_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
+		field_spin_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
 		/*check if payload is there*/
 		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
 					       reply->padding_and_tail_size) -
@@ -549,7 +513,7 @@ int rco_flush_last_log_segment(void *handle)
 	/*Release guard lock*/
 	if (RWLOCK_UNLOCK(&hd->db_desc->levels[0].guard_of_level.rx_lock)) {
 		log_fatal("Failed to release guard lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	pthread_rwlock_wrlock(&r_desc->kreon_lock);
@@ -671,13 +635,15 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			g_req->region_key_size = task->r_desc->region->min_key_size;
 			if (g_req->region_key_size > RU_REGION_KEY_SIZE) {
 				log_fatal("Max region key overflow");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			memcpy(g_req->region_key, task->r_desc->region->min_key, g_req->region_key_size);
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->session_id =
 				(uint64_t)task->r_desc->region + task->level_id;
 			task->rpc[task->replica_id_cnt][0].rdma_buf.request->triggering_msg_offset_in_send_buffer =
-				task->rpc[task->replica_id_cnt][0].rdma_buf.request;
+				real_address_to_triggering_msg_offt(
+					task->conn[task->replica_id_cnt],
+					task->rpc[task->replica_id_cnt][0].rdma_buf.request);
 			__send_rdma_message(task->rpc[task->replica_id_cnt][0].rdma_buf.conn,
 					    task->rpc[task->replica_id_cnt][0].rdma_buf.request, NULL);
 
@@ -825,7 +791,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				task->is_seg_last = 1;
 			} else {
 				task->curr_index_segment =
-					(struct segment_header *)(MAPPED + task->curr_index_segment->next_segment);
+					(struct segment_header *)(MAPPED +
+								  (uint64_t)task->curr_index_segment->next_segment);
 				// log_info("Done sending seg %lu more to come with rdma write "
 				//	 "now send a flush command",
 				//		 task->seg_id_to_send);
@@ -947,12 +914,13 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				f_req->region_key_size = task->r_desc->region->min_key_size;
 				if (f_req->region_key_size > RU_REGION_KEY_SIZE) {
 					log_fatal("Max region key overflow");
-					exit(EXIT_FAILURE);
+					_exit(EXIT_FAILURE);
 				}
 				memcpy(f_req->region_key, task->r_desc->region->min_key, f_req->region_key_size);
 
 				task->rpc[i][seg_id].rdma_buf.request->triggering_msg_offset_in_send_buffer =
-					task->rpc[i][seg_id].rdma_buf.request;
+					real_address_to_triggering_msg_offt(task->conn[i],
+									    task->rpc[i][seg_id].rdma_buf.request);
 				task->rpc[i][seg_id].rdma_buf.request->session_id =
 					(uint64_t)task->r_desc->region + task->level_id;
 				__send_rdma_message(task->rpc[i][seg_id].rdma_buf.conn,

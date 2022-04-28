@@ -55,8 +55,6 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 void check_pending_ack_message(struct connection_rdma *conn);
 void force_send_ack(struct connection_rdma *conn);
 
-void rdma_thread_events_ctx(void *args);
-
 void on_completion_server(struct rdma_message_context *msg_ctx);
 
 msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt)
@@ -67,13 +65,6 @@ msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t 
 uint32_t real_address_to_triggering_msg_offt(connection_rdma *conn, struct msg_header *msg)
 {
 	return (uint64_t)msg - (uint64_t)conn->send_circular_buf->memory_region;
-}
-
-void clear_receive_field(struct msg_header *msg)
-{
-	struct msg_header *last_msg_header =
-		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
-	last_msg_header->receive = 0;
 }
 
 void set_receive_field(struct msg_header *msg, uint8_t value)
@@ -88,7 +79,7 @@ void set_receive_field(struct msg_header *msg, uint8_t value)
 	last_msg_header->receive = value;
 }
 
-uint8_t get_receive_field(struct msg_header *msg)
+uint8_t get_receive_field(volatile struct msg_header *msg)
 {
 	struct msg_header *last_msg_header =
 		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
@@ -202,11 +193,6 @@ int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg)
 	return __send_rdma_message(conn, msg, NULL);
 }
 
-int send_rdma_message(connection_rdma *conn, msg_header *msg)
-{
-	return __send_rdma_message(conn, msg, NULL);
-}
-
 void on_completion_client(struct rdma_message_context *msg_ctx);
 
 int client_send_rdma_message(struct connection_rdma *conn, struct msg_header *msg)
@@ -301,7 +287,6 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 
 		if (conn->status == CONNECTION_ERROR) {
 			log_fatal("connection failed !: %s\n", strerror(errno));
-			raise(SIGINT);
 			_exit(EXIT_FAILURE);
 		}
 	}
@@ -309,41 +294,19 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 	return KREON_SUCCESS;
 }
 
-void client_free_rpc_pair(connection_rdma *conn, msg_header *reply)
+void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply)
 {
 	msg_header *request = triggering_msg_offt_to_real_address(conn, reply->triggering_msg_offset_in_send_buffer);
 
-	memset(reply, 0xFF, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(conn->recv_circular_buf, (char *)reply, request->reply_length_in_recv_buffer);
 
-	uint32_t size = 0;
-	if (request->payload_length == 0) {
-		size = MESSAGE_SEGMENT_SIZE;
-	} else {
+	uint32_t size = MESSAGE_SEGMENT_SIZE;
+	if (request->payload_length)
 		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
-		assert(size % MESSAGE_SEGMENT_SIZE == 0);
-	}
-	memset(request, 0xFF, size);
+
+	assert(size % MESSAGE_SEGMENT_SIZE == 0);
+
 	free_space_from_circular_buffer(conn->send_circular_buf, (char *)request, size);
-}
-
-void free_rdma_received_message(connection_rdma *conn, msg_header *msg)
-{
-	(void)conn;
-	// assert(conn->pending_received_messages > 0);
-	_zero_rendezvous_locations(msg);
-	//__sync_fetch_and_sub(&conn->pending_received_messages, 1);
-}
-
-void free_rdma_local_message(connection_rdma *conn)
-{
-	(void)conn;
-	// assert(conn->pending_sent_messages > 0);
-	//__sync_fetch_and_sub(&conn->pending_sent_messages, 1);
-	// if (conn->sleeping_workers > 0) {
-	//	sem_post(&conn->congestion_control);
-	//}
-	return;
 }
 
 /*Disconnect*/
@@ -359,37 +322,6 @@ void disconnect_and_close_connection(connection_rdma *conn)
 	       "deallocation of resources follows...\n");
 	close_and_free_RDMA_connection(conn->channel, conn);
 	*/
-}
-
-struct ibv_device *ctx_find_dev(const char *ib_devname)
-{
-	int num_of_device;
-	struct ibv_device **dev_list;
-	struct ibv_device *ib_dev = NULL;
-
-	dev_list = ibv_get_device_list(&num_of_device);
-
-	if (num_of_device <= 0) {
-		fprintf(stderr, " Did not detect devices \n");
-		fprintf(stderr, " If device exists, check if driver is up\n");
-		return NULL;
-	}
-
-	if (!ib_devname) {
-		ib_dev = dev_list[0];
-		if (!ib_dev) {
-			fprintf(stderr, "No IB devices found\n");
-			exit(1);
-		}
-	} else {
-		for (; (ib_dev = *dev_list); ++dev_list) {
-			if (!strcmp(ibv_get_device_name(ib_dev), ib_devname))
-				break;
-		}
-		if (!ib_dev)
-			fprintf(stderr, "IB device %s not found\n", ib_devname);
-	}
-	return ib_dev;
 }
 
 struct ibv_context *get_rdma_device_context(char *devname)
@@ -422,13 +354,6 @@ struct ibv_context *get_rdma_device_context(char *devname)
 	rdma_free_devices(dev_list);
 
 	return rdma_dev;
-}
-
-uint16_t ctx_get_local_lid(struct ibv_context *context, int port, struct ibv_port_attr *attr)
-{
-	if (ibv_query_port(context, port, attr))
-		return 0;
-	return attr->lid;
 }
 
 void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts, const int num_hosts,
@@ -479,7 +404,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	ret = rdma_create_ep(&rdma_cm_id, res, NULL, &qp_init_attr);
 	if (ret) {
 		log_fatal("rdma_create_ep: %s", strerror(errno));
-		raise(SIGINT);
+		/*raise(SIGINT);*/
 		exit(EXIT_FAILURE);
 	}
 	conn->rdma_cm_id = rdma_cm_id;
@@ -530,9 +455,6 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	case MASTER_TO_REPLICA_CONNECTION:
 		log_debug("Remote side accepted created a new MASTER_TO_REPLICA_CONNECTION");
 		conn->type = MASTER_TO_REPLICA_CONNECTION;
-		// conn->rdma_memory_regions =
-		//	mrpool_get_static_buffer(rdma_cm_id, sizeof(struct ru_rdma_buffer) *
-		//RU_REPLICA_NUM_SEGMENTS);
 		conn->rdma_memory_regions = mrpool_allocate_memory_region(channel->dynamic_pool, rdma_cm_id);
 		break;
 	case CLIENT_TO_SERVER_CONNECTION:
@@ -628,7 +550,6 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 
 void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_devname)
 {
-	int i;
 	channel->sockfd = 0;
 	if (ib_devname)
 		channel->context = get_rdma_device_context(ib_devname);
@@ -639,7 +560,7 @@ void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_de
 	if (channel->comp_channel == 0) {
 		log_fatal("building context reason follows:");
 		perror("Reason: \n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	channel->pd = ibv_alloc_pd(channel->context);
@@ -660,12 +581,12 @@ void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_de
 
 		assert(channel->spinning_num_th <= SPINNING_NUM_TH);
 
-		for (i = 0; i < channel->spinning_num_th; i++) {
+		for (int i = 0; i < channel->spinning_num_th; i++) {
 			pthread_mutex_init(&channel->spin_list_conn_lock[i], NULL);
 			channel->spin_list[i] = init_simple_concurrent_list();
 		}
 
-		for (i = 0; i < channel->spinning_num_th; i++) {
+		for (int i = 0; i < channel->spinning_num_th; i++) {
 			channel->spin_list[i] = init_simple_concurrent_list();
 			channel->spin_num[i] = 0;
 			sem_init(&channel->sem_spinning[i], 0, 0);
@@ -679,7 +600,7 @@ void crdma_init_generic_create_channel(struct channel_rdma *channel, char *ib_de
 	if (pthread_create(&channel->cq_poller_thread, NULL, poll_cq, channel) != 0) {
 		log_fatal("Failed to create poll_cq thread reason follows:");
 		perror("Reason: \n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -695,19 +616,6 @@ struct channel_rdma *crdma_client_create_channel(char *ib_devname)
 		channel->spinning_num_th = SPINNING_NUM_TH_CLI;
 
 	crdma_init_generic_create_channel(channel, ib_devname);
-
-	return channel;
-}
-
-struct channel_rdma *crdma_generic_create_channel(void)
-{
-	struct channel_rdma *channel;
-
-	channel = malloc(sizeof(*channel));
-	if (channel == NULL) {
-		perror("ERROR crdma_alloc_init_channel_rdma: memory problem, malloc failed\n");
-		exit(-1);
-	}
 
 	return channel;
 }
@@ -756,7 +664,7 @@ void ec_sig_handler(int signo)
 	sigaction(SIGINT, &sa, 0);
 }
 
-void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
+void zero_rendezvous_locations_l(volatile msg_header *msg, uint32_t length)
 {
 	assert(length % MESSAGE_SEGMENT_SIZE == 0);
 	uint32_t num_of_msg_headers = length / MESSAGE_SEGMENT_SIZE;
@@ -766,7 +674,7 @@ void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length)
 	}
 }
 
-void _zero_rendezvous_locations(msg_header *msg)
+void zero_rendezvous_locations(volatile msg_header *msg)
 {
 	/*for acks that fit entirely in a header payload_length and padding_and_tail_size could be
    * 0.
@@ -781,7 +689,7 @@ void _zero_rendezvous_locations(msg_header *msg)
 	else
 		msg_length = MESSAGE_SEGMENT_SIZE;
 
-	_zero_rendezvous_locations_l(msg, msg_length);
+	zero_rendezvous_locations_l(msg, msg_length);
 }
 
 uint32_t wait_for_payload_arrival(msg_header *hdr)
@@ -798,7 +706,7 @@ uint32_t wait_for_payload_arrival(msg_header *hdr)
 	return message_size;
 }
 
-void _update_rendezvous_location(connection_rdma *conn, int message_size)
+void update_rendezvous_location(connection_rdma *conn, uint32_t message_size)
 {
 	assert(message_size % MESSAGE_SEGMENT_SIZE == 0);
 
@@ -839,112 +747,6 @@ void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connect
 
 	free(conn);
 	DPRINT("\t*Destroyed RDMA connection successfully\n");
-}
-
-/* helper function to print the content of the async event */
-static void print_async_event(struct ibv_context *ctx, struct ibv_async_event *event)
-{
-	switch (event->event_type) {
-	/* QP events */
-	case IBV_EVENT_QP_FATAL:
-		printf("EVENT QP fatal event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_QP_REQ_ERR:
-		printf("EVENT QP Requestor error for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_QP_ACCESS_ERR:
-		printf("EVENT QP access error event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_COMM_EST:
-		printf("EVENT QP communication established event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_SQ_DRAINED:
-		printf("EVENT QP Send Queue drained event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_PATH_MIG:
-		printf("EVENT QP Path migration loaded event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_PATH_MIG_ERR:
-		printf("EVENT QP Path migration error event for QP with handle %p\n", event->element.qp);
-		break;
-	case IBV_EVENT_QP_LAST_WQE_REACHED:
-		printf("EVENT QP last WQE reached event for QP with handle %p\n", event->element.qp);
-		break;
-
-	/* CQ events */
-	case IBV_EVENT_CQ_ERR:
-		printf("EVENT CQ error for CQ with handle %p\n", event->element.cq);
-		break;
-
-	/* SRQ events */
-	case IBV_EVENT_SRQ_ERR:
-		printf("EVENT SRQ error for SRQ with handle %p\n", event->element.srq);
-		break;
-	case IBV_EVENT_SRQ_LIMIT_REACHED:
-		printf("EVENT SRQ limit reached event for SRQ with handle %p\n", event->element.srq);
-		break;
-
-	/* Port events */
-	case IBV_EVENT_PORT_ACTIVE:
-		printf("EVENT Port active event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_PORT_ERR:
-		printf("EVENT Port error event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_LID_CHANGE:
-		printf("EVENT LID change event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_PKEY_CHANGE:
-		printf("EVENT P_Key table change event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_GID_CHANGE:
-		printf("EVENT GID table change event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_SM_CHANGE:
-		printf("EVENT SM change event for port number %d\n", event->element.port_num);
-		break;
-	case IBV_EVENT_CLIENT_REREGISTER:
-		printf("EVENT Client reregister event for port number %d\n", event->element.port_num);
-		break;
-
-	/* RDMA device events */
-	case IBV_EVENT_DEVICE_FATAL:
-		printf("EVENT Fatal error event for device %s\n", ibv_get_device_name(ctx->device));
-		break;
-
-	default:
-		printf("EVENT Unknown event (%d)\n", event->event_type);
-	}
-}
-
-void rdma_thread_events_ctx(void *args)
-{
-	struct channel_rdma *channel;
-	int ret;
-	struct ibv_async_event event;
-	pthread_t self;
-	self = pthread_self();
-	pthread_setname_np(self, "rdma_events");
-
-	// printf("Thread Events CTX\n");fflush(stdout);
-
-	channel = (struct channel_rdma *)args;
-
-	while (1) {
-		// printf("Thread Events CTX\n");fflush(stdout);
-		/* wait for the next async event */
-		ret = ibv_get_async_event(channel->context, &event);
-		if (ret) {
-			fprintf(stderr, "EVENT Error, ibv_get_async_event() failed\n");
-			return;
-		}
-		/* print the event */
-		print_async_event(channel->context, &event);
-
-		/* ack the event */
-		ibv_ack_async_event(&event);
-	}
-	return;
 }
 
 void client_rdma_init_message_context(struct rdma_message_context *msg_ctx, struct msg_header *msg)
@@ -990,13 +792,11 @@ void *poll_cq(void *arg)
 	struct ibv_cq *cq;
 	struct ibv_wc wc[MAX_COMPLETION_ENTRIES];
 	void *ev_ctx;
-	int rc;
-	int i;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = 0;
 	sa.sa_handler = ec_sig_handler;
-	rc = sigaction(SIGINT, &sa, 0);
+	sigaction(SIGINT, &sa, 0);
 
 	pthread_setname_np(pthread_self(), "poll_cq thread");
 	channel = (struct channel_rdma *)arg;
@@ -1005,23 +805,23 @@ void *poll_cq(void *arg)
 		if (ibv_get_cq_event(channel->comp_channel, &cq, &ev_ctx) != 0) {
 			log_fatal("polling cq failure reason follows");
 			perror("Reason: \n");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		ibv_ack_cq_events(cq, 1);
 		if (ibv_req_notify_cq(cq, 0) != 0) {
 			perror("ERROR poll_cq: ibv_req_notify_cq\n");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		while (1) {
-			rc = ibv_poll_cq(cq, MAX_COMPLETION_ENTRIES, wc);
+			int rc = ibv_poll_cq(cq, MAX_COMPLETION_ENTRIES, wc);
 			if (rc < 0) {
 				log_fatal("poll of completion queue failed!");
 				exit(EXIT_FAILURE);
 			} else if (rc > 0) {
 				conn = (connection_rdma *)cq->cq_context;
 				assert(conn);
-				for (i = 0; i < rc; i++) {
+				for (int i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;
 
@@ -1048,7 +848,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 	struct ibv_wc *wc = &msg_ctx->wc;
 	struct connection_rdma *conn = (struct connection_rdma *)msg_ctx->args;
 	assert(LIBRARY_MODE == SERVER_MODE);
-	msg_header *msg;
 	if (wc->status == IBV_WC_SUCCESS) {
 		switch (wc->opcode) {
 		case IBV_WC_SEND:
@@ -1058,7 +857,7 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			// log_info("IBV_WC_RECV code id of connection %d", conn->idconn);
 			break;
 		case IBV_WC_RDMA_WRITE:
-			msg = msg_ctx->msg;
+			msg_header *msg = msg_ctx->msg;
 			if (msg) {
 				switch (msg->msg_type) {
 				/*server to server new school*/
@@ -1093,14 +892,14 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			break;
 		default:
 			log_fatal("FATAL unknown code");
-			exit(EXIT_FAILURE);
+			/*exit(EXIT_FAILURE);*/
 		}
 	} else {
 		/*error handling*/
 		log_fatal("conn type is %d %s\n", conn->type, ibv_wc_status_str(wc->status));
 		conn->status = CONNECTION_ERROR;
-		raise(SIGINT);
-		exit(KREON_FAILURE);
+		/*raise(SIGINT);*/
+		_exit(KREON_FAILURE);
 	}
 
 	free(msg_ctx);

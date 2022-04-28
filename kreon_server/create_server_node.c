@@ -2,7 +2,7 @@
 #include "metadata.h"
 #include "zk_utils.h"
 #include <log.h>
-#include <zookeeper.h>
+#include <zookeeper/zookeeper.h>
 uint8_t is_connected = 0;
 
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
@@ -34,7 +34,7 @@ int main(int argc, char *argv[])
 	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
 	/*init zookeeper connection*/
 	zhandle_t *zh = zookeeper_init(argv[1], zk_watcher, 15000, 0, 0, 0);
-	wait_for_value(&is_connected, 1);
+	field_spin_for_value(&is_connected, 1);
 	struct krm_server_name s_name;
 	strcpy(s_name.kreon_ds_hostname, argv[2]);
 	s_name.kreon_ds_hostname_length = strlen(s_name.kreon_ds_hostname);

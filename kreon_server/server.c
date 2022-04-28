@@ -55,12 +55,6 @@
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
 #define MAX_OUTSTANDING_REQUESTS (UTILS_QUEUE_CAPACITY / 2)
 
-extern char *DB_NO_SPILLING;
-
-typedef struct prefix_table {
-	char prefix[PREFIX_SIZE];
-} prefix_table;
-
 #define DS_CLIENT_QUEUE_SIZE (UTILS_QUEUE_CAPACITY / 2)
 
 struct ds_task_buffer_pool {
@@ -129,7 +123,7 @@ struct ds_root_server {
 /*root of everything*/
 static struct ds_root_server *root_server = NULL;
 
-static void handle_task(struct krm_server_desc *my_server, struct krm_work_task *task);
+static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_task *task);
 static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task);
 
 static void crdma_server_create_connection_inuse(struct connection_rdma *conn, struct channel_rdma *channel,
@@ -139,10 +133,9 @@ static void crdma_server_create_connection_inuse(struct connection_rdma *conn, s
 	memset(conn, 0, sizeof(struct connection_rdma));
 	conn->type = type;
 	conn->channel = channel;
-	return;
 }
 
-struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
+struct channel_rdma *ds_get_channel(struct krm_server_desc const *my_desc)
 {
 	return root_server->numa_servers[my_desc->root_server_id]->channel;
 }
@@ -152,7 +145,7 @@ struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc)
  *  */
 static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size, uint16_t msg_type)
 {
-	uint32_t reply_size = sizeof(msg_header) + payload_size + TU_TAIL_SIZE;
+	uint32_t reply_size = sizeof(struct msg_header) + payload_size + TU_TAIL_SIZE;
 	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
 
 	reply_msg->padding_and_tail_size = 0;
@@ -385,7 +378,7 @@ void *worker_thread_kernel(void *args)
 {
 	struct krm_work_task *job = NULL;
 	struct ds_worker_thread *worker;
-	const int spin_time_usec = globals_get_worker_spin_time_usec();
+	const size_t spin_time_usec = globals_get_worker_spin_time_usec();
 
 	worker = (struct ds_worker_thread *)args;
 	char name[16];
@@ -401,8 +394,8 @@ void *worker_thread_kernel(void *args)
 
 		if (!(job = utils_queue_pop(&worker->work_queue))) {
 			// Try for a few more usecs
-			struct timespec start, end;
-			int local_idle_time;
+			struct timespec start;
+			struct timespec end;
 			clock_gettime(CLOCK_MONOTONIC, &start);
 			while (1) {
 				// I could have a for loop with a few iterations to avoid constantly
@@ -410,7 +403,7 @@ void *worker_thread_kernel(void *args)
 				if ((job = utils_queue_pop(&worker->work_queue)))
 					break;
 				clock_gettime(CLOCK_MONOTONIC, &end);
-				local_idle_time = diff_timespec_usec(&start, &end);
+				size_t local_idle_time = diff_timespec_usec(&start, &end);
 				if (local_idle_time > spin_time_usec)
 					worker->idle_time = local_idle_time;
 				if (worker->status == IDLE_SLEEPING) {
@@ -428,7 +421,7 @@ void *worker_thread_kernel(void *args)
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
 
-			_zero_rendezvous_locations(job->msg);
+			zero_rendezvous_locations(job->msg);
 			__send_rdma_message(job->conn, job->reply_msg, NULL);
 			switch (job->task_type) {
 			case KRM_CLIENT_TASK:
@@ -780,7 +773,7 @@ static void *server_spinning_thread_kernel(void *args)
 				/* Set the new rendezvous point, be careful for the case that the rendezvous is outsize of the
 				 * rdma_memory_regions->remote_memory_buffer
 				 */
-				_update_rendezvous_location(conn, message_size);
+				update_rendezvous_location(conn, message_size);
 			} else if (recv == CONNECTION_PROPERTIES) {
 				message_size = wait_for_payload_arrival(hdr);
 				if (message_size == 0) {
@@ -802,8 +795,8 @@ static void *server_spinning_thread_kernel(void *args)
 					// Decrement spinning thread's connections and total connections
 					--channel->spin_num[channel->spinning_conn % channel->spinning_num_th];
 					--channel->spinning_conn;
-					_zero_rendezvous_locations(hdr);
-					_update_rendezvous_location(conn, message_size);
+					zero_rendezvous_locations(hdr);
+					update_rendezvous_location(conn, message_size);
 					close_and_free_RDMA_connection(channel, conn);
 					goto iterate_next_element;
 				} else {
@@ -886,7 +879,7 @@ static void wait_for_replication_completion_callback(struct rdma_message_context
 	return;
 }
 
-static int init_replica_connections(struct krm_server_desc *server, struct krm_work_task *task)
+static int init_replica_connections(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	while (1) {
 		switch (task->kreon_operation_status) {
@@ -1124,7 +1117,7 @@ static int init_replica_connections(struct krm_server_desc *server, struct krm_w
 				/* Wait for the completion of the rdma operation above*/
 				log_debug("Waiting for RDMA completion of the SEGMENT with server: %s",
 					  r_desc->region->backups[i].kreon_ds_hostname);
-				wait_for_value(&context->num_of_replies_needed, 0);
+				field_spin_for_value(&context->num_of_replies_needed, 0);
 				task->msg_ctx[0].__is_initialized = 0;
 				task->msg_ctx[0].on_completion_callback = NULL;
 				// destroy context
@@ -1216,10 +1209,9 @@ static void krm_leave_kreon(struct krm_region_desc *r_desc)
 	if (r_desc->region->num_of_backup == 0)
 		return;
 	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
-	return;
 }
 
-static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task *task)
+static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	//############## fsm state logic follows ###################
 	while (1) {
@@ -1247,11 +1239,10 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 					task->kreon_operation_status = FLUSH_REPLICA_BUFFERS;
 				} else
 					task->kreon_operation_status = REPLICATE;
-				break;
-			} else {
+			} else
 				task->kreon_operation_status = TASK_COMPLETE;
-				break;
-			}
+
+			break;
 		}
 
 		case FLUSH_REPLICA_BUFFERS: {
@@ -1303,7 +1294,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 
 			if (task->seg_id_to_flush != 0) {
 				log_fatal("No appropriate remote segment id found for flush, what?");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			/*sent flush command to all motherfuckers*/
 			task->kreon_operation_status = SEGMENT_BARRIER;
@@ -1324,9 +1315,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 					return;
 				}
 			}
-			// pthread_mutex_lock(&task->r_desc->region_lock);
-			// task->r_desc->region_halted = 1;
-			// pthread_mutex_unlock(&task->r_desc->region_lock);
 			task->last_replica_to_ack = 0;
 			task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 			break;
@@ -1472,8 +1460,6 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 						struct connection_rdma *r_conn = sc_get_data_conn(
 							server, r_desc->region->backups[i].kreon_ds_hostname);
 
-						int ret;
-
 						client_rdma_init_message_context(&task->msg_ctx[i], NULL);
 
 						task->msg_ctx[i].args = task;
@@ -1483,7 +1469,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 							&r_desc->m_state->r_buf[i].segment[j].replicated_bytes;
 						task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 						while (1) {
-							ret = rdma_post_write(
+							int ret = rdma_post_write(
 								r_conn->rdma_cm_id, &task->msg_ctx[i], task->key,
 								task->kv_size,
 								task->conn->rdma_memory_regions->remote_memory_region,
@@ -1526,7 +1512,7 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 				    task->msg_ctx[i].wc.status != IBV_WC_WR_FLUSH_ERR) {
 					log_fatal("Replication RDMA write error: %s",
 						  ibv_wc_status_str(task->msg_ctx[i].wc.status));
-					exit(EXIT_FAILURE);
+					_exit(EXIT_FAILURE);
 				}
 
 				/*count bytes replicated for this segment*/
@@ -1560,30 +1546,28 @@ static void insert_kv_pair(struct krm_server_desc *server, struct krm_work_task 
 static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t dev_offt, int fd)
 {
 	ssize_t total_bytes_written = 0;
-	ssize_t bytes_written = 0;
 	while (total_bytes_written < num_bytes) {
-		bytes_written = pwrite(fd, buf, num_bytes - total_bytes_written, dev_offt + total_bytes_written);
+		ssize_t bytes_written =
+			pwrite(fd, buf, num_bytes - total_bytes_written, dev_offt + total_bytes_written);
 		if (bytes_written == -1) {
 			log_fatal("Failed to writed segment for leaf nodes reason follows");
 			perror("Reason");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		total_bytes_written += bytes_written;
 	}
 	return 1;
 }
 
-static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	uint32_t key_length = 0;
-
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
 		task->key = (msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
 		task->value = (msg_put_value *)((uint64_t)task->key + sizeof(msg_put_key) + task->key->key_size);
-		key_length = task->key->key_size;
+		uint32_t key_length = task->key->key_size;
 		assert(key_length != 0);
 		struct krm_region_desc *r_desc = krm_get_region(mydesc, task->key->key, task->key->key_size);
 
@@ -1598,7 +1582,7 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 			if (find_kv_offt(r_desc->db, &task->key, &level_id)) {
 				log_warn("Key %s in update_if_exists for region %s not found!", task->key,
 					 r_desc->region->id);
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 		}
 	}
@@ -1630,12 +1614,10 @@ static void execute_put_req(struct krm_server_desc *mydesc, struct krm_work_task
 	}
 }
 
-static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
-	uint32_t actual_reply_size = 0;
-	uint32_t padding = 0;
 	assert(task->msg->msg_type == GET_REQUEST);
 	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
 	int level_id;
@@ -1645,7 +1627,7 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 
 	if (r_desc == NULL) {
 		log_fatal("Region not found for key %s", get_req->key);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	task->kreon_operation_status = TASK_GET_KEY;
@@ -1676,7 +1658,7 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 			L.addr = bt_get_real_address(kv_offt);
 		else
 			L = bt_get_kv_log_address(r_desc->db->db_desc, kv_offt);
-		char *value_p = L.addr + *(uint32_t *)L.addr + sizeof(uint32_t);
+		char *value_p = (char *)L.addr + *(uint32_t *)L.addr + sizeof(uint32_t);
 		if (get_req->offset > *(uint32_t *)value_p) {
 			get_rep->offset_too_large = 1;
 			get_rep->value_size = 0;
@@ -1690,7 +1672,7 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 			goto exit;
 		}
 		uint32_t value_bytes_remaining = *(uint32_t *)value_p - get_req->offset;
-		uint32_t bytes_to_read;
+		uint32_t bytes_to_read = 0;
 		if (get_req->bytes_to_read <= value_bytes_remaining) {
 			bytes_to_read = get_req->bytes_to_read;
 			get_rep->bytes_remaining = *(uint32_t *)value_p - (get_req->offset + bytes_to_read);
@@ -1707,21 +1689,17 @@ static void execute_get_req(struct krm_server_desc *mydesc, struct krm_work_task
 exit:
 	if (L.in_tail)
 		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
+
 	/*piggyback info for use with the client*/
 	/*finally fix the header*/
 	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
-	actual_reply_size = sizeof(msg_header) + payload_length + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
-
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	msg_multi_get_req *multi_get;
 	scannerHandle *sc;
@@ -1735,7 +1713,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 
 	if (r_desc == NULL) {
 		log_fatal("Region not found for key size %u:%s", multi_get->seek_key_size, multi_get->seek_key);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_MULTIGET;
 	task->r_desc = r_desc;
@@ -1778,7 +1756,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 			value = (msg_value *)&zero_value;
 		else
 			// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
-			value = (struct msg_value *)(kv_pointer + key->size + sizeof(struct msg_key));
+			value = (struct msg_value *)((char *)kv_pointer + key->size + sizeof(struct msg_key));
 		int rc = msg_push_to_multiget_buf(key, value, buf);
 		done_with_kv_pointer(sc);
 
@@ -1795,7 +1773,8 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 					value = (msg_value *)&zero_value;
 				else
 					// value = (struct msg_value *)(getValuePtr(sc) - sizeof(uint32_t));
-					value = (struct msg_value *)(kv_pointer + key->size + sizeof(struct msg_key));
+					value = (struct msg_value *)((char *)kv_pointer + key->size +
+								     sizeof(struct msg_key));
 
 				rc = msg_push_to_multiget_buf(key, value, buf);
 				done_with_kv_pointer(sc);
@@ -1835,7 +1814,7 @@ static void execute_multi_get_req(struct krm_server_desc *mydesc, struct krm_wor
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -1879,7 +1858,7 @@ static void execute_delete_req(struct krm_server_desc *mydesc, struct krm_work_t
 	}
 }
 
-static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -1891,7 +1870,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	struct segment_header *seg = (struct segment_header *)r_desc->r_state->seg[flush_req->log_buffer_id].mr->addr;
@@ -1926,7 +1905,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 			// This op should follow after a partial write
 			if (flush_req->end_of_log - r_desc->db->db_desc->KV_log_size >= SEGMENT_SIZE) {
 				log_fatal("Corruption");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			exists = 1;
 		} else if (r_desc->r_state->next_segment_id_to_flush != flush_req->segment_id) {
@@ -1935,7 +1914,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 				  r_desc->r_state->next_segment_id_to_flush, flush_req->segment_id);
 			log_fatal("last segment in database is %llu", last_log_segment->segment_id);
 			assert(0);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		//log_info("Flushing segment %llu padding is %llu primary offset %llu local diff is %llu ",
@@ -1988,7 +1967,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 				    SEGMENT_SIZE - sizeof(struct segment_header),
 				    ((uint64_t)last_log_segment - MAPPED) + sizeof(struct segment_header), FD)) {
 				log_fatal("Failed to write segment with explicit I/O");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 		}
 
@@ -2012,7 +1991,7 @@ static void execute_flush_command_req(struct krm_server_desc *mydesc, struct krm
 	// log_info("Responded to server!");
 }
 
-static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2083,7 +2062,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc *mydesc, struct kr
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2147,7 +2126,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc *mydesc,
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
@@ -2158,7 +2137,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, f_req->region_key, f_req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", f_req->region_key);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (f_req->seg_id > 0)
 		if (f_req->seg_id !=
@@ -2179,7 +2158,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 		/*translate root*/
 		if (!f_req->root_w && !f_req->root_r) {
 			log_fatal("Both roots can't be NULL");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		struct krm_segment_entry *index_entry;
 		uint64_t primary_segment_offt;
@@ -2191,7 +2170,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 			if (index_entry == NULL) {
 				log_fatal("Cannot translate root_w for primary's segment %llu of db %s",
 					  primary_segment_offt, r_desc->db->db_desc->db_name);
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			r_desc->db->db_desc->levels[f_req->level_id].root_w[f_req->tree_id] =
 				(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
@@ -2212,8 +2191,8 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 			if (index_entry == NULL) {
 				log_fatal("Cannot translate root_r for primary's segment %llu of db %s",
 					  primary_segment_offt, r_desc->db->db_desc->db_name);
-				raise(SIGINT);
-				exit(EXIT_FAILURE);
+				/*raise(SIGINT);*/
+				_exit(EXIT_FAILURE);
 			}
 			r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] =
 				(struct node_header *)(MAPPED + index_entry->my_seg + primary_segment_offt);
@@ -2234,7 +2213,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 		free(r_desc->r_state->index_buffers[f_req->level_id][0]->addr);
 		if (rdma_dereg_mr(r_desc->r_state->index_buffers[f_req->level_id][0])) {
 			log_fatal("Failed to deregister rdma buffer");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		r_desc->r_state->index_buffers[f_req->level_id][0] = NULL;
 		if (f_req->level_id > 1) {
@@ -2273,14 +2252,6 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 			HASH_DEL(r_desc->replica_index_map[f_req->level_id], current);
 			free(current);
 		}
-		/*
-			if (fsync(FD) != 0) {
-				log_fatal("Failed to sync file!");
-				perror("Reason:\n");
-				exit(EXIT_FAILURE);
-			}
-			snapshot(r_desc->db->volume_desc);
-			*/
 	}
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -2305,7 +2276,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc *mydesc, stru
 	// f_req->seg_id);
 }
 
-static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc);
 	assert(task->msg->msg_type == TEST_REQUEST);
@@ -2330,19 +2301,19 @@ static void execute_test_req(struct krm_server_desc *mydesc, struct krm_work_tas
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-void execute_test_req_fetch_payload(struct krm_server_desc *mydesc, struct krm_work_task *task)
+void execute_test_req_fetch_payload(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	(void)mydesc;
 	(void)task;
 	assert(task->msg->msg_type == TEST_REQUEST_FETCH_PAYLOAD);
 	log_fatal("This message is not supported yet...");
-	exit(EXIT_FAILURE);
+	_exit(EXIT_FAILURE);
 }
 
 /** Function that acks a NO_OP operation. Client spins for server's reply.
  *  This operation happens only when there is no space in server's recv circular buffer for a client to
  * allocate and send its msg */
-void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
+void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc && task);
 	assert(task->msg->msg_type == NO_OP);
@@ -2359,7 +2330,7 @@ void execute_no_op(struct krm_server_desc *mydesc, struct krm_work_task *task)
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-typedef void execute_task(struct krm_server_desc *mydesc, struct krm_work_task *task);
+typedef void execute_task(struct krm_server_desc const *mydesc, struct krm_work_task *task);
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
@@ -2383,7 +2354,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
    * behind this
    * */
 uint64_t requests_handled = 0;
-static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *task)
+static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	enum message_type type;
 	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)
@@ -2393,72 +2364,11 @@ static void handle_task(struct krm_server_desc *mydesc, struct krm_work_task *ta
 
 	task_dispatcher[type](mydesc, task);
 
-	// free_rdma_received_message(rdma_conn, data_message);
-	// assert(reply_data_message->request_message_local_addr);
 	if (task->kreon_operation_status == TASK_COMPLETE) {
 		stats_update(task->server_id, task->thread_id);
 		if (task->msg->msg_type == PUT_REQUEST)
 			__sync_fetch_and_add(&requests_handled, 1);
 	}
-}
-
-/*helper functions*/
-void _str_split(char *a_str, const char a_delim, uint64_t **core_vector, uint32_t *num_of_cores)
-{
-	// DPRINT("%s\n",a_str);
-	char *tmp = alloca(128);
-	char **result = 0;
-	size_t count = 0;
-
-	char *last_comma = 0;
-
-	char delim[2];
-	int i;
-
-	strcpy(tmp, a_str);
-	delim[0] = a_delim;
-	delim[1] = 0;
-
-	/* Count how many elements will be extracted. */
-	while (*tmp) {
-		if (a_delim == *tmp) {
-			count++;
-			last_comma = tmp;
-		}
-		tmp++;
-	}
-
-	/* Add space for trailing token. */
-	count += last_comma < (a_str + strlen(a_str) - 1);
-	count++;
-	/* Add space for terminating null string so caller
-knows where the list of returned strings ends. */
-
-	result = malloc(sizeof(char *) * count);
-
-	*num_of_cores = count - 1;
-	*core_vector = (uint64_t *)malloc(sizeof(uint64_t) * count);
-	i = 0;
-
-	if (result) {
-		size_t idx = 0;
-		char *token = strtok(a_str, delim);
-
-		while (token) {
-			assert(idx < count);
-			*(result + idx++) = strdup(token);
-			if (*token != 0x00) {
-				(*core_vector)[i] = strtol(token, (char **)NULL, 10);
-				// DPRINT("Core id %d = %llu\n",i,(LLU)(*core_vector)[i]);
-				++i;
-			}
-			token = strtok(0, delim);
-		}
-		assert(idx == count - 1);
-		*(result + idx) = 0;
-		free(result);
-	}
-	return;
 }
 
 sem_t exit_main;
@@ -2485,7 +2395,7 @@ int main(int argc, char *argv[])
 			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
 			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
 			argc);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	// argv[0] program name don't care
 	// dev name
@@ -2514,7 +2424,7 @@ int main(int argc, char *argv[])
 		globals_set_send_index(0);
 	else {
 		log_fatal("what do you want send or build index?");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	++next_argv;
 

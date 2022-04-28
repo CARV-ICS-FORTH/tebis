@@ -1,9 +1,9 @@
 #pragma once
-#include <stdint.h>
-#include <pthread.h>
-#include "../kreon_server/metadata.h"
-#include "../kreon_server/conf.h"
 #include "../kreon_rdma/rdma.h"
+#include "../kreon_server/conf.h"
+#include "../kreon_server/metadata.h"
+#include <pthread.h>
+#include <stdint.h>
 
 struct cu_lamport_counter {
 	uint64_t c1;
@@ -36,6 +36,5 @@ struct cu_regions {
 
 uint8_t cu_init(char *zookeeper_host);
 struct cu_region_desc *cu_get_region(char *key, uint32_t key_size);
-struct cu_region_desc *cu_get_first_region(void);
 connection_rdma *cu_get_conn_for_region(struct cu_region_desc *r_desc, uint64_t seed);
 void cu_close_open_connections(void);

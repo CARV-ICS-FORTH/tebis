@@ -31,6 +31,17 @@ iwyu-report:
         - ./check-iwyu-output.py
     needs: []
 
+CPD:
+    stage: build
+    script:
+        - echo -e "\e[0Ksection_start:`date +%s`:CPD_tebis_server_section\r\e[0K CPD lib"
+        - python3 ./scripts/CI/cpd_output.py 100 ./kreon_server c
+        - echo -e "\e[0Ksection_end:`date +%s`:CPD_tebis_server_section\r\e[0K"
+        - echo -e "\e[0Ksection_start:`date +%s`:CPD_tebis_client_section[collapsed=true]\r\e[0K CPD tests"
+        - python3 ./scripts/CI/cpd_output.py 100 ./kreon_rdma_client c
+        - echo -e "\e[0Ksection_end:`date +%s`:CPD_tebis_client_section\r\e[0K"
+    needs: []
+
 cppcheck:
   stage: build
   script:

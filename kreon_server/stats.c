@@ -1,13 +1,14 @@
 #define _GNU_SOURCE
 #include "stats.h"
 
+#include <assert.h>
+#include <inttypes.h>
+#include <log.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <pthread.h>
-#include <inttypes.h>
-#include <assert.h>
 
 #define OUT_FILE "ops.txt"
 
@@ -62,7 +63,7 @@ static void *stats_reporter_thread(void *args)
 	uint32_t ops_at_last_second = sum_operations();
 	uint32_t ops_at_curr_second;
 	struct timespec rem;
-	size_t seconds_passed = 0;
+	uint64_t seconds_passed = 0;
 
 	while (!sum_operations())
 		nanosleep(&STATS_SLEEP_DURATION_TIMESPEC, &rem);
@@ -72,14 +73,8 @@ static void *stats_reporter_thread(void *args)
 		seconds_passed += STATS_SLEEP_DURATION_TIMESPEC.tv_sec;
 
 		ops_at_curr_second = sum_operations();
-#ifdef DEBUG_RESET_RENDEZVOUS
-		printf("%lu Sec %u Detected %u Completed %.2f Ops/sec\n", seconds_passed, detected_operations,
-		       ops_at_curr_second,
-		       (ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
-#else
-		printf("%lu Sec %u Completed %.2f Ops/sec\n", seconds_passed, ops_at_curr_second,
-		       (ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
-#endif /* DEBUG_RESET_RENDEZVOUS */
+		log_info("%lu Sec %u Completed %.2f Ops/sec\n", seconds_passed, ops_at_curr_second,
+			 (ops_at_curr_second - ops_at_last_second) / (double)STATS_SLEEP_DURATION_TIMESPEC.tv_sec);
 		ops_at_last_second = ops_at_curr_second;
 	} while (!stat_reporter_thread_exit);
 

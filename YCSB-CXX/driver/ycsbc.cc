@@ -6,29 +6,29 @@
 //  Copyright (c) 2014 Jinglei Ren <jinglei@ren.systems>.
 //
 
-#include <cstring>
-#include <string>
-#include <iostream>
-#include <vector>
-#include <future>
 #include <chrono>
-#include <thread>
-#include <sstream>
+#include <cstring>
 #include <fstream>
-#include <unordered_map>
+#include <future>
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <sys/time.h>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 
 #ifdef MULTI_CLIENT
-#include <zookeeper.h>
-#include <zookeeper_log.h>
-#include <zookeeper.jute.h>
 #include <mutex>
+#include <zookeeper/zookeeper.h>
+#include <zookeeper/zookeeper.jute.h>
+#include <zookeeper/zookeeper_log.h>
 #endif
 
-#include "utils.h"
-#include "timer.h"
 #include "client.h"
 #include "core_workload.h"
+#include "timer.h"
+#include "utils.h"
 //#define COMPUTE_TAIL_ASYNC
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 const char *Op2Str[] = { "LOAD", "READ", "UPDATE", "INSERT", "SCAN", "READMODIFYWRITE" };

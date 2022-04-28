@@ -52,14 +52,14 @@ uint8_t krc_exists(uint32_t key_size, void *key);
 krc_ret_code krc_delete(uint32_t key_size, void *key);
 
 /*scanner API*/
-krc_scannerp krc_scan_init(uint32_t prefetch_entries, uint32_t prefetch_mem_size_hint);
-void krc_scan_set_start(krc_scannerp sc, uint32_t start_key_size, void *start_key, krc_seek_mode seek_mode);
-void krc_scan_set_stop(krc_scannerp sc, uint32_t stop_key_size, void *stop_key, krc_seek_mode seek_mode);
-void krc_scan_set_prefix_filter(krc_scannerp sc, uint32_t prefix_size, void *prefix);
-void krc_scan_fetch_keys_only(krc_scannerp sc);
-uint8_t krc_scan_get_next(krc_scannerp sc, char **key, size_t *keySize, char **value, size_t *valueSize);
-uint8_t krc_scan_is_valid(krc_scannerp sc);
-void krc_scan_close(krc_scannerp sc);
+krc_scannerp krc_scan_init(uint32_t prefetch_num_entries, uint32_t prefetch_mem_size_hint);
+void krc_scan_set_start(krc_scannerp sp, uint32_t start_key_size, void *start_key, krc_seek_mode seek_mode);
+void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, krc_seek_mode seek_mode);
+void krc_scan_set_prefix_filter(krc_scannerp sp, uint32_t prefix_size, void *prefix);
+void krc_scan_fetch_keys_only(krc_scannerp sp);
+uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **value, size_t *valueSize);
+uint8_t krc_scan_is_valid(krc_scannerp sp);
+void krc_scan_close(krc_scannerp sp);
 
 /*asynchronous staff*/
 uint8_t krc_start_async_thread(void);

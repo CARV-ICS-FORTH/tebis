@@ -185,30 +185,25 @@ exit:
 
 void sc_free_rpc_pair(struct sc_msg_pair *p)
 {
-	uint32_t size;
-	msg_header *request;
-	msg_header *reply;
-	request = p->request;
-	reply = p->reply;
+	msg_header *request = p->request;
+	msg_header *reply = p->reply;
 	assert(request->reply_length_in_recv_buffer != 0);
-	_zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
+	zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply,
 					request->reply_length_in_recv_buffer);
 
-	if (request->payload_length == 0) {
-		size = MESSAGE_SEGMENT_SIZE;
-	} else {
+	uint32_t size = MESSAGE_SEGMENT_SIZE;
+	if (request->payload_length)
 		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
-		assert(size % MESSAGE_SEGMENT_SIZE == 0);
-	}
+
+	assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
-	return;
 }
 
-extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
-				  int *zk_rc);
+extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,
+				  struct krm_server_name *dst, int *zk_rc);
 
-static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname,
+static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
 	struct sc_conn_per_server *cps = NULL;
@@ -225,7 +220,7 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 			int rc = krm_zk_get_server_name(hostname, mydesc, &cps->server, NULL);
 			if (rc) {
 				log_fatal("Failed to refresh info for server %s", hostname);
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			char *IP = cps->server.RDMA_IP_addr;
 			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(mydesc), &IP, 1,
@@ -241,7 +236,7 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 	return cps->conn;
 }
 
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname)
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname)
 {
 	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
 }
