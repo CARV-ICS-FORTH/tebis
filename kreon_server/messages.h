@@ -12,7 +12,6 @@
 #include <time.h>
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
-
 #define NUMBER_OF_TASKS 11
 
 enum message_type {
@@ -168,7 +167,7 @@ struct s2s_msg_get_log_buffer_req {
 
 struct s2s_msg_get_log_buffer_rep {
 	uint32_t status;
-	struct ibv_mr mr[MAX_REPLICA_INDEX_BUFFERS];
+	struct ibv_mr mr;
 	int num_buffers;
 };
 
@@ -202,7 +201,7 @@ struct s2s_msg_replica_index_get_buffer_req {
 
 struct s2s_msg_replica_index_get_buffer_rep {
 	uint32_t status;
-	struct ibv_mr mr[MAX_REPLICA_INDEX_BUFFERS];
+	struct ibv_mr mr;
 	int num_buffers;
 };
 

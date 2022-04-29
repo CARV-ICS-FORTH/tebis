@@ -166,7 +166,7 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		struct s2s_msg_replica_index_get_buffer_rep *g_rep =
 			(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
 
-		r_desc->remote_mem_buf[i][level_id] = g_rep->mr[0];
+		r_desc->remote_mem_buf[i][level_id] = g_rep->mr;
 		sc_free_rpc_pair(&rpc_pair);
 		memset(&rpc_pair, 0x00, sizeof(struct sc_msg_pair));
 	}
@@ -662,7 +662,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 										sizeof(struct msg_header));
 
 			for (int j = 0; j < MAX_REPLICA_INDEX_BUFFERS; j++) {
-				task->remote_mem_buf[task->replica_id_cnt][j] = g_rep->mr[j];
+				task->remote_mem_buf[task->replica_id_cnt][j] = g_rep->mr;
 			}
 			sc_free_rpc_pair(&task->rpc[task->replica_id_cnt][0].rdma_buf);
 			memset(&task->rpc[task->replica_id_cnt][0].rdma_buf, 0x00, sizeof(struct sc_msg_pair));

@@ -10,6 +10,8 @@
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
 #include <stdint.h>
+#include <stdlib.h>
+const uint32_t S2S_MSG_SIZE = 256;
 
 struct sc_conn_per_server {
 	uint64_t hash_key;
@@ -37,7 +39,6 @@ static void fill_request_msg(connection_rdma *conn, struct msg_header *request, 
 	request->reply_length_in_recv_buffer =
 		sizeof(msg_header) + reply->payload_length + reply->padding_and_tail_size;
 	set_receive_field(request, TU_RDMA_REGULAR_MSG);
-	request->receive = TU_RDMA_REGULAR_MSG;
 }
 
 static void fill_reply_msg(connection_rdma *conn, struct msg_header *reply, uint32_t reply_size, uint32_t reply_padding,
@@ -56,7 +57,6 @@ static void fill_reply_msg(connection_rdma *conn, struct msg_header *reply, uint
 	reply->reply_length_in_recv_buffer = UINT32_MAX;
 	reply->triggering_msg_offset_in_send_buffer = UINT32_MAX;
 	set_receive_field(reply, 0);
-	reply->receive = 0;
 }
 
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
@@ -69,24 +69,30 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 	rep.conn = conn;
 	/*calculate the sizes for both request and reply*/
 	/*request part*/
-	uint32_t actual_request_size = MESSAGE_SEGMENT_SIZE;
+	uint32_t actual_request_size = S2S_MSG_SIZE;
 	uint32_t request_padding = 0;
 	if (request_size > 0) {
 		actual_request_size = TU_HEADER_SIZE + request_size + TU_TAIL_SIZE;
-		if (actual_request_size % MESSAGE_SEGMENT_SIZE != 0) {
-			request_padding = (MESSAGE_SEGMENT_SIZE - (actual_request_size % MESSAGE_SEGMENT_SIZE));
+		if (actual_request_size % S2S_MSG_SIZE != 0) {
+			request_padding = (S2S_MSG_SIZE - (actual_request_size % S2S_MSG_SIZE));
 			actual_request_size += request_padding;
 		}
 	}
 	/*reply part*/
-	uint32_t actual_reply_size = MESSAGE_SEGMENT_SIZE;
+	uint32_t actual_reply_size = S2S_MSG_SIZE;
 	uint32_t reply_padding = 0;
 	if (reply_size > 0) {
 		actual_reply_size = TU_HEADER_SIZE + reply_size + TU_TAIL_SIZE;
-		if (actual_reply_size % MESSAGE_SEGMENT_SIZE != 0) {
-			reply_padding = (MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE));
+		if (actual_reply_size % S2S_MSG_SIZE != 0) {
+			reply_padding = (S2S_MSG_SIZE - (actual_reply_size % S2S_MSG_SIZE));
 			actual_reply_size += reply_padding;
 		}
+	}
+
+	if (actual_reply_size != S2S_MSG_SIZE || actual_request_size != S2S_MSG_SIZE) {
+		log_fatal("Cant allocate a msg for s2s communication larger thant S2S_MSG_size = %lu", S2S_MSG_SIZE);
+		assert(0);
+		_exit(EXIT_FAILURE);
 	}
 
 	pthread_mutex_lock(&conn->buffer_lock);

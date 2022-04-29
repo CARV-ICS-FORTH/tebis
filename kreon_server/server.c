@@ -1036,7 +1036,7 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 						r_desc->m_state->r_buf[i].segment[j].start = seg_offt;
 						seg_offt += SEGMENT_SIZE;
 						r_desc->m_state->r_buf[i].segment[j].end = seg_offt;
-						r_desc->m_state->r_buf[i].segment[j].mr = rep->mr[j];
+						r_desc->m_state->r_buf[i].segment[j].mr = rep->mr;
 						//log_info("Remote memory for server segment [%u][%u] = %llu key %lu", i,
 						//	 j, r_desc->m_state->r_buf[i].segment[j].mr.addr,
 						//	 r_desc->m_state->r_buf[i].segment[j].mr.rkey);
@@ -2025,7 +2025,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 	rep->status = KREON_SUCCESS;
 	rep->num_buffers = get_log->num_buffers;
 	for (int i = 0; i < rep->num_buffers; i++) {
-		rep->mr[i] = *r_desc->r_state->seg[i].mr;
+		rep->mr = *r_desc->r_state->seg[i].mr;
 	}
 
 	/*piggyback info for use with the client*/
@@ -2081,7 +2081,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	g_rep->status = KREON_SUCCESS;
 	g_rep->num_buffers = g_req->num_buffers;
 	for (int i = 0; i < g_rep->num_buffers; i++)
-		g_rep->mr[i] = *r_desc->r_state->index_buffers[g_req->level_id][i];
+		g_rep->mr = *r_desc->r_state->index_buffers[g_req->level_id][i];
 
 	// log_info("REPLICA: DONE registering %d buffer for index transfer for
 	// region %s", g_rep->num_buffers,
