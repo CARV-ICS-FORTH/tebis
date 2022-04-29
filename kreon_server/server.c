@@ -964,8 +964,9 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 
 					r_desc->m_state->r_buf[i].p = sc_allocate_rpc_pair(
 						conn,
-						sizeof(struct msg_get_log_buffer_req) + r_desc->region->min_key_size,
-						sizeof(struct msg_get_log_buffer_rep) +
+						sizeof(struct s2s_msg_get_log_buffer_req) +
+							r_desc->region->min_key_size,
+						sizeof(struct s2s_msg_get_log_buffer_rep) +
 							(RU_REPLICA_NUM_SEGMENTS * sizeof(struct ibv_mr)),
 						GET_LOG_BUFFER_REQ);
 
@@ -985,9 +986,9 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 										  rep_header->padding_and_tail_size;
 					/*time to send the message*/
 					req_header->session_id = (uint64_t)r_desc->region;
-					struct msg_get_log_buffer_req *g_req =
-						(struct msg_get_log_buffer_req *)((uint64_t)req_header +
-										  sizeof(struct msg_header));
+					struct s2s_msg_get_log_buffer_req *g_req =
+						(struct s2s_msg_get_log_buffer_req *)((uint64_t)req_header +
+										      sizeof(struct msg_header));
 					g_req->num_buffers = RU_REPLICA_NUM_SEGMENTS;
 					g_req->buffer_size = SEGMENT_SIZE;
 					g_req->region_key_size = r_desc->region->min_key_size;
@@ -1019,10 +1020,10 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 					if (tail != TU_RDMA_REGULAR_MSG)
 						continue;
 
-					struct msg_get_log_buffer_rep *rep =
-						(struct msg_get_log_buffer_rep *)(((uint64_t)r_desc->m_state->r_buf[i]
-											   .p.reply) +
-										  sizeof(struct msg_header));
+					struct s2s_msg_get_log_buffer_rep *rep =
+						(struct s2s_msg_get_log_buffer_rep
+							 *)(((uint64_t)r_desc->m_state->r_buf[i].p.reply) +
+							    sizeof(struct msg_header));
 					assert(rep->status == KREON_SUCCESS);
 
 					r_desc->m_state->r_buf[i].segment_size = SEGMENT_SIZE;
@@ -1320,8 +1321,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 				    RU_BUFFER_UNINITIALIZED) {
 					r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 					uint32_t req_size =
-						sizeof(struct msg_flush_cmd_req) + r_desc->region->min_key_size;
-					uint32_t rep_size = sizeof(struct msg_flush_cmd_rep);
+						sizeof(struct s2s_msg_flush_cmd_req) + r_desc->region->min_key_size;
+					uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
 					r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].flush_cmd =
 						sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
@@ -1347,9 +1348,9 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 										  rep_header->padding_and_tail_size;
 					/*time to send the message*/
 					req_header->session_id = (uint64_t)task->r_desc->region;
-					struct msg_flush_cmd_req *f_req =
-						(struct msg_flush_cmd_req *)((uint64_t)req_header +
-									     sizeof(struct msg_header));
+					struct s2s_msg_flush_cmd_req *f_req =
+						(struct s2s_msg_flush_cmd_req *)((uint64_t)req_header +
+										 sizeof(struct msg_header));
 
 					/*where primary has stored its segment*/
 					f_req->is_partial = 0;
@@ -1850,8 +1851,8 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
 	// log_info("Master orders a flush, obey your master!");
-	struct msg_flush_cmd_req *flush_req =
-		(struct msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+	struct s2s_msg_flush_cmd_req *flush_req =
+		(struct s2s_msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
 	if (r_desc->r_state == NULL) {
@@ -1964,11 +1965,11 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	struct msg_flush_cmd_rep *flush_rep =
-		(struct msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	struct s2s_msg_flush_cmd_rep *flush_rep =
+		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = KREON_SUCCESS;
 
-	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_flush_cmd_rep), FLUSH_COMMAND_REP);
+	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("Responded to server!");
@@ -1978,8 +1979,8 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 {
 	void *addr;
 	assert(task->msg->msg_type == GET_LOG_BUFFER_REQ);
-	struct msg_get_log_buffer_req *get_log =
-		(struct msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+	struct s2s_msg_get_log_buffer_req *get_log =
+		(struct s2s_msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_log->region_key, get_log->region_key_size);
 	if (r_desc == NULL) {
@@ -2019,8 +2020,8 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   task->msg->offset_reply_in_recv_buffer);
-	struct msg_get_log_buffer_rep *rep =
-		(struct msg_get_log_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	struct s2s_msg_get_log_buffer_rep *rep =
+		(struct s2s_msg_get_log_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	rep->status = KREON_SUCCESS;
 	rep->num_buffers = get_log->num_buffers;
 	for (int i = 0; i < rep->num_buffers; i++) {
@@ -2029,7 +2030,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 
 	/*piggyback info for use with the client*/
 	fill_reply_msg(task->reply_msg, task,
-		       sizeof(struct msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr)),
+		       sizeof(struct s2s_msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr)),
 		       GET_LOG_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	log_debug("Region master wants a log buffer...DONE");
@@ -2039,8 +2040,8 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
-	struct msg_replica_index_get_buffer_req *g_req =
-		(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+	struct s2s_msg_replica_index_get_buffer_req *g_req =
+		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, g_req->region_key, g_req->region_key_size);
 	if (r_desc == NULL) {
@@ -2075,8 +2076,8 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	struct msg_replica_index_get_buffer_rep *g_rep =
-		(struct msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	struct s2s_msg_replica_index_get_buffer_rep *g_rep =
+		(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	g_rep->status = KREON_SUCCESS;
 	g_rep->num_buffers = g_req->num_buffers;
 	for (int i = 0; i < g_rep->num_buffers; i++)
@@ -2085,7 +2086,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	// log_info("REPLICA: DONE registering %d buffer for index transfer for
 	// region %s", g_rep->num_buffers,
 	// r_desc->region->id);
-	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_get_buffer_rep),
+	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
 		       REPLICA_INDEX_GET_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
@@ -2094,8 +2095,8 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
-	struct msg_replica_index_flush_req *f_req =
-		(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+	struct s2s_msg_replica_index_flush_req *f_req =
+		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, f_req->region_key, f_req->region_key_size);
 	if (r_desc == NULL) {
@@ -2220,13 +2221,13 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	struct msg_replica_index_flush_rep *rep =
-		(struct msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	struct s2s_msg_replica_index_flush_rep *rep =
+		(struct s2s_msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	rep->status = KREON_SUCCESS;
 	/*GESALOUS check this*/
 	rep->seg_id = f_req->seg_id;
 
-	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_flush_rep), REPLICA_INDEX_FLUSH_REP);
+	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_flush_rep), REPLICA_INDEX_FLUSH_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("REPLICA: Successfully flushed index segment id %d",

@@ -111,9 +111,6 @@ typedef struct msg_put_value {
 
 typedef struct msg_put_rep {
 	uint32_t status;
-#ifdef DEBUG_RESET_RENDEZVOUS
-	uint64_t key_hash;
-#endif /* DEBUG_RESET_RENDEZVOUS */
 } msg_put_rep;
 
 typedef struct msg_delete_req {
@@ -160,84 +157,71 @@ typedef struct msg_multi_get_rep {
 	char kv_buffer[];
 } msg_multi_get_rep;
 
-/*somehow dead*/
-typedef struct set_connection_property_req {
-	int desired_priority_level;
-	int desired_RDMA_memory_size;
-} set_connection_property_req;
-
-typedef struct set_connection_property_reply {
-	int assigned_ppriority_level;
-	int assigned_RDMA_memory_size;
-} set_connection_property_reply;
-
 /*server2server used for replication*/
 /*msg pair for initializing remote log buffers*/
-struct msg_get_log_buffer_req {
+struct s2s_msg_get_log_buffer_req {
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	int num_buffers;
 	int buffer_size;
 	int region_key_size;
-	char region_key[];
 };
 
-struct msg_get_log_buffer_rep {
+struct s2s_msg_get_log_buffer_rep {
 	uint32_t status;
+	struct ibv_mr mr[MAX_REPLICA_INDEX_BUFFERS];
 	int num_buffers;
-	struct ibv_mr mr[];
 };
 
 /*flush command pair*/
-struct msg_flush_cmd_req {
+struct s2s_msg_flush_cmd_req {
 	/*where primary has stored its segment*/
 	uint64_t master_segment;
 	uint64_t segment_id;
 	uint64_t end_of_log;
 	uint64_t log_padding;
 	uint64_t tail;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t is_partial;
 	uint32_t log_buffer_id;
 	uint32_t region_key_size;
-	char region_key[];
 };
 
-struct msg_flush_cmd_rep {
+struct s2s_msg_flush_cmd_rep {
 	uint32_t status;
 };
 
 /*server2server index transfers*/
-struct msg_replica_index_get_buffer_req {
+struct s2s_msg_replica_index_get_buffer_req {
 	uint64_t index_offset;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
 	int level_id;
 	int buffer_size;
 	int num_buffers;
-	uint32_t region_key_size;
-	char region_key[MSG_MAX_REGION_KEY_SIZE];
 };
 
-struct msg_replica_index_get_buffer_rep {
+struct s2s_msg_replica_index_get_buffer_rep {
 	uint32_t status;
-	int num_buffers;
 	struct ibv_mr mr[MAX_REPLICA_INDEX_BUFFERS];
+	int num_buffers;
 };
 
-struct msg_replica_index_flush_req {
+struct s2s_msg_replica_index_flush_req {
 	uint64_t primary_segment_offt;
 	uint64_t seg_hash;
 	uint64_t root_w;
 	uint64_t root_r;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t seg_id;
+	uint32_t region_key_size;
 	int level_id;
 	int tree_id;
-	uint32_t seg_id;
 	int is_last;
-
-	uint32_t region_key_size;
-	char region_key[MSG_MAX_REGION_KEY_SIZE];
 };
 
-struct msg_replica_index_flush_rep {
+struct s2s_msg_replica_index_flush_rep {
 	int seg_id;
 	int status;
 };
 
-int push_buffer_in_msg_header(struct msg_header *data_message, char *buffer, uint32_t buffer_length);
 int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *buf);

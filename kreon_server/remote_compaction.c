@@ -125,8 +125,8 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 	}
 	ret = 1;
 	/*Ask from replicas to register a buffer for this procedure*/
-	uint32_t request_size = sizeof(struct msg_replica_index_get_buffer_req);
-	uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_rep);
+	uint32_t request_size = sizeof(struct s2s_msg_replica_index_get_buffer_req);
+	uint32_t reply_size = sizeof(struct s2s_msg_replica_index_get_buffer_rep);
 	struct sc_msg_pair rpc_pair;
 
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
@@ -137,9 +137,9 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 			rpc_pair = sc_allocate_rpc_pair(r_conn, request_size, reply_size, REPLICA_INDEX_GET_BUFFER_REQ);
 		} while (rpc_pair.stat != ALLOCATION_IS_SUCCESSFULL);
 
-		struct msg_replica_index_get_buffer_req *g_req =
-			(struct msg_replica_index_get_buffer_req *)((uint64_t)rpc_pair.request +
-								    sizeof(struct msg_header));
+		struct s2s_msg_replica_index_get_buffer_req *g_req =
+			(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)rpc_pair.request +
+									sizeof(struct msg_header));
 
 		g_req->buffer_size = SEGMENT_SIZE;
 		g_req->num_buffers = 1;
@@ -163,8 +163,8 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		uint8_t tail = get_receive_field(reply);
 		field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 		/*unroll the reply*/
-		struct msg_replica_index_get_buffer_rep *g_rep =
-			(struct msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
+		struct s2s_msg_replica_index_get_buffer_rep *g_rep =
+			(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
 
 		r_desc->remote_mem_buf[i][level_id] = g_rep->mr[0];
 		sc_free_rpc_pair(&rpc_pair);
@@ -211,8 +211,8 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 	uint8_t tail = get_receive_field(reply);
 	field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 	// Check status returned by the replica
-	struct msg_replica_index_flush_rep *f_rep =
-		(struct msg_replica_index_flush_rep *)((uint64_t)rpc->reply + sizeof(struct msg_header));
+	struct s2s_msg_replica_index_flush_rep *f_rep =
+		(struct s2s_msg_replica_index_flush_rep *)((uint64_t)rpc->reply + sizeof(struct msg_header));
 	if (f_rep->status != KREON_SUCCESS) {
 		log_fatal("Flush index failed for seg_id %d stat is %d", f_rep->seg_id, f_rep->status);
 		exit(EXIT_FAILURE);
@@ -291,8 +291,8 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	/*Done sending segments now send the flush index requests*/
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		// Now allocate again we do it for fairness!
-		uint32_t request_size = sizeof(struct msg_replica_index_flush_req);
-		uint32_t reply_size = sizeof(struct msg_replica_index_flush_rep);
+		uint32_t request_size = sizeof(struct s2s_msg_replica_index_flush_req);
+		uint32_t reply_size = sizeof(struct s2s_msg_replica_index_flush_rep);
 
 		struct connection_rdma *r_conn = sc_get_compaction_conn(db_entry->pool->rco_server,
 									r_desc->region->backups[i].kreon_ds_hostname);
@@ -305,9 +305,9 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 
 		r_desc->rpc_in_use[i][level_id] = 1;
 
-		struct msg_replica_index_flush_req *f_req =
-			(struct msg_replica_index_flush_req *)((uint64_t)r_desc->rpc[i][level_id].request +
-							       sizeof(struct msg_header));
+		struct s2s_msg_replica_index_flush_req *f_req =
+			(struct s2s_msg_replica_index_flush_req *)((uint64_t)r_desc->rpc[i][level_id].request +
+								   sizeof(struct msg_header));
 
 		f_req->primary_segment_offt = dev_offt;
 		f_req->level_id = level_id;
@@ -410,7 +410,7 @@ int rco_flush_last_log_segment(void *handle)
 			break;
 		}
 		assert(0);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	spin_loop(&(hd->db_desc->levels[0].active_writers), 0);
 	/*Now check what is the rdma's buffer id which corresponds to the last
@@ -436,7 +436,7 @@ int rco_flush_last_log_segment(void *handle)
 	if (seg_id_to_flush == -1) {
 		log_fatal("Can't find segment id of the last segment");
 		assert(0);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	/*################# send flush request #########################*/
@@ -449,8 +449,8 @@ int rco_flush_last_log_segment(void *handle)
 		r_conn = sc_get_compaction_conn(db_entry->pool->rco_server,
 						r_desc->region->backups[i].kreon_ds_hostname);
 		/*allocate and send command*/
-		uint32_t req_size = sizeof(struct msg_flush_cmd_req) + r_desc->region->min_key_size;
-		uint32_t rep_size = sizeof(struct msg_flush_cmd_rep);
+		uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + r_desc->region->min_key_size;
+		uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
 		p[i] = sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
 		if (p[i].stat != ALLOCATION_IS_SUCCESSFULL) {
@@ -475,8 +475,8 @@ int rco_flush_last_log_segment(void *handle)
 		req_header->reply_length_in_recv_buffer =
 			sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 		/*time to send the message*/
-		struct msg_flush_cmd_req *f_req =
-			(struct msg_flush_cmd_req *)((uint64_t)req_header + sizeof(struct msg_header));
+		struct s2s_msg_flush_cmd_req *f_req =
+			(struct s2s_msg_flush_cmd_req *)((uint64_t)req_header + sizeof(struct msg_header));
 
 		/*where primary has stored its segment*/
 		f_req->is_partial = 1;
@@ -610,17 +610,17 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				task->state = RIS_CHECK_BUFFER_DIRTY;
 				break;
 			}
-			uint32_t request_size = sizeof(struct msg_replica_index_get_buffer_req);
-			uint32_t reply_size = sizeof(struct msg_replica_index_get_buffer_rep);
+			uint32_t request_size = sizeof(struct s2s_msg_replica_index_get_buffer_req);
+			uint32_t reply_size = sizeof(struct s2s_msg_replica_index_get_buffer_rep);
 			task->rpc[task->replica_id_cnt][0].rdma_buf =
 				sc_allocate_rpc_pair(task->conn[task->replica_id_cnt], request_size, reply_size,
 						     REPLICA_INDEX_GET_BUFFER_REQ);
 			if (task->rpc[task->replica_id_cnt][0].rdma_buf.stat != ALLOCATION_IS_SUCCESSFULL)
 				return;
-			struct msg_replica_index_get_buffer_req *g_req =
-				(struct msg_replica_index_get_buffer_req *)((uint64_t)task->rpc[task->replica_id_cnt][0]
-										    .rdma_buf.request +
-									    sizeof(struct msg_header));
+			struct s2s_msg_replica_index_get_buffer_req *g_req =
+				(struct s2s_msg_replica_index_get_buffer_req
+					 *)((uint64_t)task->rpc[task->replica_id_cnt][0].rdma_buf.request +
+					    sizeof(struct msg_header));
 
 			g_req->buffer_size = SEGMENT_SIZE;
 			g_req->num_buffers = MAX_REPLICA_INDEX_BUFFERS;
@@ -657,9 +657,9 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				 "tree[%d][%d]",
 				 task->replica_id_cnt, task->r_desc->db->db_desc->db_name, task->level_id,
 				 task->tree_id);
-			struct msg_replica_index_get_buffer_rep *g_rep =
-				(struct msg_replica_index_get_buffer_rep *)((uint64_t)reply +
-									    sizeof(struct msg_header));
+			struct s2s_msg_replica_index_get_buffer_rep *g_rep =
+				(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply +
+										sizeof(struct msg_header));
 
 			for (int j = 0; j < MAX_REPLICA_INDEX_BUFFERS; j++) {
 				task->remote_mem_buf[task->replica_id_cnt][j] = g_rep->mr[j];
@@ -703,10 +703,10 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 					//	 i, task->seg_id_to_send, task->r_desc->db->db_desc->db_name,
 					//	 task->level_id, task->tree_id);
 
-					struct msg_replica_index_flush_rep *f_rep =
-						(struct msg_replica_index_flush_rep *)((uint64_t)task->rpc[i][seg_id]
-											       .rdma_buf.reply +
-										       sizeof(struct msg_header));
+					struct s2s_msg_replica_index_flush_rep *f_rep =
+						(struct s2s_msg_replica_index_flush_rep
+							 *)((uint64_t)task->rpc[i][seg_id].rdma_buf.reply +
+							    sizeof(struct msg_header));
 					if (f_rep->status != KREON_SUCCESS) {
 						log_fatal("Flush index failed for seg_id %d stat is %d", f_rep->seg_id,
 							  f_rep->status);
@@ -808,8 +808,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 							return;
 						}
 
-						struct msg_replica_index_flush_rep *f_rep =
-							(struct msg_replica_index_flush_rep
+						struct s2s_msg_replica_index_flush_rep *f_rep =
+							(struct s2s_msg_replica_index_flush_rep
 								 *)((uint64_t)task->rpc[task->replica_id_cnt][j]
 									    .rdma_buf.reply +
 								    sizeof(struct msg_header));
@@ -846,8 +846,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			return;
 		}
 		case RIS_SEND_FLUSH_MSG: {
-			uint32_t request_size = sizeof(struct msg_replica_index_flush_req);
-			uint32_t reply_size = sizeof(struct msg_replica_index_flush_rep);
+			uint32_t request_size = sizeof(struct s2s_msg_replica_index_flush_req);
+			uint32_t reply_size = sizeof(struct s2s_msg_replica_index_flush_rep);
 			int seg_id = task->seg_id_to_flush % MAX_REPLICA_INDEX_BUFFERS;
 			for (uint32_t i = 0; i < task->r_desc->region->num_of_backup; i++) {
 				if (task->rpc[i][seg_id].valid)
@@ -860,10 +860,10 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 					task->state = RIS_WAIT_FOR_ALL_PENDING_FLUSHES;
 					break;
 				}
-				struct msg_replica_index_flush_req *f_req =
-					(struct msg_replica_index_flush_req *)((uint64_t)task->rpc[i][seg_id]
-										       .rdma_buf.request +
-									       sizeof(struct msg_header));
+				struct s2s_msg_replica_index_flush_req *f_req =
+					(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->rpc[i][seg_id]
+											   .rdma_buf.request +
+										   sizeof(struct msg_header));
 
 				assert(task->curr_index_segment != NULL);
 				f_req->primary_segment_offt = task->seg_id_to_flush_addr;
