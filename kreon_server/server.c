@@ -460,7 +460,7 @@ static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_wo
 	pthread_mutex_lock(&(spinner->resume_task_pool.tbp_lock));
 	if (utils_queue_push(&(spinner->resume_task_pool.task_buffers), task) == NULL) {
 		log_fatal("failed to add to resumed task queue");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&spinner->resume_task_pool.tbp_lock);
 }
@@ -928,12 +928,11 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 				// log. Since for this region we are the first to do this there is
 				// surely no
 				// concurrent access
-				uint64_t range;
+				uint64_t range = 0;
 				if (r_desc->db->db_desc->KV_log_size > 0) {
 					range = r_desc->db->db_desc->KV_log_size -
 						(r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);
-				} else
-					range = 0;
+				}
 				for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 					r_desc->m_state->r_buf[i].stat = RU_BUFFER_UNINITIALIZED;
 					for (int j = 0; j < RU_REPLICA_NUM_SEGMENTS; j++) {
@@ -1016,14 +1015,8 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 						continue;
 
 					/*Check arrival of payload*/
-					uint32_t *tail =
-						(uint32_t *)(((uint64_t)r_desc->m_state->r_buf[i].p.reply +
-							      sizeof(struct msg_header) +
-							      r_desc->m_state->r_buf[i].p.reply->payload_length +
-							      r_desc->m_state->r_buf[i].p.reply->padding_and_tail_size) -
-							     TU_TAIL_SIZE);
-
-					if (*tail != TU_RDMA_REGULAR_MSG)
+					uint8_t tail = get_receive_field(r_desc->m_state->r_buf[i].p.reply);
+					if (tail != TU_RDMA_REGULAR_MSG)
 						continue;
 
 					struct msg_get_log_buffer_rep *rep =
@@ -1052,7 +1045,6 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 					r_desc->m_state->r_buf[i].stat = RU_BUFFER_OK;
 					/*finally free the message*/
 					sc_free_rpc_pair(&r_desc->m_state->r_buf[i].p);
-					assert(*tail != TU_RDMA_REGULAR_MSG);
 				}
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_OK)
 					++ready_buffers;
@@ -1197,7 +1189,7 @@ static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task 
 			break;
 		default:
 			log_fatal("Unhandled state");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		pthread_rwlock_unlock(&r_desc->kreon_lock);
 		return 1;
@@ -1393,12 +1385,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 					return;
 				}
 				/*check if payload is there*/
-
-				uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-							       reply->payload_length + reply->padding_and_tail_size) -
-							      TU_TAIL_SIZE);
-
-				if (*tail != TU_RDMA_REGULAR_MSG) {
+				uint8_t tail = get_receive_field(reply);
+				if (tail != TU_RDMA_REGULAR_MSG) {
 					task->last_replica_to_ack = i;
 					return;
 				}
@@ -1860,8 +1848,6 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	uint32_t actual_reply_size = 0;
-	uint32_t padding;
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
 	// log_info("Master orders a flush, obey your master!");
 	struct msg_flush_cmd_req *flush_req =
@@ -1928,7 +1914,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 			if (!write_segment_with_explicit_IO((char *)(uint64_t)seg, SEGMENT_SIZE,
 							    (uint64_t)disk_segment - MAPPED, FD)) {
 				log_fatal("Failed to write segment with explicit I/O");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			if (r_desc->db->db_desc->KV_log_first_segment == NULL)
 				r_desc->db->db_desc->KV_log_first_segment = disk_segment;
@@ -1978,23 +1964,18 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	actual_reply_size = sizeof(msg_header) + sizeof(msg_delete_rep) + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
 	struct msg_flush_cmd_rep *flush_rep =
 		(struct msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = KREON_SUCCESS;
 
 	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_flush_cmd_rep), FLUSH_COMMAND_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("Responded to server!");
 }
 
 static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	uint32_t actual_reply_size = 0;
-	uint32_t padding;
 	void *addr;
 	assert(task->msg->msg_type == GET_LOG_BUFFER_REQ);
 	struct msg_get_log_buffer_req *get_log =
@@ -2003,7 +1984,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_log->region_key, get_log->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("No region found for min key %s", get_log->region_key);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	log_debug("Region-master wants %d log buffer(s) for region %s", get_log->num_buffers, r_desc->region->id);
@@ -2017,7 +1998,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 			if (posix_memalign(&addr, ALIGNMENT, get_log->buffer_size)) {
 				log_fatal("Failed to allocate aligned RDMA buffer");
 				perror("Reason\n");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			r_desc->r_state->seg[i].segment_size = get_log->buffer_size;
 			r_desc->r_state->seg[i].mr = rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
@@ -2031,21 +2012,13 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 				r_desc->db->db_desc->KV_log_last_segment->segment_id;
 	} else {
 		log_fatal("remote buffers already initialized, what?");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	/*initialize message*/
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
-	// TU_TAIL_SIZE));
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-
+				   task->msg->offset_reply_in_recv_buffer);
 	struct msg_get_log_buffer_rep *rep =
 		(struct msg_get_log_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	rep->status = KREON_SUCCESS;
@@ -2058,14 +2031,13 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 	fill_reply_msg(task->reply_msg, task,
 		       sizeof(struct msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr)),
 		       GET_LOG_BUFFER_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	log_debug("Region master wants a log buffer...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	uint32_t actual_reply_size = 0;
-	uint32_t padding;
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
 	struct msg_replica_index_get_buffer_req *g_req =
 		(struct msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -2088,7 +2060,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		if (posix_memalign((void **)&addr, ALIGNMENT, SEGMENT_SIZE) != 0) {
 			log_fatal("Posix memalign failed");
 			perror("Reason: ");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		if (r_desc->r_state->index_buffers[g_req->level_id][i] == NULL) {
 			r_desc->r_state->index_buffers[g_req->level_id][i] =
@@ -2097,20 +2069,12 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 			log_fatal("Remote compaction for regions %s level %d still pending", r_desc->region->id,
 				  g_req->level_id);
 			assert(0);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 	}
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	/*initialize message*/
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
-	// TU_TAIL_SIZE));
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
-
 	struct msg_replica_index_get_buffer_rep *g_rep =
 		(struct msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	g_rep->status = KREON_SUCCESS;
@@ -2123,13 +2087,12 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	// r_desc->region->id);
 	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_get_buffer_rep),
 		       REPLICA_INDEX_GET_BUFFER_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	uint32_t actual_reply_size = 0;
-	uint32_t padding;
 	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
 	struct msg_replica_index_flush_req *f_req =
 		(struct msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -2256,13 +2219,6 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	/*initialize message*/
-	actual_reply_size = sizeof(msg_header) + task->reply_msg->payload_length + TU_TAIL_SIZE;
-	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
-	// log_info("Setting tail to offset %d", actual_reply_size + (padding -
-	// TU_TAIL_SIZE));
-	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
 
 	struct msg_replica_index_flush_rep *rep =
 		(struct msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
@@ -2271,6 +2227,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	rep->seg_id = f_req->seg_id;
 
 	fill_reply_msg(task->reply_msg, task, sizeof(struct msg_replica_index_flush_rep), REPLICA_INDEX_FLUSH_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("REPLICA: Successfully flushed index segment id %d",
 	// f_req->seg_id);
@@ -2288,15 +2245,7 @@ static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_wo
 			  task->msg->reply_length_in_recv_buffer);
 		_exit(EXIT_FAILURE);
 	}
-
-	uint32_t *tail = (uint32_t *)((uint64_t)task->reply_msg + task->reply_msg->payload_length +
-				      task->reply_msg->padding_and_tail_size - TU_TAIL_SIZE + sizeof(msg_header));
-	/*log_info("tail - reply = %"PRId64"\n", (uint64_t)tail -
-* (uint64_t)task->reply_msg);*/
-	/*log_info("reply_msg = {.payload_length = %llu, padding_and_tail_size = %llu}",
-* task->reply_msg->payload_length, task->reply_msg->padding_and_tail_size);*/
-	*tail = TU_RDMA_REGULAR_MSG;
-
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	fill_reply_msg(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
 }

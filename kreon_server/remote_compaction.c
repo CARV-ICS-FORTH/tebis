@@ -160,10 +160,8 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		field_spin_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
 		// Wait for payload arrival
 		struct msg_header *reply = rpc_pair.reply;
-		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
-					       reply->padding_and_tail_size) -
-					      TU_TAIL_SIZE);
-		wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+		uint8_t tail = get_receive_field(reply);
+		field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 		/*unroll the reply*/
 		struct msg_replica_index_get_buffer_rep *g_rep =
 			(struct msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
@@ -210,10 +208,8 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 	field_spin_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc->reply;
-	uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
-				       reply->padding_and_tail_size) -
-				      TU_TAIL_SIZE);
-	wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+	uint8_t tail = get_receive_field(reply);
+	field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 	// Check status returned by the replica
 	struct msg_replica_index_flush_rep *f_rep =
 		(struct msg_replica_index_flush_rep *)((uint64_t)rpc->reply + sizeof(struct msg_header));
@@ -502,10 +498,8 @@ int rco_flush_last_log_segment(void *handle)
 		msg_header *reply = p[i].reply;
 		field_spin_for_value(&reply->receive, TU_RDMA_REGULAR_MSG);
 		/*check if payload is there*/
-		uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) + reply->payload_length +
-					       reply->padding_and_tail_size) -
-					      TU_TAIL_SIZE);
-		wait_for_value(tail, TU_RDMA_REGULAR_MSG);
+		uint8_t tail = get_receive_field(reply);
+		field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 	}
 	log_info("Send and acked flush last value log segment from all backups! Ready to compact");
 	/*##############################################################*/
@@ -655,11 +649,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			if (task->rpc[task->replica_id_cnt][0].rdma_buf.request->receive != TU_RDMA_REGULAR_MSG)
 				return;
 			struct msg_header *reply = task->rpc[task->replica_id_cnt][0].rdma_buf.reply;
-			uint32_t *tail = (uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-						       reply->payload_length + reply->padding_and_tail_size) -
-						      TU_TAIL_SIZE);
-
-			if (*tail != TU_RDMA_REGULAR_MSG)
+			uint8_t tail = get_receive_field(reply);
+			if (tail != TU_RDMA_REGULAR_MSG)
 				return;
 			/*unroll the reply*/
 			log_info("Got buffers from replica id %u from my group for db: %s of "
@@ -702,12 +693,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 					if (task->rpc[i][seg_id].rdma_buf.request->receive != TU_RDMA_REGULAR_MSG)
 						return;
 					struct msg_header *reply = task->rpc[i][seg_id].rdma_buf.reply;
-					uint32_t *tail =
-						(uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-							      reply->payload_length + reply->padding_and_tail_size) -
-							     TU_TAIL_SIZE);
-
-					if (*tail != TU_RDMA_REGULAR_MSG)
+					uint8_t tail = get_receive_field(reply);
+					if (tail != TU_RDMA_REGULAR_MSG)
 						return;
 					/*unroll the reply*/
 					// log_info("Got flush rep from replica id %u  for seg_id: %d from my
@@ -814,13 +801,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 							return;
 						}
 						struct msg_header *reply = task->rpc[i][j].rdma_buf.reply;
-						uint32_t *tail =
-							(uint32_t *)(((uint64_t)reply + sizeof(struct msg_header) +
-								      reply->payload_length +
-								      reply->padding_and_tail_size) -
-								     TU_TAIL_SIZE);
-
-						if (*tail != TU_RDMA_REGULAR_MSG) {
+						uint8_t tail = get_receive_field(reply);
+						if (tail != TU_RDMA_REGULAR_MSG) {
 							task->barrier_i = i;
 							task->barrier_j = j;
 							return;

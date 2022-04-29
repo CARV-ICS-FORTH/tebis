@@ -78,7 +78,7 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 		break;
 	default:
 		log_fatal("Unsupported message type %d", type);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	/*The idea is the following, if we are not able to allocate both
            * buffers while acquiring the lock we should rollback. Also we need
@@ -106,7 +106,7 @@ retry_allocate_reply:
 	switch (rep.stat) {
 	case NOT_ENOUGH_SPACE_AT_THE_END:
 		log_fatal("Server 2 Server communication should not include RESET_RENDEZVOUS msg");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	case SPACE_NOT_READY_YET:
 		/*rollback previous allocation*/
 		free_space_from_circular_buffer(conn->recv_circular_buf, (char *)rep.reply, actual_reply_size);
@@ -141,14 +141,10 @@ retry_allocate_reply:
 			/*set the tail to the proper value*/
 			if (i == 0) {
 				// this is the request
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->payload_length +
-					       msg->padding_and_tail_size) -
-					      sizeof(uint32_t)) = receive_type;
+				set_receive_field(msg, TU_RDMA_REGULAR_MSG);
 				msg->receive = receive_type;
 			} else { // this is the reply
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->payload_length +
-					       msg->padding_and_tail_size) -
-					      sizeof(uint32_t)) = 0;
+				set_receive_field(msg, 0);
 				msg->receive = 0;
 			}
 		} else {
@@ -160,7 +156,7 @@ retry_allocate_reply:
 
 		msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
-		msg->triggering_msg_offset_in_send_buffer = UINT32_MAX;
+		msg->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, msg);
 		rep.request->offset_reply_in_recv_buffer = UINT32_MAX;
 		rep.request->reply_length_in_recv_buffer = UINT32_MAX;
 
@@ -179,7 +175,6 @@ retry_allocate_reply:
 
 exit:
 	pthread_mutex_unlock(&conn->buffer_lock);
-
 	return rep;
 }
 
