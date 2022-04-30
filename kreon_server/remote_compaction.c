@@ -152,9 +152,6 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		}
 		memcpy(g_req->region_key, r_desc->region->min_key, g_req->region_key_size);
 		rpc_pair.request->session_id = (uint64_t)r_desc->region + level_id;
-		rpc_pair.request->triggering_msg_offset_in_send_buffer =
-			real_address_to_triggering_msg_offt(r_conn, rpc_pair.request);
-		rpc_pair.reply->receive = TU_RDMA_REGULAR_MSG;
 		__send_rdma_message(rpc_pair.conn, rpc_pair.request, NULL);
 		// Wait for reply header
 		field_spin_for_value(&rpc_pair.reply->receive, TU_RDMA_REGULAR_MSG);
@@ -219,7 +216,6 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 	}
 	sc_free_rpc_pair(rpc);
 	memset(rpc, 0x00, sizeof(struct sc_msg_pair));
-	return;
 }
 
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
@@ -326,7 +322,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 		f_req->region_key_size = r_desc->region->min_key_size;
 		if (f_req->region_key_size > RU_REGION_KEY_SIZE) {
 			log_fatal("Max region key overflow");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		memcpy(f_req->region_key, r_desc->region->min_key, f_req->region_key_size);
 
@@ -951,18 +947,18 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 	for (int i = 0; i < pool_size; i++) {
 		if (pthread_mutex_init(&pool->worker_queue[i].queue_lock, NULL)) {
 			log_fatal("Failed to initialize queue lock for compaction threads pool");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		if (pthread_cond_init(&pool->worker_queue[i].queue_monitor, NULL)) {
 			log_fatal("Failed to initialize queue monitor");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		pool->worker_queue[i].task_queue = klist_init();
 		pool->worker_queue[i].my_id = i;
 		if (pthread_create(&pool->worker_queue[i].cnxt, NULL, rco_compaction_worker, &pool->worker_queue[i]) !=
 		    0) {
 			log_fatal("Failed to start remote compaction worker");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 	}
 	return pool;
@@ -972,31 +968,6 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 {
 	int chosen_id;
 	pthread_mutex_lock(&pool->pool_lock);
-#if 0
-	if (pool->worker_queue[pool->curr_worker_id].task_queue->size <= RCO_TASK_QUEUE_SIZE_THREASHOLD)
-		chosen_id = pool->curr_worker_id;
-	else {
-		int min_id_working = -1;
-		int min_tasks = 10000000;
-		int min_id = -1;
-		/*find someone*/
-		for (int i = 0; i < pool->num_workers; i++) {
-			if (!pool->worker_queue[pool->curr_worker_id].sleeping &&
-			    pool->worker_queue[pool->curr_worker_id].task_queue->size <
-				    RCO_TASK_QUEUE_SIZE_THREASHOLD) {
-				min_id_working = i;
-			}
-			if (min_tasks > pool->worker_queue[pool->curr_worker_id].task_queue->size) {
-				min_tasks = pool->worker_queue[pool->curr_worker_id].task_queue->size;
-				min_id = i;
-			}
-		}
-		if (min_id_working != -1)
-			chosen_id = min_id_working;
-		else
-			chosen_id = min_id;
-	}
-#endif
 	uint64_t session_id = (uint64_t)compaction_task->r_desc->region + compaction_task->level_id;
 	uint64_t hash = djb2_hash((unsigned char *)&session_id, sizeof(uint64_t));
 	chosen_id = hash % pool->num_workers;
@@ -1086,7 +1057,6 @@ void rco_build_index(struct rco_build_index_task *task)
 			break;
 	}
 	//log_info("Done parsing segment");
-	return;
 }
 
 static void *rco_compaction_worker(void *args)
@@ -1104,7 +1074,7 @@ static void *rco_compaction_worker(void *args)
 				my_queue->sleeping = 1;
 				if (pthread_cond_wait(&my_queue->queue_monitor, &my_queue->queue_lock) != 0) {
 					log_fatal("failed to sleep");
-					exit(EXIT_FAILURE);
+					_exit(EXIT_FAILURE);
 				}
 				my_queue->sleeping = 0;
 			}
