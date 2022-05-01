@@ -11,7 +11,7 @@ add_library(
   ../utilities/simple_concurrent_list.c
   ../utilities/spin_loop.c
   ../utilities/circular_buffer.c
-  ../utilities/list.c)
+  ../kreon_server/list.c)
 
 target_link_libraries(kreon_rdma ${Zookeeper_LIBRARY})
 

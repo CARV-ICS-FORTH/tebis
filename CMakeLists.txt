@@ -45,14 +45,14 @@ include(cmake_utils/ycsb.cmake.in)
 FetchContent_Declare(
   uthash # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/troydhanson/uthash.git
-  SOURCE_DIR external-deps/src/uthash # (Relative) path within in the build
-                                      # directory.
+  GIT_PROGRESS YES # (Relative) path within in the build
+  # directory.
 )
 
 FetchContent_Declare(
   log # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/innerout/log.c.git
-  GIT_TAG 1278d9cb58e2c6b848f6cbdd62c9a01eb9ed45da)
+  GIT_PROGRESS TRUE)
 
 FetchContent_Declare(
   libbloom # Recommendation: Stick close to the original name.
@@ -64,6 +64,11 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/StableCoder/cmake-scripts.git
   GIT_TAG main
   GIT_PROGRESS TRUE)
+
+FetchContent_Declare(
+  parallax
+  GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
+  GIT_TAG tebis-parallax)
 
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
@@ -87,9 +92,13 @@ FetchContent_GetProperties(log)
 FetchContent_GetProperties(libbloom)
 FetchContent_GetProperties(cjson)
 FetchContent_GetProperties(cmake-scripts)
+FetchContent_GetProperties(parallax)
 
+# Do not add uthash as dependency. Uthash is a special case becuase it is a
+# header only library
 if(NOT uthash_POPULATED)
   FetchContent_Populate(uthash)
+  include_directories(${uthash_SOURCE_DIR}/src)
   FetchContent_MakeAvailable(uthash)
 endif()
 
@@ -112,6 +121,13 @@ if(NOT cmake-scripts_POPULATED)
   FetchContent_Populate(cmake-scripts)
   FetchContent_MakeAvailable(cmake-scripts)
   include(${cmake-scripts_SOURCE_DIR}/sanitizers.cmake)
+endif()
+
+if(NOT parallax_POPULATED)
+  FetchContent_Populate(parallax)
+  add_subdirectory(${parallax_SOURCE_DIR} ${parallax_BINARY_DIR})
+  include_directories(${parallax_SOURCE_DIR}/lib)
+  FetchContent_MakeAvailable(parallax)
 endif()
 
 # If users have zookeeper installed in a custom path they can provide it to
@@ -171,7 +187,6 @@ set(CMAKE_LINKER_FLAGS
 )
 
 add_subdirectory(kreon_rdma)
-add_subdirectory(kreon_lib)
 add_subdirectory(kreon_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)

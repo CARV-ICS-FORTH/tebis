@@ -13,5 +13,3 @@ set_source_files_properties(work_stealing_queue.c PROPERTIES COMPILE_FLAGS
                                                              "-O3")
 
 set(CMAKE_EXE_LINKER_FLAGS "-lrt -lm -pthread -lnuma")
-
-add_library(utilities STATIC list.c)
