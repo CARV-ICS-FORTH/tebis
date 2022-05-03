@@ -1,9 +1,9 @@
 #define _LARGEFILE64_SOURCE
 #include "globals.h"
-#include "../kreon_lib/allocator/allocator.h"
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/macros.h"
 #include "conf.h"
+#include <allocator/volume_manager.h>
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <linux/hdreg.h>
@@ -136,10 +136,10 @@ void globals_set_dev(char *dev)
 	}
 	if (strncmp(dev, "/dev/", 5) == 0) {
 		if (ioctl(file_descriptor, BLKGETSIZE64, &global_vars.volume_size) == -1) {
-			log_fatal("failed to determine volume's size", dev);
+			log_fatal("failed to determine volume's size");
 			_exit(EXIT_FAILURE);
 		}
-		log_info("%s is a block device of size %llu", dev, global_vars.volume_size);
+		log_info("%s is a block device of size %lu", dev, global_vars.volume_size);
 
 	} else {
 		off64_t end_of_file;
@@ -150,12 +150,12 @@ void globals_set_dev(char *dev)
 			_exit(EXIT_FAILURE);
 		}
 		global_vars.volume_size = end_of_file;
-		log_info("%s is a file of size %llu", dev, global_vars.volume_size);
+		log_info("%s is a file of size %lu", dev, global_vars.volume_size);
 		global_vars.mount_point = strdup(dev);
 	}
 	file_descriptor = close(file_descriptor);
 	if (file_descriptor == -1) {
-		log_fatal("failed to open %s reason follows");
+		log_fatal("failed to close the file");
 		perror("Reason");
 		_exit(EXIT_FAILURE);
 	}

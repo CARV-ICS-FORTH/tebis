@@ -26,10 +26,10 @@
 #endif
 
 extern "C" {
-#include "../../kreon_lib/btree/btree.h"
 #include "../../kreon_rdma_client/client_utils.h"
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
 #include "../../utilities/queue.h"
+#include <btree/btree.h>
 #include <log.h>
 
 __thread int kv_count = 0;

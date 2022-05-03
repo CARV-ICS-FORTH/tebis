@@ -173,7 +173,7 @@ static uint8_t cu_fetch_region_table(void)
 			_exit(EXIT_FAILURE);
 		} else if (stat.dataLength > region_json_string_size) {
 			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
-				  "Json region entry length is %d and buffer size is %d",
+				  "Json region entry length is %d and buffer size is %lu",
 				  stat.dataLength, sizeof(region_json_string));
 			_exit(EXIT_FAILURE);
 		}

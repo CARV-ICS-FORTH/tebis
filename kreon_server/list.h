@@ -17,28 +17,28 @@
 
 typedef void (*destroy_node_data)(void *data);
 
-struct klist_node {
+struct tebis_klist_node {
 	void *data;
 	char *key;
 	destroy_node_data destroy_data;
-	struct klist_node *prev;
-	struct klist_node *next;
+	struct tebis_klist_node *prev;
+	struct tebis_klist_node *next;
 };
 
-struct klist {
-	struct klist_node *first;
-	struct klist_node *last;
+struct tebis_klist {
+	struct tebis_klist_node *first;
+	struct tebis_klist_node *last;
 	int mode;
 	int size;
 };
 
-struct klist *klist_init(void);
-void *klist_get_first(struct klist *list);
-void klist_add_first(struct klist *list, void *data, const char *data_key, destroy_node_data destroy_data);
-void klist_add_last(struct klist *list, void *data, const char *data_key, destroy_node_data destroy_data);
-void *klist_remove_first(struct klist *list);
-void *klist_find_element_with_key(struct klist *list, char *data_key);
-int klist_remove_element(struct klist *list, void *data);
-int klist_delete_element(struct klist *list, void *data);
+struct tebis_klist *tebis_klist_init(void);
+void *tebis_klist_get_first(struct tebis_klist *list);
+void tebis_klist_add_first(struct tebis_klist *list, void *data, const char *data_key, destroy_node_data destroy_data);
+void tebis_klist_add_last(struct tebis_klist *list, void *data, const char *data_key, destroy_node_data destroy_data);
+void *tebis_klist_remove_first(struct tebis_klist *list);
+void *tebis_klist_find_element_with_key(struct tebis_klist *list, char *data_key);
+int tebis_klist_remove_element(struct tebis_klist *list, void *data);
+int tebis_klist_delete_element(struct tebis_klist *list, void *data);
 
-void klist_destroy(struct klist *list);
+void tebis_klist_destroy(struct tebis_klist *list);

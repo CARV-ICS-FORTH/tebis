@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <stdlib.h>
-#include <string.h>
 #include "list.h"
 #include <log.h>
+#include <stdlib.h>
+#include <string.h>
 
-struct klist *klist_init(void)
+struct tebis_klist *tebis_klist_init(void)
 {
-	struct klist *list = (struct klist *)calloc(1, sizeof(struct klist));
+	struct tebis_klist *list = (struct tebis_klist *)calloc(1, sizeof(struct tebis_klist));
 	if (!list) {
 		log_fatal("Calloc failed");
 		exit(EXIT_FAILURE);
@@ -30,16 +30,16 @@ struct klist *klist_init(void)
 	return list;
 }
 
-void *klist_get_first(struct klist *list)
+void *tebis_klist_get_first(struct tebis_klist *list)
 {
 	if (!list)
 		return NULL;
 	return list->first;
 }
 
-void klist_add_first(struct klist *list, void *data, const char *data_key, destroy_node_data destroy_data)
+void tebis_klist_add_first(struct tebis_klist *list, void *data, const char *data_key, destroy_node_data destroy_data)
 {
-	struct klist_node *node = (struct klist_node *)calloc(1, sizeof(struct klist_node));
+	struct tebis_klist_node *node = (struct tebis_klist_node *)calloc(1, sizeof(struct tebis_klist_node));
 	if (!node) {
 		log_fatal("Calloc failed out of memory");
 		exit(EXIT_FAILURE);
@@ -68,9 +68,9 @@ void klist_add_first(struct klist *list, void *data, const char *data_key, destr
 	++list->size;
 }
 
-void klist_add_last(struct klist *list, void *data, const char *data_key, destroy_node_data destroy_data)
+void tebis_klist_add_last(struct tebis_klist *list, void *data, const char *data_key, destroy_node_data destroy_data)
 {
-	struct klist_node *node = calloc(1, sizeof(struct klist_node));
+	struct tebis_klist_node *node = calloc(1, sizeof(struct tebis_klist_node));
 	if (!node) {
 		log_fatal("Calloc failed");
 		exit(EXIT_FAILURE);
@@ -99,9 +99,9 @@ void klist_add_last(struct klist *list, void *data, const char *data_key, destro
 	++list->size;
 }
 
-void *klist_remove_first(struct klist *list)
+void *tebis_klist_remove_first(struct tebis_klist *list)
 {
-	struct klist_node *node;
+	struct tebis_klist_node *node;
 	if (list->size > 1) {
 		node = list->first;
 		list->first = list->first->next;
@@ -118,9 +118,9 @@ void *klist_remove_first(struct klist *list)
 		return NULL;
 }
 
-int klist_remove_element(struct klist *list, void *data)
+int tebis_klist_remove_element(struct tebis_klist *list, void *data)
 {
-	struct klist_node *node;
+	struct tebis_klist_node *node;
 	node = list->first;
 	for (int i = 0; i < list->size; i++) {
 		if (node->data == data) {
@@ -143,9 +143,9 @@ int klist_remove_element(struct klist *list, void *data)
 	return 0;
 }
 
-int klist_delete_element(struct klist *list, void *data)
+int tebis_klist_delete_element(struct tebis_klist *list, void *data)
 {
-	struct klist_node *node;
+	struct tebis_klist_node *node;
 	node = list->first;
 	for (int i = 0; i < list->size; i++) {
 		if (node->data == data) {
@@ -169,9 +169,9 @@ int klist_delete_element(struct klist *list, void *data)
 	return 0;
 }
 
-void *klist_find_element_with_key(struct klist *list, char *data_key)
+void *tebis_klist_find_element_with_key(struct tebis_klist *list, char *data_key)
 {
-	struct klist_node *node = list->first;
+	struct tebis_klist_node *node = list->first;
 	for (int i = 0; i < list->size; i++) {
 		if (strcmp(node->key, data_key) == 0)
 			return node->data;
@@ -180,13 +180,13 @@ void *klist_find_element_with_key(struct klist *list, char *data_key)
 	return NULL;
 }
 
-void klist_destroy(struct klist *list)
+void tebis_klist_destroy(struct tebis_klist *list)
 {
-	struct klist_node *node = list->first;
-	struct klist_node *next_node = NULL;
+	struct tebis_klist_node *node = list->first;
+	struct tebis_klist_node *next_node = NULL;
 	while (node != NULL) {
 		next_node = node->next;
-		klist_delete_element(list, node->data);
+		tebis_klist_delete_element(list, node->data);
 		node = next_node;
 	}
 	free(list);

@@ -30,7 +30,7 @@ add_dependencies(kreon_server cjson)
 target_link_libraries(
   kreon_server
   kreon_rdma
-  kreonr
+  parallax
   log
   ${Zookeeper_LIBRARY}
   ${cjson_LIBRARY}

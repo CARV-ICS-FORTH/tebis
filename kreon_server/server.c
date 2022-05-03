@@ -14,8 +14,10 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "conf.h"
+#include "include/parallax.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 #endif
 #include <alloca.h>
 #include <infiniband/verbs.h>
@@ -30,18 +32,19 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 
-#include "../kreon_lib/btree/btree.h"
-#include "../kreon_lib/btree/conf.h"
-#include "../kreon_lib/btree/segment_allocator.h"
-#include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/queue.h"
+#include "../utilities/spin_loop.h"
 #include "djb2.h"
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
 #include "stats.h"
+#include <allocator/device_structures.h>
+#include <allocator/volume_manager.h>
+#include <btree/btree.h>
 #include <log.h>
+#include <scanner/scanner.h>
 
 #ifdef CHECKSUM_DATA_MESSAGES
 #include "djb2.h"
@@ -602,7 +605,7 @@ static void print_task(struct krm_work_task *task)
 				task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
 			remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
 			log_debug(
-				"Sorry segment with replica %u not ready bytes remaining to replicate %llu task %p seg if %u key size is %u",
+				"Sorry segment with replica %u not ready bytes remaining to replicate %u task %p seg if %u key size is %lu",
 				i, remaining, task, task->seg_id_to_flush, task->kv_size);
 		}
 		break;
@@ -640,7 +643,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 
 		if (0 == ++task->rescheduling_counter % 1000000) {
 			log_warn(
-				"Suspicious task %p for region %s has been rescheduled %llu times pending region tasks are: %u state is %u",
+				"Suspicious task %p for region %s has been rescheduled %lu times pending region tasks are: %lu state is %u",
 				task, task->r_desc->region->id, task->rescheduling_counter,
 				task->r_desc->pending_region_tasks, task->kreon_operation_status);
 			print_task(task);
@@ -661,7 +664,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 		ds_check_idle_workers(spinner);
 		log_debug("Client tasks state: *****");
 		for (int i = 0; i < UTILS_QUEUE_CAPACITY / 2; ++i) {
-			log_debug("krm work task status[%d]: rescheduling counter: %llu", i,
+			log_debug("krm work task status[%d]: rescheduling counter: %lu", i,
 				  spinner->num_of_outstanding_client_req);
 		}
 		log_debug("Finally workers queue sizes");
@@ -873,8 +876,8 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
 					return 0;
 				} else if (task->r_desc->replica_buf_status == KRM_BUFS_UNINITIALIZED) {
-					log_info("Initializing log buffers with replicas for DB %s",
-						 task->r_desc->db->db_desc->db_name);
+					/*log_info("Initializing log buffers with replicas for DB %s",
+						 task->r_desc->db->db_desc->db_name);*/
 					task->r_desc->replica_buf_status = KRM_BUFS_INITIALIZING;
 					task->kreon_operation_status = INIT_LOG_BUFFERS;
 					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
@@ -902,11 +905,13 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 				// log. Since for this region we are the first to do this there is
 				// surely no
 				// concurrent access
+				log_debug("Tebis-Parallax no replication should not care about this");
 				uint64_t range = 0;
-				if (r_desc->db->db_desc->KV_log_size > 0) {
+				/*if (r_desc->db->db_desc->KV_log_size > 0) {
 					range = r_desc->db->db_desc->KV_log_size -
 						(r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);
 				}
+				*/
 				for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 					r_desc->m_state->r_buf[i].stat = RU_BUFFER_UNINITIALIZED;
 					for (int j = 0; j < RU_REPLICA_NUM_SEGMENTS; j++) {
@@ -934,7 +939,7 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_UNINITIALIZED) {
 					log_debug("Sending GET_LOG_BUFFER req to Server %s for DB %s",
 						  r_desc->region->backups[i].kreon_ds_hostname,
-						  r_desc->db->db_desc->db_name);
+						  r_desc->db->volume_desc->volume_name);
 
 					r_desc->m_state->r_buf[i].p = sc_allocate_rpc_pair(
 						conn,
@@ -1002,8 +1007,11 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 
 					r_desc->m_state->r_buf[i].segment_size = SEGMENT_SIZE;
 					r_desc->m_state->r_buf[i].num_buffers = RU_REPLICA_NUM_SEGMENTS;
-					uint64_t seg_offt = r_desc->db->db_desc->KV_log_size -
+					/*TODO tebis parallax no replication should not care about this*/
+					/*uint64_t seg_offt = r_desc->db->db_desc->KV_log_size -
 							    (r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);
+					*/
+					uint64_t seg_offt = 0;
 					r_desc->next_segment_to_flush = seg_offt;
 
 					for (int j = 0; j < RU_REPLICA_NUM_SEGMENTS; ++j) {
@@ -1049,8 +1057,10 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 				task->msg_ctx[0].args = (void *)context;
 				/* copy last segment to a register buffer */
 				struct segment_header *last_segment = (struct segment_header *)context->memory;
-				memcpy(last_segment, (const char *)r_desc->db->db_desc->KV_log_last_segment,
+				/*TODO tebis-parallax no replication should not care about this*/
+				/*memcpy(last_segment, (const char *)r_desc->db->db_desc->KV_log_last_segment,
 				       SEGMENT_SIZE);
+				       */
 				struct connection_rdma *r_conn =
 					sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 				context->mr = rdma_reg_write(r_conn->rdma_cm_id, last_segment, SEGMENT_SIZE);
@@ -1063,9 +1073,9 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 				log_debug("Sending last segment to server: %s",
 					  r_desc->region->backups[i].kreon_ds_hostname);
 				// 2. rdma it to the remote
-				log_debug("Sending last segment to %llu with rkey %lu",
-					  r_desc->m_state->r_buf[i].segment[0].mr.addr,
-					  r_desc->m_state->r_buf[i].segment[0].mr.rkey);
+				log_debug("Sending last segment to %lu with rkey %lu",
+					  (uint64_t)r_desc->m_state->r_buf[i].segment[0].mr.addr,
+					  (uint64_t)r_desc->m_state->r_buf[i].segment[0].mr.rkey);
 				while (1) {
 					int ret =
 						rdma_post_write(r_conn->rdma_cm_id, &task->msg_ctx[0], last_segment,
@@ -1094,8 +1104,9 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 
 				log_debug("Successfully sent the last segment to server: %s for region %s",
 					  r_desc->region->backups[i].kreon_ds_hostname, r_desc->region->id);
-				r_desc->next_segment_to_flush = r_desc->db->db_desc->KV_log_size -
-								(r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);
+				/*TODO tebis-parallax no replication should not care aboyt this*/
+				/* r_desc->next_segment_to_flush = r_desc->db->db_desc->KV_log_size -
+								(r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE);*/
 			}
 
 			log_info("Success RDMA buffers initialized for all replicas of region %s", r_desc->region->id);
@@ -1202,7 +1213,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 		case INS_TO_KREON: {
 			task->ins_req.metadata.handle = task->r_desc->db;
 			task->ins_req.metadata.kv_size = 0;
-			task->ins_req.key_value_buf = task->key;
+			task->ins_req.key_value_buf = (char *)task->key;
 			task->ins_req.metadata.level_id = 0;
 			task->ins_req.metadata.key_format = KV_FORMAT;
 			task->ins_req.metadata.append_to_log = 1;
@@ -1211,7 +1222,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 			task->ins_req.metadata.segment_full_event = 0;
 			task->ins_req.metadata.special_split = 0;
 
-			if (_insert_key_value(&task->ins_req) == FAILED) {
+			if (_insert_key_value(&task->ins_req) == PARALLAX_FAILURE) {
 				krm_leave_kreon(task->r_desc);
 				return;
 			}
@@ -1498,7 +1509,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 		}
 	}
 }
-
+/*TODO closing this for now since it is used at flush log procedure*/
+/*
 static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t dev_offt, int fd)
 {
 	ssize_t total_bytes_written = 0;
@@ -1514,7 +1526,7 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 	}
 	return 1;
 }
-
+*/
 static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
@@ -1533,7 +1545,17 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		}
 		task->r_desc = (void *)r_desc;
 
-		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
+		par_handle par_hd = (par_handle)task->r_desc->db;
+		struct par_key pkey;
+		pkey.data = task->key->key;
+		pkey.size = task->key->key_size;
+		if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND) {
+			log_warn("Key %s in update_if_exists for region %s not found!", task->key->key,
+				 r_desc->region->id);
+			_exit(EXIT_FAILURE);
+		}
+		/*TODO remove this?
+			if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
 			int level_id;
 			if (find_kv_offt(r_desc->db, &task->key, &level_id)) {
 				log_warn("Key %s in update_if_exists for region %s not found!", task->key,
@@ -1541,6 +1563,7 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 				_exit(EXIT_FAILURE);
 			}
 		}
+		*/
 	}
 
 	if (!init_replica_connections(mydesc, task))
@@ -1572,12 +1595,20 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	/*TODO IMPORTANT*/
+	(void)mydesc;
+	(void)task;
+	log_debug(
+		"closing get req for now to avoid compile errors, this SHOULD BE implemented in tebis-parallax no replications scheme");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
 	assert(task->msg->msg_type == GET_REQUEST);
 	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
 	int level_id;
-	/*kreon phase*/
+	//kreon phase
 	get_req = (struct msg_get_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_req->key, get_req->key_size);
 
@@ -1646,17 +1677,23 @@ exit:
 	if (L.in_tail)
 		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
 
-	/*piggyback info for use with the client*/
-	/*finally fix the header*/
+	//finally fix the header
 	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
+*/
 }
 
 static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
+	(void)task;
+	log_debug("Close scans since we dont use them for now (the tebis-parallax no replication porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	msg_multi_get_req *multi_get;
 	scannerHandle *sc;
 	msg_value zero_value;
@@ -1677,7 +1714,7 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 		// later...
 		return;
 	}
-	/*create an internal scanner object*/
+	//create an internal scanner object
 	sc = (scannerHandle *)malloc(sizeof(scannerHandle));
 
 	if (multi_get->seek_mode != FETCH_FIRST) {
@@ -1689,7 +1726,7 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 		init_dirty_scanner(sc, r_desc->db, NULL, FETCH_FIRST);
 	}
 
-	/*put the data in the buffer*/
+	//put the data in the buffer
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	msg_multi_get_rep *buf = (msg_multi_get_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
@@ -1748,8 +1785,8 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 	free(sc);
 	krm_leave_kreon(r_desc);
 
-	/*finally fix the header*/
-	/*set now the actual capacity*/
+	//finally fix the header
+	//set now the actual capacity
 	buf->capacity = buf->capacity - buf->remaining;
 	buf->remaining = buf->capacity;
 
@@ -1759,7 +1796,7 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 	else
 		padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
 
-	/*set tail to the proper value*/
+	//set tail to the proper value
 	*(uint32_t *)((uint64_t)task->reply_msg + (actual_reply_size - TU_TAIL_SIZE) + padding) = TU_RDMA_REGULAR_MSG;
 
 	// assert((actual_reply_size + padding) % MESSAGE_SEGMENT_SIZE == 0);
@@ -1768,13 +1805,20 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 	fill_reply_msg(task->reply_msg, task, sizeof(msg_multi_get_rep) + (buf->capacity - buf->remaining),
 		       MULTI_GET_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
+*/
 }
 
 static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
+	(void)task;
+	log_debug("Closing delete ops since we dont use them for now (tebis-parallax) replication");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	uint32_t actual_reply_size = 0;
 	uint32_t padding;
-	/*GESALOUS is this a bug???*/
+	//GESALOUS is this a bug???
 	msg_delete_req *del_req = (msg_delete_req *)(task->msg + sizeof(msg_header));
 	assert(task->msg->msg_type == DELETE_REQUEST);
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, del_req->key, del_req->key_size);
@@ -1794,10 +1838,10 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	/*piggyback info for use with the client*/
+	//piggyback info for use with the client
 	actual_reply_size = sizeof(msg_header) + sizeof(msg_delete_rep) + TU_TAIL_SIZE;
 	padding = MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE);
-	/*set tail to the proper value*/
+	//set tail to the proper value
 	*(uint32_t *)((uint64_t)task->reply_msg + actual_reply_size + (padding - TU_TAIL_SIZE)) = TU_RDMA_REGULAR_MSG;
 
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
@@ -1812,11 +1856,18 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 		del_rep->status = KREON_FAILURE;
 		// log_info("Deleted key %s not found!", del_req->key);
 	}
+*/
 }
 
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
+	(void)task;
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
+	log_debug("Temporary closing flush command for Parallax no replciation porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	// log_info("Master orders a flush, obey your master!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -1842,7 +1893,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		rco_build_index(&t);
 	} else {
 		pthread_mutex_lock(&r_desc->db->db_desc->lock_log);
-		/*Now take a segment from the allocator and copy the buffer*/
+		//Now take a segment from the allocator and copy the buffer
 		volatile segment_header *last_log_segment = r_desc->db->db_desc->KV_log_last_segment;
 		// log_info("Last log segment id %llu id to flush %llu",
 		// last_log_segment->segment_id,
@@ -1928,7 +1979,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		r_desc->db->db_desc->KV_log_size += diff;
 		pthread_mutex_unlock(&r_desc->db->db_desc->lock_log);
 	}
-	/*time for reply :-)*/
+	//time for reply :-)
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
@@ -1940,12 +1991,19 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("Responded to server!");
+*/
 }
 
 static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	void *addr;
+	(void)mydesc;
+	(void)task;
 	assert(task->msg->msg_type == GET_LOG_BUFFER_REQ);
+	log_debug("Closing get_log_buffer req for parallax no replication porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
+	void *addr;
 	struct s2s_msg_get_log_buffer_req *get_log =
 		(struct s2s_msg_get_log_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -1971,7 +2029,7 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 			r_desc->r_state->seg[i].segment_size = get_log->buffer_size;
 			r_desc->r_state->seg[i].mr = rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
 		}
-		/* what is the next segment id that we should expect (for correctness reasons) */
+		// what is the next segment id that we should expect (for correctness reasons)
 		if (r_desc->db->db_desc->KV_log_size > 0 && r_desc->db->db_desc->KV_log_size % SEGMENT_SIZE == 0)
 			r_desc->r_state->next_segment_id_to_flush =
 				r_desc->db->db_desc->KV_log_last_segment->segment_id + 1;
@@ -1995,18 +2053,25 @@ static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, str
 		rep->mr = *r_desc->r_state->seg[i].mr;
 	}
 
-	/*piggyback info for use with the client*/
+	//piggyback info for use with the client
 	fill_reply_msg(task->reply_msg, task,
 		       sizeof(struct s2s_msg_get_log_buffer_rep) + (get_log->num_buffers * sizeof(struct ibv_mr)),
 		       GET_LOG_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	log_debug("Region master wants a log buffer...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
+*/
 }
 
 static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
+	(void)task;
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
+	log_debug("Closing index_get_buffer req for parallax no replication porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	struct s2s_msg_replica_index_get_buffer_req *g_req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2057,11 +2122,18 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		       REPLICA_INDEX_GET_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
+*/
 }
 
 static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
+	(void)task;
 	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
+	log_debug("Closing index flush req for parallax no replication porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+	/*
 	struct s2s_msg_replica_index_flush_req *f_req =
 		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -2086,7 +2158,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	di_rewrite_index_with_explicit_IO(r_desc->r_state->index_buffers[f_req->level_id][0]->addr, r_desc,
 					  f_req->primary_segment_offt, f_req->level_id);
 	if (f_req->is_last) {
-		/*translate root*/
+		//translate root
 		if (!f_req->root_w && !f_req->root_r) {
 			log_fatal("Both roots can't be NULL");
 			_exit(EXIT_FAILURE);
@@ -2122,7 +2194,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 			if (index_entry == NULL) {
 				log_fatal("Cannot translate root_r for primary's segment %llu of db %s",
 					  primary_segment_offt, r_desc->db->db_desc->db_name);
-				/*raise(SIGINT);*/
+				//raise(SIGINT);
 				_exit(EXIT_FAILURE);
 			}
 			r_desc->db->db_desc->levels[f_req->level_id].root_r[f_req->tree_id] =
@@ -2175,7 +2247,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 		l->root_r[1] = NULL;
 		log_debug("Destroying mappings for index level %d useless now", f_req->level_id);
 
-		/*iterate over regions*/
+		//iterate over regions
 		struct krm_segment_entry *current, *tmp;
 
 		HASH_ITER(hh, r_desc->replica_index_map[f_req->level_id], current, tmp)
@@ -2191,7 +2263,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	struct s2s_msg_replica_index_flush_rep *rep =
 		(struct s2s_msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	rep->status = KREON_SUCCESS;
-	/*GESALOUS check this*/
+	//GESALOUS check this
 	rep->seg_id = f_req->seg_id;
 
 	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_flush_rep), REPLICA_INDEX_FLUSH_REP);
@@ -2199,6 +2271,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_info("REPLICA: Successfully flushed index segment id %d",
 	// f_req->seg_id);
+*/
 }
 
 static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)

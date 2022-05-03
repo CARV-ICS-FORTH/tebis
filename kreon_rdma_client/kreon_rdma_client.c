@@ -13,13 +13,13 @@
 #include <string.h>
 #include <time.h>
 //#include "../kreon_server/client_regions.h"
-#include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_rdma/rdma.h"
 #include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/messages.h"
 #include "../utilities/spin_loop.h"
 #include <log.h>
+#include <scanner/scanner.h>
 #define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;
@@ -296,10 +296,10 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 	msg_put_rep *put_rep;
 
 	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
-		log_fatal("KV size too large currently for Kreon, current max value size supported = %u bytes",
+		log_fatal("KV size too large currently for Kreon, current max value size supported = %lu bytes",
 			  SEGMENT_SIZE - sizeof(segment_header));
 		log_fatal("Contact gesalous@ics.forth.gr");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	//old school
 	//client_region *region = client_find_region(key, key_size);
@@ -351,7 +351,7 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
 	/*check ret code*/
 	if (put_rep->status != KREON_SUCCESS) {
-		log_fatal("put operation failed for key %s", key);
+		log_fatal("put operation failed for key %s", (char *)key);
 		_exit(EXIT_FAILURE);
 	}
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
@@ -668,7 +668,7 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
 	if (del_rep->status != KREON_SUCCESS) {
-		log_warn("Key %s not found!", key);
+		log_warn("Key %s not found!", (char *)key);
 		error_code = KRC_KEY_NOT_FOUND;
 	} else
 		error_code = KRC_SUCCESS;
@@ -1002,8 +1002,8 @@ krc_ret_code krc_close()
 		while (spinner->outstanding_requests != 0) {
 			clock_gettime(CLOCK_MONOTONIC, &current);
 			if (print && current.tv_sec - start.tv_sec > 5) {
-				log_info("%d: Operation count = %u, replies = %u, outstanding = %u", getpid(),
-					 operation_count, replies_arrived);
+				log_info("%d: Operation count = %u, replies = %u", getpid(), operation_count,
+					 replies_arrived);
 				print = false;
 			}
 		}
@@ -1067,7 +1067,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	msg_put_rep *put_rep = NULL;
 
 	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
-		log_fatal("KV size too large currently for Kreon, current max value size supported = %u bytes",
+		log_fatal("KV size too large currently for Kreon, current max value size supported = %lu bytes",
 			  SEGMENT_SIZE - sizeof(segment_header));
 		log_fatal("Contact gesalous@ics.forth.gr");
 		_exit(EXIT_FAILURE);

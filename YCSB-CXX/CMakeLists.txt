@@ -14,7 +14,7 @@ if(Zookeeper_LIBRARY)
     ycsb-blocking-kreon
     kreon_client
     kreon_rdma
-    kreonr
+    parallax
     log
     libbloom
     ${Zookeeper_LIBRARY}
@@ -34,7 +34,7 @@ if(Zookeeper_LIBRARY)
     ycsb-async-kreon
     kreon_client
     kreon_rdma
-    kreonr
+    parallax
     log
     libbloom
     ${Zookeeper_LIBRARY}

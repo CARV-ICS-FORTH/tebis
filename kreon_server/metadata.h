@@ -1,10 +1,10 @@
 #pragma once
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
-#include "../kreon_lib/btree/btree.h"
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/list.h"
 #include "uthash.h"
+#include <btree/btree.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
@@ -333,7 +333,7 @@ struct krm_server_desc {
 	char mail_path[KRM_HOSTNAME_SIZE];
 	sem_t wake_up;
 	pthread_mutex_t msg_list_lock;
-	struct klist *msg_list;
+	struct tebis_klist *msg_list;
 	zhandle_t *zh;
 	struct rco_pool *compaction_pool;
 	uint8_t IP[IP_SIZE];
@@ -374,7 +374,7 @@ struct rco_task_queue {
 	pthread_cond_t queue_monitor;
 	int my_id;
 	int sleeping;
-	struct klist *task_queue;
+	struct tebis_klist *task_queue;
 };
 
 struct rco_pool {

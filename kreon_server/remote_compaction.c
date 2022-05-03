@@ -1,7 +1,8 @@
 #define _GNU_SOURCE
-#include "../utilities/list.h"
+#include "../utilities/spin_loop.h"
 #include "djb2.h"
 #include "globals.h"
+#include "list.h"
 #include "metadata.h"
 #include <infiniband/verbs.h>
 #include <log.h>
@@ -88,7 +89,7 @@ static struct rco_db_map_entry *find_db_entry_in_db_map(uint64_t db_id)
 	pthread_mutex_lock(&db_map_lock);
 	HASH_FIND_PTR(db_map, &db_id, entry);
 	if (entry == NULL) {
-		log_fatal("Cannot find pool for db with id %llu", db_id);
+		log_fatal("Cannot find pool for db with id %lu", db_id);
 		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
@@ -232,7 +233,7 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 	HASH_FIND_PTR(db_map, &db_id, db_entry);
 
 	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db id %llu", db_id);
+		log_fatal("Cannot find pool for db id %lu", db_id);
 		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
@@ -358,8 +359,8 @@ int rco_flush_last_log_segment(void *handle)
 	pthread_mutex_lock(&db_map_lock);
 	HASH_FIND_PTR(db_map, &hd->db_desc, db_entry);
 	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db %s", hd->db_desc->db_name);
-		exit(EXIT_FAILURE);
+		log_fatal("Cannot find pool for db %s", hd->db_desc->db_volume->volume_name);
+		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
 
@@ -374,14 +375,14 @@ int rco_flush_last_log_segment(void *handle)
 	pthread_rwlock_wrlock(&r_desc->kreon_lock);
 	if (r_desc->status == KRM_HALTED) {
 		log_fatal("Region already halted?");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	} else {
 		r_desc->status = KRM_HALTED;
 		pthread_rwlock_unlock(&r_desc->kreon_lock);
 		log_info("Successfully set region %s in KRM_HALTED state", r_desc->region->id);
-		log_info("Waiting for pending tasks %lld to finish", r_desc->pending_region_tasks);
+		log_info("Waiting for pending tasks %ld to finish", r_desc->pending_region_tasks);
 		spin_loop((int64_t *)&r_desc->pending_region_tasks, 0);
-		log_info("Ok all pending tasks finished for region %s", r_desc->pending_region_tasks);
+		log_info("Ok all pending tasks finished for region %s", r_desc->region->id);
 	}
 
 	/*Acquire guard lock and wait writers to finish*/
@@ -408,7 +409,7 @@ int rco_flush_last_log_segment(void *handle)
 		assert(0);
 		_exit(EXIT_FAILURE);
 	}
-	spin_loop(&(hd->db_desc->levels[0].active_writers), 0);
+	spin_loop(&(hd->db_desc->levels[0].active_operations), 0);
 	/*Now check what is the rdma's buffer id which corresponds to the last
 * segment*/
 	uint64_t lc1 = 0;
@@ -417,12 +418,14 @@ int rco_flush_last_log_segment(void *handle)
 	for (int i = 0; i < RU_REPLICA_NUM_SEGMENTS; i++) {
 	retry:
 		lc1 = r_desc->m_state->r_buf[0].segment[i].lc1;
-		log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
+		/*XXX TODO no replication should not care about this*/
+		/*log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
 			 i, r_desc->m_state->r_buf[0].segment[i].start, i, r_desc->m_state->r_buf[0].segment[i].end);
 		if (hd->db_desc->KV_log_size > r_desc->m_state->r_buf[0].segment[i].start &&
 		    hd->db_desc->KV_log_size <= r_desc->m_state->r_buf[0].segment[i].end) {
 			seg_id_to_flush = i;
 		}
+		*/
 		lc2 = r_desc->m_state->r_buf[0].segment[i].lc2;
 		if (lc1 != lc2)
 			goto retry;
@@ -477,16 +480,19 @@ int rco_flush_last_log_segment(void *handle)
 		/*where primary has stored its segment*/
 		f_req->is_partial = 1;
 		f_req->log_buffer_id = seg_id_to_flush;
-		f_req->master_segment = (uint64_t)hd->db_desc->KV_log_last_segment - MAPPED;
+		/*XXX TODO no replication should not care about kv_log_size*/
+		/*f_req->master_segment = (uint64_t)hd->db_desc->KV_log_last_segment - MAPPED;
 		f_req->segment_id = hd->db_desc->KV_log_last_segment->segment_id;
 		f_req->end_of_log = hd->db_desc->KV_log_size;
 		f_req->log_padding = SEGMENT_SIZE - (hd->db_desc->KV_log_size % SEGMENT_SIZE);
+		*/
 		f_req->region_key_size = r_desc->region->min_key_size;
 		strcpy(f_req->region_key, r_desc->region->min_key);
 		__send_rdma_message(p[i].conn, req_header, NULL);
 
-		log_info("Sent flush command for last segment to server: %s waiting for replies seg id is %llu",
+		/*log_info("Sent flush command for last segment to server: %s waiting for replies seg id is %llu",
 			 r_desc->region->backups[i].kreon_ds_hostname, f_req->segment_id);
+		*/
 	}
 
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
@@ -528,8 +534,8 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	pthread_mutex_lock(&db_map_lock);
 	HASH_FIND_PTR(db_map, &c->db_desc, db_entry);
 	if (db_entry == NULL) {
-		log_fatal("Cannot find pool for db %s", c->db_desc->db_name);
-		_exit(EXIT_FAILURE);
+		log_fatal("Cannot find pool for db %s", c->db_desc->db_volume->volume_name);
+		exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
 
@@ -651,8 +657,8 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			/*unroll the reply*/
 			log_info("Got buffers from replica id %u from my group for db: %s of "
 				 "tree[%d][%d]",
-				 task->replica_id_cnt, task->r_desc->db->db_desc->db_name, task->level_id,
-				 task->tree_id);
+				 task->replica_id_cnt, task->r_desc->db->db_desc->db_volume->volume_name,
+				 task->level_id, task->tree_id);
 			struct s2s_msg_replica_index_get_buffer_rep *g_rep =
 				(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply +
 										sizeof(struct msg_header));
@@ -725,7 +731,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			memcpy(task->local_mem_buf[seg_id]->addr, task->curr_index_segment, SEGMENT_SIZE);
 			task->seg_hash[seg_id] =
 				djb2_hash((unsigned char *)task->local_mem_buf[seg_id]->addr, SEGMENT_SIZE);
-			log_info("Hash for seg[%u] = %llu seg id (to send) %lu", seg_id, task->seg_hash[seg_id],
+			log_info("Hash for seg[%u] = %lu seg id (to send) %d", seg_id, task->seg_hash[seg_id],
 				 task->seg_id_to_send);
 			task->local_mem_buf_dirty[seg_id] = 1;
 			// custom dbg to be removed
@@ -867,7 +873,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				f_req->tree_id = task->tree_id;
 				f_req->seg_id = task->seg_id_to_flush;
 				f_req->seg_hash = task->seg_hash[f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS];
-				log_info("Attached hash seg[%u] = %llu", f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS,
+				log_info("Attached hash seg[%u] = %lu", f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS,
 					 f_req->seg_hash);
 				f_req->is_last = task->is_seg_last;
 				if (task->is_seg_last) {
@@ -953,7 +959,7 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 			log_fatal("Failed to initialize queue monitor");
 			_exit(EXIT_FAILURE);
 		}
-		pool->worker_queue[i].task_queue = klist_init();
+		pool->worker_queue[i].task_queue = tebis_klist_init();
 		pool->worker_queue[i].my_id = i;
 		if (pthread_create(&pool->worker_queue[i].cnxt, NULL, rco_compaction_worker, &pool->worker_queue[i]) !=
 		    0) {
@@ -977,7 +983,7 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 	pthread_mutex_unlock(&pool->pool_lock);
 
 	pthread_mutex_lock(&pool->worker_queue[chosen_id].queue_lock);
-	klist_add_last(pool->worker_queue[chosen_id].task_queue, compaction_task, NULL, NULL);
+	tebis_klist_add_last(pool->worker_queue[chosen_id].task_queue, compaction_task, NULL, NULL);
 	if (pool->worker_queue[chosen_id].sleeping) {
 		// log_info("guy is sleeping wake him up");
 		if (pthread_cond_broadcast(&pool->worker_queue[chosen_id].queue_monitor) != 0) {
@@ -1069,7 +1075,7 @@ static void *rco_compaction_worker(void *args)
 		while (node == NULL) {
 			/*get something from the queue otherwise sleep*/
 			pthread_mutex_lock(&my_queue->queue_lock);
-			node = klist_remove_first(my_queue->task_queue);
+			node = tebis_klist_remove_first(my_queue->task_queue);
 			if (node == NULL) {
 				my_queue->sleeping = 1;
 				if (pthread_cond_wait(&my_queue->queue_monitor, &my_queue->queue_lock) != 0) {
@@ -1088,7 +1094,7 @@ static void *rco_compaction_worker(void *args)
 			sem_post(t->sem);
 		} else {
 			pthread_mutex_lock(&my_queue->queue_lock);
-			klist_add_last(my_queue->task_queue, node, NULL, NULL);
+			tebis_klist_add_last(my_queue->task_queue, node, NULL, NULL);
 			pthread_mutex_unlock(&my_queue->queue_lock);
 		}
 	}
