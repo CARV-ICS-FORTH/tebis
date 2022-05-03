@@ -637,7 +637,7 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 void ec_sig_handler(int signo)
 {
 	(void)signo;
-	struct sigaction sa = {};
+	struct sigaction sa = { 0 };
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_handler = ec_sig_handler;
@@ -836,24 +836,23 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 		case IBV_WC_RECV:
 			// log_info("IBV_WC_RECV code id of connection %d", conn->idconn);
 			break;
-		case IBV_WC_RDMA_WRITE: {
-			msg_header *msg = msg_ctx->msg;
-			if (NULL == msg)
-				break;
-
-			switch (msg->msg_type) {
-			/*server to server new school*/
-			case GET_LOG_BUFFER_REQ:
-			case GET_LOG_BUFFER_REP:
-			case FLUSH_COMMAND_REQ:
-			case FLUSH_COMMAND_REP:
-				break;
-			/*client to server RPCs*/
-			case DISCONNECT:
-				break;
-			default:
-				log_fatal("Entered unplanned state FATAL for message type %d", msg->msg_type);
-				_exit(EXIT_FAILURE);
+		case IBV_WC_RDMA_WRITE:;
+			struct msg_header *msg = msg_ctx->msg;
+			if (msg) {
+				switch (msg->msg_type) {
+				/*server to server new school*/
+				case GET_LOG_BUFFER_REQ:
+				case GET_LOG_BUFFER_REP:
+				case FLUSH_COMMAND_REQ:
+				case FLUSH_COMMAND_REP:
+					break;
+				/*client to server RPCs*/
+				case DISCONNECT:
+					break;
+				default:
+					log_fatal("Entered unplanned state FATAL for message type %d", msg->msg_type);
+					_exit(EXIT_FAILURE);
+				}
 			}
 			break;
 		}

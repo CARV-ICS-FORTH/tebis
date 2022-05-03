@@ -605,8 +605,8 @@ static void print_task(struct krm_work_task *task)
 				task->r_desc->m_state->r_buf[i].segment[task->seg_id_to_flush].replicated_bytes;
 			remaining = SEGMENT_SIZE - (remaining + task->ins_req.metadata.log_padding);
 			log_debug(
-				"Sorry segment with replica %u not ready bytes remaining to replicate %u task %p seg if %u key size is %lu",
-				i, remaining, task, task->seg_id_to_flush, task->kv_size);
+				"Sorry segment with replica %u not ready bytes remaining to replicate %u task %lu seg if %u key size is %lu",
+				i, remaining, (uint64_t)task, task->seg_id_to_flush, task->kv_size);
 		}
 		break;
 	default:
@@ -643,8 +643,8 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 
 		if (0 == ++task->rescheduling_counter % 1000000) {
 			log_warn(
-				"Suspicious task %p for region %s has been rescheduled %lu times pending region tasks are: %lu state is %u",
-				task, task->r_desc->region->id, task->rescheduling_counter,
+				"Suspicious task %lu for region %s has been rescheduled %lu times pending region tasks are: %lu state is %u",
+				(uint64_t)task, task->r_desc->region->id, task->rescheduling_counter,
 				task->r_desc->pending_region_tasks, task->kreon_operation_status);
 			print_task(task);
 			b_detection = 1;
