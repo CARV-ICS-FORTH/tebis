@@ -1209,18 +1209,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 	while (1) {
 		switch (task->kreon_operation_status) {
 		case INS_TO_KREON: {
-			task->ins_req.metadata.handle = task->r_desc->db;
-			task->ins_req.metadata.kv_size = 0;
-			task->ins_req.key_value_buf = (char *)task->key;
-			task->ins_req.metadata.level_id = 0;
-			task->ins_req.metadata.key_format = KV_FORMAT;
-			task->ins_req.metadata.append_to_log = 1;
-			task->ins_req.metadata.gc_request = 0;
-			task->ins_req.metadata.recovery_request = 0;
-			task->ins_req.metadata.segment_full_event = 0;
-			task->ins_req.metadata.special_split = 0;
-
-			if (_insert_key_value(&task->ins_req) == PARALLAX_FAILURE) {
+			if (insert_key_value(task->r_desc->db, task->key->key, task->value->value, task->key->key_size,
+					     task->value->value_size, insertOp) == PARALLAX_FAILURE) {
 				krm_leave_kreon(task->r_desc);
 				return;
 			}
@@ -1525,6 +1515,20 @@ static int write_segment_with_explicit_IO(char *buf, ssize_t num_bytes, ssize_t 
 	return 1;
 }
 */
+
+static uint8_t key_exists(struct krm_work_task *task)
+{
+	assert(task);
+	par_handle par_hd = (par_handle)task->r_desc->db;
+	struct par_key pkey;
+	pkey.data = task->key->key;
+	pkey.size = task->key->key_size;
+	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
+		return 0;
+
+	return 1;
+}
+
 static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
@@ -1542,15 +1546,12 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 			_exit(EXIT_FAILURE);
 		}
 		task->r_desc = (void *)r_desc;
-
-		par_handle par_hd = (par_handle)task->r_desc->db;
-		struct par_key pkey;
-		pkey.data = task->key->key;
-		pkey.size = task->key->key_size;
-		if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND) {
-			log_warn("Key %s in update_if_exists for region %s not found!", task->key->key,
-				 r_desc->region->id);
-			_exit(EXIT_FAILURE);
+		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
+			if (!key_exists(task)) {
+				log_warn("Key %s in update if exists for region %s not found!", task->key->key,
+					 r_desc->region->id);
+				_exit(EXIT_FAILURE);
+			}
 		}
 	}
 
@@ -1583,20 +1584,9 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	/*TODO IMPORTANT*/
-	(void)mydesc;
-	(void)task;
-	log_debug(
-		"closing get req for now to avoid compile errors, this SHOULD BE implemented in tebis-parallax no replications scheme");
-	assert(0);
-	_exit(EXIT_FAILURE);
-	/*
 	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
 	assert(task->msg->msg_type == GET_REQUEST);
-	struct bt_kv_log_address L = { .addr = NULL, .in_tail = 0, .tail_id = UINT8_MAX };
-	int level_id;
-	//kreon phase
 	get_req = (struct msg_get_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_req->key, get_req->key_size);
 
@@ -1614,10 +1604,14 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(struct msg_header));
-	uint64_t kv_offt = find_kv_offt(r_desc->db, &get_req->key_size, &level_id);
+
+	par_handle par_hd = (par_handle)task->r_desc->db;
+	struct par_key lookup_key = { .size = get_req->key_size, .data = get_req->key };
+	struct par_value lookup_value = { .val_buffer = NULL };
+	par_ret_code get_code = par_get(par_hd, &lookup_key, &lookup_value);
 	krm_leave_kreon(r_desc);
 
-	if (kv_offt == 0) {
+	if (get_code == PAR_KEY_NOT_FOUND) {
 		log_warn("key not found key %s : length %u", get_req->key, get_req->key_size);
 
 		get_rep->key_found = 0;
@@ -1629,28 +1623,23 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	} else {
 		get_rep->key_found = 1;
 		// tranlate now
-		if (level_id)
-			L.addr = bt_get_real_address(kv_offt);
-		else
-			L = bt_get_kv_log_address(r_desc->db->db_desc, kv_offt);
-		char *value_p = (char *)L.addr + *(uint32_t *)L.addr + sizeof(uint32_t);
-		if (get_req->offset > *(uint32_t *)value_p) {
+		if (get_req->offset > lookup_value.val_size) {
 			get_rep->offset_too_large = 1;
 			get_rep->value_size = 0;
-			get_rep->bytes_remaining = *(uint32_t *)value_p;
+			get_rep->bytes_remaining = lookup_value.val_size;
 			goto exit;
 		} else
 			get_rep->offset_too_large = 0;
 		if (!get_req->fetch_value) {
-			get_rep->bytes_remaining = *(uint32_t *)value_p - get_req->offset;
+			get_rep->bytes_remaining = lookup_value.val_size - get_req->offset;
 			get_rep->value_size = 0;
 			goto exit;
 		}
-		uint32_t value_bytes_remaining = *(uint32_t *)value_p - get_req->offset;
+		uint32_t value_bytes_remaining = lookup_value.val_size - get_req->offset;
 		uint32_t bytes_to_read = 0;
 		if (get_req->bytes_to_read <= value_bytes_remaining) {
 			bytes_to_read = get_req->bytes_to_read;
-			get_rep->bytes_remaining = *(uint32_t *)value_p - (get_req->offset + bytes_to_read);
+			get_rep->bytes_remaining = lookup_value.val_size - (get_req->offset + bytes_to_read);
 		} else {
 			bytes_to_read = value_bytes_remaining;
 			get_rep->bytes_remaining = 0;
@@ -1658,20 +1647,16 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 		get_rep->value_size = bytes_to_read;
 		// log_info("Client wants to read %u will read
 		// %u",get_req->bytes_to_read,bytes_to_read);
-		memcpy(get_rep->value, value_p + sizeof(uint32_t) + get_req->offset, bytes_to_read);
+		memcpy(get_rep->value, lookup_value.val_buffer, bytes_to_read);
 	}
 
-exit:
-	if (L.in_tail)
-		bt_done_with_value_log_address(r_desc->db->db_desc, &L);
-
+exit:;
 	//finally fix the header
 	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
 
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
-*/
 }
 
 static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
