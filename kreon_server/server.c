@@ -14,7 +14,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "conf.h"
-#include "include/parallax.h"
+#include <include/parallax.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -40,8 +40,6 @@
 #include "messages.h"
 #include "metadata.h"
 #include "stats.h"
-#include <allocator/device_structures.h>
-#include <allocator/volume_manager.h>
 #include <btree/btree.h>
 #include <log.h>
 #include <scanner/scanner.h>
@@ -1153,7 +1151,7 @@ static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task 
 			break;
 		default:
 			log_fatal("Unhandled state");
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		pthread_rwlock_unlock(&r_desc->kreon_lock);
 		return ret;
@@ -1533,8 +1531,8 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
-		task->key = (msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
-		task->value = (msg_put_value *)((uint64_t)task->key + sizeof(msg_put_key) + task->key->key_size);
+		task->key = (struct msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
+		task->value = (struct msg_put_value *)((uint64_t)task->key + sizeof(msg_put_key) + task->key->key_size);
 		uint32_t key_length = task->key->key_size;
 		assert(key_length != 0);
 		struct krm_region_desc *r_desc = krm_get_region(mydesc, task->key->key, task->key->key_size);
@@ -1554,16 +1552,6 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 				 r_desc->region->id);
 			_exit(EXIT_FAILURE);
 		}
-		/*TODO remove this?
-			if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
-			int level_id;
-			if (find_kv_offt(r_desc->db, &task->key, &level_id)) {
-				log_warn("Key %s in update_if_exists for region %s not found!", task->key,
-					 r_desc->region->id);
-				_exit(EXIT_FAILURE);
-			}
-		}
-		*/
 	}
 
 	if (!init_replica_connections(mydesc, task))
@@ -1576,15 +1564,15 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		krm_leave_kreon(task->r_desc);
 
 		/*prepare the reply*/
-		task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-					   task->msg->offset_reply_in_recv_buffer);
+		task->reply_msg = (struct msg_header *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+							task->msg->offset_reply_in_recv_buffer);
 
 		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
-			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 			put_rep->status = KREON_SUCCESS;
+			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 		} else {
 			log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
 				  task->msg->reply_length_in_recv_buffer);

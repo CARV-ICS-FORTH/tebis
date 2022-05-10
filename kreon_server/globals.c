@@ -3,8 +3,8 @@
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/macros.h"
 #include "conf.h"
-#include <allocator/volume_manager.h>
 #include <fcntl.h>
+#include <include/parallax.h>
 #include <linux/fs.h>
 #include <linux/hdreg.h>
 #include <log.h>
@@ -226,7 +226,7 @@ void globals_init_volume(void)
 			_exit(EXIT_FAILURE);
 		}
 		log_info("underyling volume is a block device %s of size %ld bytes", global_vars.dev, size);
-		volume_init(global_vars.dev, 0, size, 0);
+		par_format(global_vars.dev, 128);
 	} else {
 		log_info("Retrieving file: %s size...", global_vars.dev);
 		size = lseek64(fd, 0, SEEK_END);
@@ -237,7 +237,7 @@ void globals_init_volume(void)
 		}
 		log_info("Volume is a file %s of size %ld bytes", global_vars.dev, size);
 		close(fd);
-		volume_init(global_vars.dev, 0, size, 1);
+		par_format(global_vars.dev, 128);
 	}
 
 	global_vars.volume_size = size;

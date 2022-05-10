@@ -2,8 +2,6 @@
 #include <stdint.h>
 
 #include "metadata.h"
-#include <allocator/device_structures.h>
-#include <allocator/mem_structures.h>
 #include <btree/btree.h>
 #include <log.h>
 

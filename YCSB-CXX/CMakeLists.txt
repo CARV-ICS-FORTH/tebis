@@ -23,7 +23,7 @@ if(Zookeeper_LIBRARY)
   set_target_properties(
     ycsb-blocking-kreon
     PROPERTIES LINK_FLAGS
-               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
+               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs -lrt"
                COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
 
   add_executable(
@@ -42,7 +42,7 @@ if(Zookeeper_LIBRARY)
   set_target_properties(
     ycsb-async-kreon
     PROPERTIES LINK_FLAGS
-               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
+               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs -lrt"
                COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
 
 endif()
