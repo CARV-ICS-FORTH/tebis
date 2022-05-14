@@ -1,4 +1,5 @@
 #include "rdma.h"
+#include "memory_region_pool.h"
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
@@ -75,14 +76,14 @@ void set_receive_field(struct msg_header *msg, uint8_t value)
 		return;
 
 	struct msg_header *last_msg_header =
-		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
+		(struct msg_header *)((char *)msg + msg->payload_length + msg->padding_and_tail_size);
 	last_msg_header->receive = value;
 }
 
 uint8_t get_receive_field(volatile struct msg_header *msg)
 {
 	struct msg_header *last_msg_header =
-		(struct msg_header *)((uint64_t)msg + msg->payload_length + msg->padding_and_tail_size);
+		(struct msg_header *)((char *)msg + msg->payload_length + msg->padding_and_tail_size);
 	return last_msg_header->receive;
 }
 
@@ -128,10 +129,7 @@ msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payl
 
 	uint8_t is_send_request = is_a_send_request(message_type);
 
-	circular_buffer *c_buf = conn->send_circular_buf;
-	if (!is_send_request)
-		c_buf = conn->recv_circular_buf;
-
+	circular_buffer *c_buf = is_send_request ? conn->send_circular_buf : conn->recv_circular_buf;
 	char *addr = NULL;
 	uint8_t space_not_ready = 0;
 	while (1) {
@@ -180,10 +178,7 @@ init_message:
 		msg->msg_type = UINT16_MAX;
 	msg->offset_in_send_and_target_recv_buffers = (uint64_t)msg - (uint64_t)c_buf->memory_region;
 
-	uint8_t expected_receive_field = TU_RDMA_REGULAR_MSG;
-	if (!is_send_request)
-		expected_receive_field = 0;
-
+	uint8_t expected_receive_field = is_send_request ? TU_RDMA_REGULAR_MSG : 0;
 	set_receive_field(msg, expected_receive_field);
 	return msg;
 }
@@ -210,23 +205,8 @@ int client_send_rdma_message(struct connection_rdma *conn, struct msg_header *ms
 
 int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_message_context *msg_ctx)
 {
-	// int i = 0;
-	// while (conn->pending_sent_messages >= MAX_WR) {
-	//	__sync_fetch_and_add(&conn->sleeping_workers, 1);
-	//	log_warn("Congestion in the write path throttling... %llu\n",
-	//(LLU)conn->pending_sent_messages);
-	//	sem_wait(&conn->congestion_control);
-	//	__sync_fetch_and_sub(&conn->sleeping_workers, 1);
-	//	if (++i % 100000 == 0) {
-	//		log_warn("Congestion in the write path throttling... %llu\n",
-	//(LLU)conn->pending_sent_messages);
-	//	}
-	//}
-
-	size_t msg_len = 0;
-	if (msg->payload_length) // FIXME This if shouldn't be necessary
-		msg_len = TU_HEADER_SIZE + msg->payload_length + msg->padding_and_tail_size;
-	else
+	size_t msg_len = TU_HEADER_SIZE + msg->payload_length + msg->padding_and_tail_size;
+	if (!msg->payload_length)
 		msg_len = TU_HEADER_SIZE;
 
 	/* *
@@ -912,5 +892,9 @@ arrived */
 void on_completion_client(struct rdma_message_context *msg_ctx)
 {
 	sem_post(&msg_ctx->wait_for_completion);
-	return;
+}
+
+uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf)
+{
+	return (uint64_t)msg - (uint64_t)c_buf->memory_region;
 }

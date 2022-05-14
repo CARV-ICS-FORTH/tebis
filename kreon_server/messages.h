@@ -166,8 +166,8 @@ struct s2s_msg_get_log_buffer_req {
 };
 
 struct s2s_msg_get_log_buffer_rep {
-	uint32_t status;
 	struct ibv_mr mr;
+	uint32_t status;
 	int num_buffers;
 };
 
@@ -200,8 +200,8 @@ struct s2s_msg_replica_index_get_buffer_req {
 };
 
 struct s2s_msg_replica_index_get_buffer_rep {
-	uint32_t status;
 	struct ibv_mr mr;
+	uint32_t status;
 	int num_buffers;
 };
 

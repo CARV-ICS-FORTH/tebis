@@ -119,10 +119,8 @@ endif()
 # -DCUSTOM_ZOOKEEPER_LIB_PATH=/home/user/zookeeper/usr/local/lib e.g.
 # -DCUSTOM_ZOOKEEPER_INCLUDE_PATH=/home/user/zookeeper/usr/local/include/zookeeper
 if(NOT CUSTOM_ZOOKEEPER_LIB_PATH)
-  set(CUSTOM_ZOOKEEPER_LIB_PATH
-      "/home1/public/geostyl/zookeeper_3.5.9_c_binding/lib")
-  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH
-      "/home1/public/geostyl/zookeeper_3.5.9_c_binding/include")
+  set(CUSTOM_ZOOKEEPER_LIB_PATH "")
+  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH "")
 endif()
 
 set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu

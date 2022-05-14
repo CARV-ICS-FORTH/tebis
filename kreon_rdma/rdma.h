@@ -328,3 +328,5 @@ uint32_t real_address_to_triggering_msg_offt(connection_rdma *conn, struct msg_h
 /*for starting a separate channel for each numa server*/
 struct ibv_context *get_rdma_device_context(char *devname);
 void *poll_cq(void *arg);
+
+uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf);

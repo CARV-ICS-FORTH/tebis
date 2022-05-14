@@ -19,26 +19,35 @@ struct sc_conn_per_server {
 	struct connection_rdma *conn;
 	UT_hash_handle hh;
 };
+
+struct fill_request_msg_info {
+	struct msg_header *request;
+	uint32_t request_size;
+	uint32_t request_padding;
+	uint32_t req_type;
+	struct msg_header *reply;
+};
 struct sc_conn_per_server *sc_root_data_cps = NULL;
 struct sc_conn_per_server *sc_root_compaction_cps = NULL;
 static pthread_mutex_t conn_map_lock = PTHREAD_MUTEX_INITIALIZER;
-static void fill_request_msg(connection_rdma *conn, struct msg_header *request, uint32_t request_size,
-			     uint32_t request_padding, uint32_t req_type, struct msg_header *reply)
+static void fill_request_msg(connection_rdma *conn, struct fill_request_msg_info msg_info)
 {
-	request->payload_length = 0;
-	request->padding_and_tail_size = 0;
-	if (request_size > 0) {
-		request->payload_length = request_size;
-		request->padding_and_tail_size = request_padding + TU_TAIL_SIZE;
+	msg_info.request->payload_length = 0;
+	msg_info.request->padding_and_tail_size = 0;
+	if (msg_info.request_size > 0) {
+		msg_info.request->payload_length = msg_info.request_size;
+		msg_info.request->padding_and_tail_size = msg_info.request_padding + TU_TAIL_SIZE;
 	}
-	request->msg_type = req_type;
-	request->offset_in_send_and_target_recv_buffers =
-		(uint64_t)request - (uint64_t)conn->send_circular_buf->memory_region;
-	request->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, request);
-	request->offset_reply_in_recv_buffer = ((uint64_t)reply - (uint64_t)conn->recv_circular_buf->memory_region);
-	request->reply_length_in_recv_buffer =
-		sizeof(msg_header) + reply->payload_length + reply->padding_and_tail_size;
-	set_receive_field(request, TU_RDMA_REGULAR_MSG);
+	msg_info.request->msg_type = msg_info.req_type;
+	msg_info.request->offset_in_send_and_target_recv_buffers =
+		calc_offset_in_send_and_target_recv_buffer(msg_info.request, conn->send_circular_buf);
+	msg_info.request->triggering_msg_offset_in_send_buffer =
+		real_address_to_triggering_msg_offt(conn, msg_info.request);
+	msg_info.request->offset_reply_in_recv_buffer =
+		((uint64_t)msg_info.reply - (uint64_t)conn->recv_circular_buf->memory_region);
+	msg_info.request->reply_length_in_recv_buffer =
+		sizeof(msg_header) + msg_info.reply->payload_length + msg_info.reply->padding_and_tail_size;
+	set_receive_field(msg_info.request, TU_RDMA_REGULAR_MSG);
 }
 
 static void fill_reply_msg(connection_rdma *conn, struct msg_header *reply, uint32_t reply_size, uint32_t reply_padding,
@@ -52,7 +61,7 @@ static void fill_reply_msg(connection_rdma *conn, struct msg_header *reply, uint
 	}
 	reply->msg_type = reply_type;
 	reply->offset_in_send_and_target_recv_buffers =
-		(uint64_t)reply - (uint64_t)conn->send_circular_buf->memory_region;
+		calc_offset_in_send_and_target_recv_buffer(reply, conn->send_circular_buf);
 	reply->offset_reply_in_recv_buffer = UINT32_MAX;
 	reply->reply_length_in_recv_buffer = UINT32_MAX;
 	reply->triggering_msg_offset_in_send_buffer = UINT32_MAX;
@@ -155,7 +164,13 @@ retry_allocate_reply:
 
 	/*init the headers*/
 	fill_reply_msg(conn, rep.reply, reply_size, reply_padding, rep_type);
-	fill_request_msg(conn, rep.request, request_size, request_padding, req_type, rep.reply);
+	struct fill_request_msg_info msg_info;
+	msg_info.request = rep.request;
+	msg_info.request_size = request_size;
+	msg_info.request_padding = request_padding;
+	msg_info.req_type = req_type;
+	msg_info.reply = rep.reply;
+	fill_request_msg(conn, msg_info);
 
 exit:
 	pthread_mutex_unlock(&conn->buffer_lock);

@@ -4,7 +4,7 @@
 #include <log.h>
 #include <zookeeper/zookeeper.h>
 
-uint8_t is_connected = 0;
+static uint8_t is_connected = 0;
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
 	(void)zkh;

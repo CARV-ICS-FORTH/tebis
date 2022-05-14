@@ -3,7 +3,7 @@
 #include "zk_utils.h"
 #include <log.h>
 #include <zookeeper/zookeeper.h>
-uint8_t is_connected = 0;
+static uint8_t is_connected = 0;
 
 static void zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 			    0);
 	if (rc != ZOK) {
 		log_fatal("Failed to create host node %s with error code %d", zk_path, rc);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	free(zk_path);
 }

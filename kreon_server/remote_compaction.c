@@ -497,7 +497,7 @@ int rco_flush_last_log_segment(void *handle)
 		uint8_t tail = get_receive_field(reply);
 		field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 	}
-	log_info("Send and acked flush last value log segment from all backups! Ready to compact");
+	log_debug("Send and acked flush last value log segment from all backups! Ready to compact");
 	/*##############################################################*/
 
 	/*Release guard lock*/
@@ -529,7 +529,7 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	HASH_FIND_PTR(db_map, &c->db_desc, db_entry);
 	if (db_entry == NULL) {
 		log_fatal("Cannot find pool for db %s", c->db_desc->db_name);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	pthread_mutex_unlock(&db_map_lock);
 
@@ -543,7 +543,7 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	assert(t->r_desc != NULL);
 	t->curr_index_segment = t->r_desc->db->db_desc->levels[c->dst_level].first_segment[c->dst_local_tree];
 	t->index_offset = t->r_desc->db->db_desc->levels[c->dst_level].offset[c->dst_local_tree];
-	log_info("Segments of index[%d][%d]", c->dst_level, c->dst_local_tree);
+	log_debug("Segments of index[%d][%d]", c->dst_level, c->dst_local_tree);
 	// struct segment_header *S = t->curr_index_segment;
 	// int id = 0;
 	// while(1){
