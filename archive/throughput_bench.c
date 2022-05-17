@@ -1,16 +1,15 @@
-#include <assert.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <immintrin.h>
-#include <unistd.h>
-#include <log.h>
 #include "../kreon_rdma_client/client_utils.h"
 #include "../kreon_rdma_client/kreon_rdma_client.h"
 #include "../kreon_server/globals.h"
 #include "../utilities/latency_monitor.h"
+#include <assert.h>
+#include <immintrin.h>
 #include <log.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
 
 unsigned Threads = 1;
 int Time = 60;

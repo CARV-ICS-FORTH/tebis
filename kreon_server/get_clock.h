@@ -37,14 +37,14 @@
 #ifndef GET_CLOCK_H
 #define GET_CLOCK_H
 
-#if defined (__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__)
 /* Note: only x86 CPUs which have rdtsc instruction are supported. */
 typedef unsigned long long cycles_t;
 static inline cycles_t get_cycles()
 {
 	unsigned low, high;
 	unsigned long long val;
-	asm volatile ("rdtsc" : "=a" (low), "=d" (high));
+	asm volatile("rdtsc" : "=a"(low), "=d"(high));
 	val = high;
 	val = (val << 32) | low;
 	return val;
@@ -57,7 +57,7 @@ static inline cycles_t get_cycles()
 {
 	cycles_t ret;
 
-	asm volatile ("mftb %0" : "=r" (ret) : );
+	asm volatile("mftb %0" : "=r"(ret) :);
 	return ret;
 }
 #elif defined(__ia64__)
@@ -67,15 +67,15 @@ static inline cycles_t get_cycles()
 {
 	cycles_t ret;
 
-	asm volatile ("mov %0=ar.itc" : "=r" (ret));
+	asm volatile("mov %0=ar.itc" : "=r"(ret));
 	return ret;
 }
 #elif defined(__s390x__)
 typedef unsigned long long cycles_t;
 static inline cycles_t get_cycles(void)
 {
-	cycles_t        clk;
-	asm volatile("stck %0" : "=Q" (clk) : : "cc");
+	cycles_t clk;
+	asm volatile("stck %0" : "=Q"(clk) : : "cc");
 	return clk >> 2;
 }
 #elif defined(__sparc__) && defined(__arch64__)
@@ -83,7 +83,7 @@ typedef unsigned long long cycles_t;
 static inline cycles_t get_cycles(void)
 {
 	cycles_t v;
-	asm volatile ("rd %%tick, %0" : "=r" (v) : );
+	asm volatile("rd %%tick, %0" : "=r"(v) :);
 	return v;
 }
 #elif defined(__aarch64__)
@@ -93,7 +93,7 @@ static inline cycles_t get_cycles()
 {
 	cycles_t cval;
 	asm volatile("isb" : : : "memory");
-	asm volatile("mrs %0, cntvct_el0" : "=r" (cval));
+	asm volatile("mrs %0, cntvct_el0" : "=r"(cval));
 	return cval;
 }
 
