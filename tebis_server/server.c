@@ -1330,6 +1330,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 		}
 		case WAIT_FOR_REPLICATION_COMPLETION: {
 			wait_for_replication_completion(task);
+
 			break;
 		}
 		case ALL_REPLICAS_ACKED:
