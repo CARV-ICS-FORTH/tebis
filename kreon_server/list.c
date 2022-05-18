@@ -143,32 +143,6 @@ int tebis_klist_remove_element(struct tebis_klist *list, void *data)
 	return 0;
 }
 
-int tebis_klist_delete_element(struct tebis_klist *list, void *data)
-{
-	struct tebis_klist_node *node;
-	node = list->first;
-	for (int i = 0; i < list->size; i++) {
-		if (node->data == data) {
-			if (node->next != NULL) /*node is not the last*/
-				node->next->prev = node->prev;
-			else
-				list->last = node->prev;
-			if (node->prev != NULL) /*node is not the first*/
-				node->prev->next = node->next;
-			else
-				list->first = node->next;
-			--list->size;
-			(*node->destroy_data)(node->data);
-			if (node->key)
-				free(node->key);
-			free(node);
-			return 1;
-		}
-		node = node->next;
-	}
-	return 0;
-}
-
 void *tebis_klist_find_element_with_key(struct tebis_klist *list, char *data_key)
 {
 	struct tebis_klist_node *node = list->first;
@@ -186,7 +160,7 @@ void tebis_klist_destroy(struct tebis_klist *list)
 	struct tebis_klist_node *next_node = NULL;
 	while (node != NULL) {
 		next_node = node->next;
-		tebis_klist_delete_element(list, node->data);
+		tebis_klist_remove_element(list, node->data);
 		node = next_node;
 	}
 	free(list);
