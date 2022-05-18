@@ -84,7 +84,6 @@ struct ds_spinning_thread {
 	struct ds_task_buffer_pool resume_task_pool;
 	pthread_mutex_t conn_list_lock;
 	SIMPLE_CONCURRENT_LIST *conn_list;
-	SIMPLE_CONCURRENT_LIST *idle_conn_list;
 	struct krm_work_task *server_tasks;
 	uint64_t num_of_outstanding_client_req;
 	int num_workers;
@@ -1409,7 +1408,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 							j = 0;
 							goto retry_1;
 						}
-						/*Correct choice rdma the fucking thing*/
+
 						struct connection_rdma *r_conn = sc_get_data_conn(
 							server, r_desc->region->backups[i].kreon_ds_hostname);
 
@@ -1456,7 +1455,6 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 			break;
 		}
 		case WAIT_FOR_REPLICATION_COMPLETION: {
-#if 1
 			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
 				if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
 					task->last_replica_to_ack = i;
@@ -1471,7 +1469,6 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 				}
 
 				/*count bytes replicated for this segment*/
-				//assert(task->kv_size < 1200);
 				__sync_fetch_and_add(task->replicated_bytes[i], task->kv_size);
 				//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
 				//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
@@ -1480,7 +1477,6 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 				assert(*task->replicated_bytes[i] <= SEGMENT_SIZE);
 			}
 			task->kreon_operation_status = ALL_REPLICAS_ACKED;
-#endif
 			break;
 		}
 		case ALL_REPLICAS_ACKED:
@@ -1535,10 +1531,13 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	//retrieve region handle for the corresponding key, find_region
 	//initiates internally rdma connections if needed
 	if (task->key == NULL) {
-		task->key = (struct msg_put_key *)((uint64_t)task->msg + sizeof(struct msg_header));
-		task->value = (struct msg_put_value *)((uint64_t)task->key + sizeof(msg_put_key) + task->key->key_size);
+		task->key = (struct msg_put_key *)((char *)task->msg + sizeof(struct msg_header));
+		task->value = (struct msg_put_value *)((char *)task->key + sizeof(msg_put_key) + task->key->key_size);
 		uint32_t key_length = task->key->key_size;
-		assert(key_length != 0);
+		if (key_length == 0) {
+			assert(0);
+			_exit(EXIT_FAILURE);
+		}
 		struct krm_region_desc *r_desc = krm_get_region(mydesc, task->key->key, task->key->key_size);
 
 		if (r_desc == NULL) {
@@ -2249,6 +2248,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 
 static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
 	assert(mydesc);
 	assert(task->msg->msg_type == TEST_REQUEST);
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -2278,6 +2278,7 @@ void execute_test_req_fetch_payload(struct krm_server_desc const *mydesc, struct
  * allocate and send its msg */
 void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)mydesc;
 	assert(mydesc && task);
 	assert(task->msg->msg_type == NO_OP);
 
@@ -2348,7 +2349,6 @@ static void sigint_handler(int signo)
 #define MAX_CORES_PER_NUMA 64
 int main(int argc, char *argv[])
 {
-	char *device_name;
 	int num_of_numa_servers = 1;
 	int next_argv;
 	if (argc != 8) {
@@ -2363,7 +2363,7 @@ int main(int argc, char *argv[])
 	// argv[0] program name don't care
 	// dev name
 	next_argv = 1;
-	device_name = argv[next_argv];
+	char *device_name = argv[next_argv];
 	globals_set_dev(device_name);
 	++next_argv;
 	// zookeeper
@@ -2393,8 +2393,6 @@ int main(int argc, char *argv[])
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
-	//root_server = (struct ds_root_server *)calloc(
-	//	1, sizeof(struct ds_root_server) + (num_of_numa_servers * sizeof(struct ds_root_server *)));
 	root_server->num_of_numa_servers = num_of_numa_servers;
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
@@ -2409,7 +2407,7 @@ int main(int argc, char *argv[])
 	token = strtok_r(rest, ",", &strtok_saveptr);
 	if (token == NULL) {
 		log_fatal("RDMA port missing in server configuration");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	char *ptr;
 	rdma_port = strtol(token, &ptr, 10);
@@ -2418,7 +2416,7 @@ int main(int argc, char *argv[])
 	token = strtok_r(NULL, ",", &strtok_saveptr);
 	if (token == NULL) {
 		log_fatal("Spinning thread id missing in server configuration");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	spinning_thread_id = strtol(token, &ptr, 10);
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
@@ -2432,16 +2430,13 @@ int main(int argc, char *argv[])
 	}
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	// Double the workers, mirror workers are for server tasks
 	num_workers *= 2;
 
 	// now we have all info to allocate ds_numa_server, pin,
 	// and inform the root server
-
-	//struct ds_numa_server *server = (struct ds_numa_server *)calloc(
-	//	1, sizeof(struct ds_numa_server) + (num_workers * sizeof(struct ds_worker_thread)));
 	struct ds_numa_server *server = (struct ds_numa_server *)calloc(1, sizeof(struct ds_numa_server));
 
 	/*But first let's build each numa server's RDMA channel*/
@@ -2449,7 +2444,7 @@ int main(int argc, char *argv[])
 	server->channel = (struct channel_rdma *)malloc(sizeof(struct channel_rdma));
 	if (server->channel == NULL) {
 		log_fatal("malloc failed could do not get memory for channel");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	server->channel->sockfd = 0;
 	server->channel->context = get_rdma_device_context(NULL);
@@ -2458,7 +2453,7 @@ int main(int argc, char *argv[])
 	if (server->channel->comp_channel == 0) {
 		log_fatal("building context reason follows:");
 		perror("Reason: \n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	server->channel->pd = ibv_alloc_pd(server->channel->context);
@@ -2470,7 +2465,7 @@ int main(int argc, char *argv[])
 	if (pthread_create(&server->poll_cq_cnxt, NULL, poll_cq, server->channel) != 0) {
 		log_fatal("Failed to create poll_cq thread reason follows:");
 		perror("Reason: \n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	server->channel->dynamic_pool = mrpool_create(server->channel->pd, -1, DYNAMIC, MEM_REGION_BASE_SIZE);
@@ -2504,15 +2499,13 @@ int main(int argc, char *argv[])
 	server = root_server->numa_servers[0];
 	pthread_mutex_init(&server->spinner.conn_list_lock, NULL);
 	server->spinner.conn_list = init_simple_concurrent_list();
-	// unused
-	server->spinner.idle_conn_list = init_simple_concurrent_list();
 
 	server->spinner.next_worker_to_submit_job = 0;
 
 	if (pthread_create(&server->socket_thread_cnxt, NULL, socket_thread, (void *)server) != 0) {
 		log_fatal("failed to spawn socket thread  for Server: %d reason follows:", server->server_id);
 		perror("Reason: \n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	// Now pin it in the numa node! Important step so allocations used by
 	// spinner and workers to be
@@ -2526,7 +2519,7 @@ int main(int argc, char *argv[])
 	int status = pthread_setaffinity_np(server->socket_thread_cnxt, sizeof(cpu_set_t), &numa_node_affinity);
 	if (status != 0) {
 		log_fatal("failed to pin socket thread for server %d at port %d", server->server_id, server->rdma_port);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	log_info("Started socket thread successfully for Server %d", server->server_id);
@@ -2534,7 +2527,7 @@ int main(int argc, char *argv[])
 	log_info("Starting spinning thread for Server %d", server->server_id);
 	if (pthread_create(&server->spinner_cnxt, NULL, server_spinning_thread_kernel, &server->spinner) != 0) {
 		log_fatal("Failed to create spinner thread for Server: %d", server->server_id);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	// spinning thread pin staff
@@ -2546,7 +2539,7 @@ int main(int argc, char *argv[])
 	status = pthread_setaffinity_np(server->spinner_cnxt, sizeof(cpu_set_t), &spinning_thread_affinity_mask);
 	if (status != 0) {
 		log_fatal("failed to pin spinning thread");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	log_info("Pinned successfully spinning thread of Server: %d at port %d at "
 		 "core %d",
@@ -2556,7 +2549,7 @@ int main(int argc, char *argv[])
 	log_info("Initializing kreonR metadata server");
 	if (pthread_create(&server->meta_server_cnxt, NULL, krm_metadata_server, &server->meta_server)) {
 		log_fatal("Failed to start metadata_server");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
@@ -2566,7 +2559,7 @@ int main(int argc, char *argv[])
 	log_debug("Kreon server(S) ready");
 	if (signal(SIGINT, sigint_handler) == SIG_ERR) {
 		log_fatal("can't catch SIGINT");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	sem_wait(&exit_main);
 	log_info("kreonR server exiting");

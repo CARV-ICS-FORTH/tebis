@@ -460,7 +460,10 @@ static void zoo_rmr_folder(zhandle_t *zh, const char *path)
 {
 	struct String_vector children;
 	int rc = zoo_get_children(zh, path, 0, &children);
-	assert(rc == ZOK);
+	if (rc != ZOK) {
+		assert(0);
+		_exit(EXIT_FAILURE);
+	}
 	if (children.count != 0) {
 		for (int i = 0; i < children.count; ++i) {
 			char *child_path = children.data[i];
@@ -820,8 +823,10 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 		// Find sender's region
 		struct krm_leader_ds_region_map *ds_region =
 			krm_leader_get_ds_region(server, &msg->region, msg->sender);
-		assert(ds_region);
-		assert(ds_region->lr_state.status == KRM_OPENING || ds_region->lr_state.status == KRM_OPEN);
+		if (!ds_region) {
+			assert(0);
+			_exit(EXIT_FAILURE);
+		}
 		// Resend open command
 		log_info("Resend open command for region %s to dataserver %s", msg->region.id, msg->sender);
 		enum krm_msg_type open_command_type =

@@ -207,11 +207,11 @@ struct ru_replica_state {
 };
 
 struct krm_server_name {
-	char hostname[KRM_HOSTNAME_SIZE];
+	char hostname[KRM_HOSTNAME_SIZE + 1];
 	/*kreon hostname - RDMA port*/
 	char kreon_ds_hostname[KRM_HOSTNAME_SIZE * 2];
-	char kreon_leader[KRM_HOSTNAME_SIZE];
-	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
+	char kreon_leader[KRM_HOSTNAME_SIZE + 1];
+	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE + 1];
 	uint32_t kreon_ds_hostname_length;
 	uint64_t epoch;
 };
@@ -221,9 +221,9 @@ struct krm_region {
 	struct krm_server_name backups[KRM_MAX_BACKUPS];
 	uint32_t min_key_size;
 	uint32_t max_key_size;
-	char id[KRM_MAX_REGION_ID_SIZE];
-	char min_key[KRM_MAX_KEY_SIZE];
-	char max_key[KRM_MAX_KEY_SIZE];
+	char id[KRM_MAX_REGION_ID_SIZE + 1];
+	char min_key[KRM_MAX_KEY_SIZE + 1];
+	char max_key[KRM_MAX_KEY_SIZE + 1];
 	uint32_t num_of_backup;
 	enum krm_region_status stat;
 };

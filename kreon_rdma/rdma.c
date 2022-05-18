@@ -449,7 +449,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		break;
 	default:
 		log_fatal("BAD connection type");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	conn->remaining_bytes_in_remote_rdma_region = conn->rdma_memory_regions->memory_region_length;
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
@@ -768,7 +768,6 @@ void *poll_cq(void *arg)
 {
 	struct sigaction sa;
 	struct channel_rdma *channel;
-	struct connection_rdma *conn;
 	struct ibv_cq *cq;
 	struct ibv_wc wc[MAX_COMPLETION_ENTRIES];
 	void *ev_ctx;
@@ -797,10 +796,13 @@ void *poll_cq(void *arg)
 			int rc = ibv_poll_cq(cq, MAX_COMPLETION_ENTRIES, wc);
 			if (rc < 0) {
 				log_fatal("poll of completion queue failed!");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			} else if (rc > 0) {
-				conn = (connection_rdma *)cq->cq_context;
-				assert(conn);
+				struct connection_rdma *conn = (connection_rdma *)cq->cq_context;
+				if (!conn) {
+					assert(0);
+					_exit(EXIT_FAILURE);
+				}
 				for (int i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;

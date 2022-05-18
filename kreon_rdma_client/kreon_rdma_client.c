@@ -955,7 +955,6 @@ void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, 
 	sc->stop_key->key_size = stop_key_size;
 	memcpy(sc->stop_key->key_buf, stop_key, stop_key_size);
 	log_debug("stop key set to %s", sc->stop_key->key_buf);
-	return;
 }
 
 void krc_scan_set_prefix_filter(krc_scannerp sp, uint32_t prefix_size, void *prefix)
@@ -974,7 +973,6 @@ void krc_scan_set_prefix_filter(krc_scannerp sp, uint32_t prefix_size, void *pre
 	sc->prefix_key = (krc_key *)malloc(sizeof(krc_key) + prefix_size);
 	sc->prefix_key->key_size = prefix_size;
 	memcpy(sc->prefix_key->key_buf, prefix, prefix_size);
-	return;
 }
 
 void krc_scan_close(krc_scannerp sp)
@@ -987,7 +985,6 @@ void krc_scan_close(krc_scannerp sp)
 	if (!sc->stop_infinite)
 		free(sc->stop_key);
 	free(sc);
-	return;
 }
 
 static unsigned operation_count = 0, replies_arrived = 0;
@@ -1074,7 +1071,8 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	}
 
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
-	connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
+	uint64_t seed = djb2_hash((unsigned char *)key, key_size);
+	connection_rdma *conn = cu_get_conn_for_region(r_desc, seed);
 
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
 	_krc_get_rpc_pair(conn, &req_header, req_type, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
@@ -1134,7 +1132,10 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 
 	struct timespec now;
 	int ret = clock_gettime(CLOCK_MONOTONIC, &now);
-	assert(!ret);
+	if (ret) {
+		assert(0);
+		_exit(EXIT_FAILURE);
+	}
 	if (!req->start_time.tv_sec) {
 		req->start_time = now;
 	}
