@@ -6,29 +6,29 @@
 //  Copyright (c) 2014 Jinglei Ren <jinglei@ren.systems>.
 //
 
-#include <cstring>
-#include <string>
-#include <iostream>
-#include <vector>
-#include <future>
 #include <chrono>
-#include <thread>
-#include <sstream>
+#include <cstring>
 #include <fstream>
-#include <unordered_map>
+#include <future>
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <sys/time.h>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 
 #ifdef MULTI_CLIENT
-#include <zookeeper.h>
-#include <zookeeper_log.h>
-#include <zookeeper.jute.h>
 #include <mutex>
+#include <zookeeper/zookeeper.h>
+#include <zookeeper/zookeeper.jute.h>
+#include <zookeeper/zookeeper_log.h>
 #endif
 
-#include "utils.h"
-#include "timer.h"
 #include "client.h"
 #include "core_workload.h"
+#include "timer.h"
+#include "utils.h"
 //#define COMPUTE_TAIL_ASYNC
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 const char *Op2Str[] = { "LOAD", "READ", "UPDATE", "INSERT", "SCAN", "READMODIFYWRITE" };
@@ -114,10 +114,11 @@ void PrintClientStatus(int interval, int duration, std::vector<uint64_t> &ops_da
 }
 
 uint64_t DelegateLoadClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, uint64_t num_ops,
-			    std::vector<uint64_t> &ops_data, const std::atomic_bool &cancelled)
+			    std::vector<uint64_t> &ops_data, const std::atomic_bool &cancelled, uint64_t *finished)
 {
 	ycsbc::Client client(*db, *wl, id);
 
+	assert(*finished == 0);
 	uint64_t oks = 0, tmp;
 	for (uint64_t i = 0; ((i < num_ops) && (!cancelled)); ++i) {
 		oks += client.DoInsert(&tmp);
@@ -126,15 +127,16 @@ uint64_t DelegateLoadClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, 
 		tail->addLatency(id, LOAD, tmp);
 #endif
 	}
-
+	*finished = 1;
 	return oks;
 }
 
 uint64_t DelegateRunClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, uint64_t num_ops,
-			   std::vector<uint64_t> &ops_data, const std::atomic_bool &cancelled)
+			   std::vector<uint64_t> &ops_data, const std::atomic_bool &cancelled, uint64_t *finished)
 {
 	ycsbc::Client client(*db, *wl, id);
 
+	assert(*finished == 0);
 	int op;
 	uint64_t oks = 0, tmp;
 	for (uint64_t i = 0; ((i < num_ops) && (!cancelled)); ++i) {
@@ -159,7 +161,7 @@ uint64_t DelegateRunClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, u
 		tail->addLatency(id, _op, tmp);
 #endif
 	}
-
+	*finished = 1;
 	return oks;
 }
 
@@ -178,18 +180,23 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 #endif
 
 	vector<future<uint64_t> > actual_ops;
+	std::vector<uint64_t> finished;
+	actual_ops.reserve(num_threads);
+	finished.reserve(num_threads);
+
 	uint64_t total_ops = std::stoull(props[ycsbc::CoreWorkload::RECORD_COUNT_PROPERTY]);
 	total_ops /= std::stoull(props.GetProperty("clientProcesses", "1"));
 
 	for (int i = 0; i < num_threads; ++i) {
 		ops_data.push_back(0);
 
+		finished.push_back(0);
 		uint64_t local_ops = total_ops / num_threads;
 		if (i == num_threads - 1)
 			local_ops += (total_ops % num_threads);
 
 		actual_ops.emplace_back(async(launch::async, DelegateLoadClient, db, &wl, i, local_ops,
-					      std::ref(ops_data), std::ref(cancellation_token)));
+					      std::ref(ops_data), std::ref(cancellation_token), &finished[i]));
 	}
 	assert((int)actual_ops.size() == num_threads);
 
@@ -208,6 +215,10 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::cerr << "Waiting for reporter thread!" << std::endl;
 	reporter.join();
 	std::cout << "Executed " << sum << " operations." << std::endl;
+
+	for (unsigned i = 0; i < finished.size(); ++i)
+		while (finished[i] == 0)
+			;
 
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);
@@ -225,6 +236,10 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::atomic_bool cancellation_token(false);
 	std::vector<uint64_t> ops_data;
 
+	std::vector<uint64_t> finished;
+	ops_data.reserve(num_threads);
+	finished.reserve(num_threads);
+
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail = new Measurements(num_threads);
 	tail->ResetStatistics();
@@ -236,12 +251,13 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 	for (int i = 0; i < num_threads; ++i) {
 		ops_data.push_back(0);
 
+		finished.push_back(0);
 		uint64_t local_ops = total_ops / num_threads;
 		if (i == num_threads - 1)
 			local_ops += (total_ops % num_threads);
 
 		actual_ops.emplace_back(async(launch::async, DelegateRunClient, db, &wl, i, local_ops,
-					      std::ref(ops_data), std::ref(cancellation_token)));
+					      std::ref(ops_data), std::ref(cancellation_token), &finished[i]));
 	}
 	assert((int)actual_ops.size() == num_threads);
 
@@ -259,7 +275,11 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 
 	std::cerr << "Waiting for reporter thread!" << std::endl;
 	reporter.join();
-	std::cout << "Executed " << sum << " operations." << std::endl;
+	std::cerr << "Executed " << sum << " operations." << std::endl;
+
+	for (unsigned i = 0; i < finished.size(); ++i)
+		while (finished[i] == 0)
+			;
 
 #if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);

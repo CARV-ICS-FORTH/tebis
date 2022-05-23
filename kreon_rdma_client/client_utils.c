@@ -1,15 +1,15 @@
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <zookeeper/zookeeper.h>
+#include "client_utils.h"
+#include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/zk_utils.h"
 #include "../utilities/spin_loop.h"
-#include "../kreon_server/djb2.h"
-#include "client_utils.h"
-#include <log.h>
 #include <cJSON.h>
+#include <log.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zookeeper/zookeeper.h>
 
 static int cu_is_connected = 0;
 static zhandle_t *cu_zh = NULL;
@@ -170,17 +170,17 @@ static uint8_t cu_fetch_region_table(void)
 		rc = zoo_get(cu_zh, region_path, 0, region_json_string, &region_json_string_length, &stat);
 		if (rc != ZOK) {
 			log_fatal("Failed to retrieve region %s from Zookeeper", region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		} else if (stat.dataLength > region_json_string_size) {
 			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
 				  "Json region entry length is %d and buffer size is %d",
 				  stat.dataLength, sizeof(region_json_string));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		cJSON *region_json = cJSON_ParseWithLength(region_json_string, region_json_string_length);
 		if (cJSON_IsInvalid(region_json)) {
 			log_fatal("Failed to parse json string %s of region %s", region_json_string, region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		cJSON *id = cJSON_GetObjectItem(region_json, "id");
 		cJSON *min_key = cJSON_GetObjectItem(region_json, "min_key");
@@ -191,7 +191,7 @@ static uint8_t cu_fetch_region_table(void)
 		if (!cJSON_IsString(id) || !cJSON_IsString(min_key) || !cJSON_IsString(max_key) ||
 		    !cJSON_IsString(primary) || !cJSON_IsArray(backups) || !cJSON_IsNumber(status)) {
 			log_fatal("Failed to parse json string of region %s", region_path);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		struct krm_region r;
 		strncpy(r.id, cJSON_GetStringValue(id), KRM_MAX_REGION_ID_SIZE);
@@ -206,10 +206,9 @@ static uint8_t cu_fetch_region_table(void)
 		r.max_key_size = strlen(r.max_key);
 		r.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
 		// Find primary's krm_server_name struct
-		int rc = cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary);
-		if (rc != 0) {
+		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary) != 0) {
 			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		r_desc.region = r;
@@ -249,27 +248,19 @@ struct cu_region_desc *cu_get_region(char *key, uint32_t key_size)
 {
 	struct cu_regions *cli_regions = &client_regions;
 	struct cu_region_desc *region = NULL;
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
 
 	uint64_t lc2, lc1;
 retry:
 	lc2 = client_regions.lc.c2;
 
-#if REGIONS_HASH_BASED
-	uint64_t s = djb2_hash((unsigned char *)key, key_size);
-	region = &cli_regions->r_desc[s % cli_regions->num_regions];
-#else
-	start_idx = 0;
-	end_idx = cli_regions->num_regions - 1;
+	int start_idx = 0;
+	int end_idx = cli_regions->num_regions - 1;
 	region = NULL;
 
 	while (start_idx <= end_idx) {
-		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
-				  cli_regions->r_desc[middle].region.min_key, key_size, key);
+		int middle = (start_idx + end_idx) / 2;
+		int ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
+				      cli_regions->r_desc[middle].region.min_key, key_size, key);
 		//log_info("Comparing region min %s with key %s ret %ld",
 		//	 kreon_regions[middle]->ID_region.minimum_range + 4, key, ret);
 		if (ret < 0 || ret == 0) {
@@ -282,7 +273,6 @@ retry:
 		} else
 			end_idx = middle - 1;
 	}
-#endif
 	lc1 = client_regions.lc.c1;
 	if (lc1 != lc2)
 		goto retry;
@@ -292,16 +282,6 @@ retry:
 		exit(EXIT_FAILURE);
 	}
 	return region;
-}
-
-struct cu_region_desc *cu_get_first_region(void)
-{
-	struct cu_regions *cli_regions = &client_regions;
-	if (cli_regions->num_regions == 0) {
-		log_warn("Sorry no regions");
-		return NULL;
-	}
-	return &cli_regions->r_desc[0];
 }
 
 static void cu_add_conn_for_server(struct krm_server_name *server, uint64_t hash_key)
@@ -364,8 +344,8 @@ retry:
 
 void cu_close_open_connections(void)
 {
-	struct cu_conn_per_server *current = NULL;
-	struct cu_conn_per_server *tmp = NULL;
+	struct cu_conn_per_server *current;
+	struct cu_conn_per_server *tmp;
 	msg_header *req_header;
 	int i;
 	/*iterate all open connections and send the disconnect message*/
@@ -377,13 +357,12 @@ void cu_close_open_connections(void)
 			pthread_mutex_lock(&current->connections[i]->buffer_lock);
 			req_header = client_allocate_rdma_message(current->connections[i], 0, DISCONNECT);
 			pthread_mutex_unlock(&current->connections[i]->buffer_lock);
-			req_header->reply = NULL;
-			req_header->reply_length = 0;
-			req_header->got_send_completion = 0;
+			req_header->offset_reply_in_recv_buffer = UINT32_MAX;
+			req_header->reply_length_in_recv_buffer = 0;
 
 			if (client_send_rdma_message(current->connections[i], req_header) != KREON_SUCCESS) {
 				log_warn("failed to send message");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 
 			// FIXME calling free for the connection_rdma* isn't enough. We need to free the rest

@@ -1,14 +1,14 @@
 #pragma once
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
-#include <stdint.h>
-#include <semaphore.h>
-#include <zookeeper/zookeeper.h>
-#include <pthread.h>
-#include "../utilities/list.h"
 #include "../kreon_lib/btree/btree.h"
-#include "uthash.h"
 #include "../kreon_rdma/rdma.h"
+#include "../utilities/list.h"
+#include "uthash.h"
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdint.h>
+#include <zookeeper/zookeeper.h>
 #define KRM_MAX_REGIONS 1024
 #define KRM_MAX_DS_REGIONS 512
 #define KRM_MAX_KEY_SIZE 64
@@ -82,7 +82,8 @@ enum krm_work_task_status {
 	WAIT_FOR_FLUSH_REPLIES,
 	TASK_GET_KEY,
 	TASK_MULTIGET,
-	TASK_DELETE_KEY
+	TASK_DELETE_KEY,
+	TASK_NO_OP
 };
 
 /*server to server communication related staff*/
@@ -94,7 +95,7 @@ struct sc_msg_pair {
 	enum circular_buffer_op_status stat;
 };
 
-enum krm_work_task_type { KRM_CLIENT_POOL, KRM_SERVER_POOL };
+enum krm_work_task_type { KRM_CLIENT_TASK, KRM_SERVER_TASK };
 
 struct krm_work_task {
 	/*from client*/
@@ -111,18 +112,17 @@ struct krm_work_task {
 	struct krm_region_desc *r_desc;
 	struct msg_put_key *key;
 	struct msg_put_value *value;
-	void *notification_addr;
+	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;
 	struct krm_replica_index_state *index;
 	int server_id;
 	int thread_id;
 	int error_code;
-	int pool_id;
 	//int suspended;
 	int seg_id_to_flush;
 	uint64_t rescheduling_counter;
-	enum krm_work_task_type pool_type;
+	enum krm_work_task_type task_type;
 	enum krm_work_task_status kreon_operation_status;
 };
 
@@ -209,7 +209,7 @@ struct ru_replica_state {
 struct krm_server_name {
 	char hostname[KRM_HOSTNAME_SIZE];
 	/*kreon hostname - RDMA port*/
-	char kreon_ds_hostname[KRM_HOSTNAME_SIZE];
+	char kreon_ds_hostname[KRM_HOSTNAME_SIZE * 2];
 	char kreon_leader[KRM_HOSTNAME_SIZE];
 	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
 	uint32_t kreon_ds_hostname_length;
@@ -340,7 +340,7 @@ struct krm_server_desc {
 	uint8_t RDMA_IP[IP_SIZE];
 	enum krm_server_role role;
 	enum krm_server_state state;
-	volatile uint32_t zconn_state;
+	uint8_t zconn_state;
 	uint32_t RDMA_port;
 	/*entry in the root table of my dad (numa_server)*/
 	int root_server_id;
@@ -360,12 +360,12 @@ struct krm_msg {
 };
 
 void *krm_metadata_server(void *args);
-struct krm_region_desc *krm_get_region(struct krm_server_desc *server_desc, char *key, uint32_t key_size);
+struct krm_region_desc *krm_get_region(struct krm_server_desc const *server_desc, char *key, uint32_t key_size);
 //struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
 //						   uint32_t region_id_size);
 int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
-struct channel_rdma *ds_get_channel(struct krm_server_desc *my_desc);
+struct channel_rdma *ds_get_channel(struct krm_server_desc const *my_desc);
 
 /*remote compaction related staff*/
 struct rco_task_queue {
@@ -396,7 +396,7 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
 				       uint8_t level_id, struct node_header *root);
 
-void di_rewrite_index_with_explicit_IO(struct segment_header *seg, struct krm_region_desc *r_desc,
+void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id);
 
 struct rco_build_index_task {
@@ -410,6 +410,6 @@ void rco_build_index(struct rco_build_index_task *task);
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type);
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname);
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname);
 struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname);
 void sc_free_rpc_pair(struct sc_msg_pair *p);

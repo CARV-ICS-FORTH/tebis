@@ -2,20 +2,20 @@
 
 #include "../core/ycsbdb.h"
 
-#include <iostream>
-#include <string>
-#include <mutex>
 #include <algorithm>
 #include <atomic>
 #include <functional>
-#include <unordered_map>
+#include <iostream>
+#include <mutex>
+#include <string>
 #include <time.h>
+#include <unordered_map>
 
+#include <boost/algorithm/string.hpp>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include <boost/algorithm/string.hpp>
 
 #include "../core/properties.h"
 #include "workload_gen.h"
@@ -26,9 +26,9 @@
 #endif
 
 extern "C" {
+#include "../../kreon_lib/btree/btree.h"
 #include "../../kreon_rdma_client/client_utils.h"
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
-#include "../../kreon_lib/btree/btree.h"
 #include "../../utilities/queue.h"
 #include <log.h>
 
@@ -135,8 +135,8 @@ class kreonRAsyncClientDB : public YCSBDB {
     public:
 	kreonRAsyncClientDB(int num, utils::Properties &props)
 		: field_count(std::stoi(
-			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT))),
-		  dbs()
+			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT)))
+		, dbs()
 	{
 		struct timeval start;
 
@@ -199,7 +199,7 @@ class kreonRAsyncClientDB : public YCSBDB {
     public:
 	void Init()
 	{
-		krc_start_async_thread(16, UTILS_QUEUE_CAPACITY);
+		krc_start_async_thread();
 	}
 
 	void Close()

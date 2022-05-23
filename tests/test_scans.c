@@ -1,11 +1,11 @@
-#include <assert.h>
-#include <stdio.h>
-#include <pthread.h>
-#include <string.h>
-#include <stdlib.h>
-#include <log.h>
 #include "../kreon_lib/btree/btree.h"
 #include "../kreon_lib/scanner/scanner.h"
+#include <assert.h>
+#include <log.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #define KEY_PREFIX "userakias_computerakias"
 #define KV_SIZE 1024
 #define VOLUME_NAME "/mnt/gesalous/kreon.dat"
@@ -98,7 +98,7 @@ void *scan_tester(void *args)
 			//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
 			//assert(element.node->type == leafNode);
 			//stack_push(&(sc->LEVEL_SCANNERS[0].stack), element);
-			int scan_size;
+			uint64_t scan_size;
 			if ((local_base + my_args->num_keys) - i > SCAN_SIZE)
 				scan_size = SCAN_SIZE;
 			else
@@ -261,7 +261,7 @@ void *scan_tester(void *args)
 			//element = stack_pop(&(sc->LEVEL_SCANNERS[0].stack));
 			//assert(element.node->type == leafNode);
 			//stack_push(&(sc->LEVEL_SCANNERS[0].stack), element);
-			int scan_size;
+			uint64_t scan_size;
 			if ((local_base + my_args->num_keys) - i > SCAN_SIZE)
 				scan_size = SCAN_SIZE;
 			else
@@ -302,7 +302,7 @@ void *scan_tester(void *args)
 	return NULL;
 }
 
-int main()
+int main(void)
 {
 	char db_name[64];
 	struct scan_tester_args *s_args =

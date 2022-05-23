@@ -4,34 +4,35 @@
 #define _GNU_SOURCE
 #endif
 
+#include <infiniband/verbs.h>
+#include <inttypes.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <rdma/rdma_cma.h>
+#include <semaphore.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <netdb.h>
 #include <string.h>
-#include <semaphore.h>
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
 #include <sys/syscall.h>
-#include <signal.h>
 #include <sys/types.h>
-#include <netinet/in.h>
-#include <inttypes.h>
-#include <stdbool.h>
+#include <unistd.h>
 
-#include "../utilities/macros.h"
 #include "../kreon_server/conf.h"
 #include "../kreon_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/macros.h"
 #include "../utilities/queue.h"
 #include "../utilities/simple_concurrent_list.h"
-#include "../utilities/circular_buffer.h"
 #include "memory_region_pool.h"
 
 #define MAX_USEC_BEFORE_SLEEPING 5000000
 
 #define TU_CONNECTION_RC 1 // 1 -> RC, 0 -> UC
+#define VALIDATE_CHECKSUMS 0
 
 // Allow to perform our own Reliable Connection. It can be used with TU_CONNECTION_RC 1 or 0
 //#define TU_CONNECTION_RC_CONTROL 1 // 1 will control time per msg, 0 will not control nothing
@@ -43,13 +44,11 @@
 #define KEY_PRINT_FMT "%04x:%06x:%06x:%08x:%016Lx:%016Lx:"
 
 /* The Format of the message we pass through sockets (With Gid). */
-#define KEY_PRINT_FMT_GID                                                                                              \
+#define KEY_PRINT_FMT_GID \
 	"%04x:%06x:%06x:%08x:%016Lx:%016Lx:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:"
 
 #define CONNECTION_BUFFER_WITH_MUTEX_LOCK
 
-#define SPINNING_THREAD 1
-#define SPINNING_PER_CHANNEL 1
 #define SPINNING_NO_LIST 1
 
 #define SPINNING_NUM_TH 8 // was 1
@@ -68,15 +67,15 @@ typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_RE
 #define TU_RDMA_MSG_DONE 0
 #define TU_RDMA_REGULAR_MSG_READY 3
 #define TU_RDMA_DISCONNECT_MSG_READY 5
-#define TU_RDMA_REGULAR_MSG 17
-#define CONNECTION_PROPERTIES                                                                                          \
+#define TU_RDMA_REGULAR_MSG 10
+#define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
 #define TU_RDMA_RECEIVED_MREND_MSG 9 //To inform the spinning thread to go to the beginning
-#define TU_RDMA_ACK_RECEIVED_MREND_REPLY_MSG                                                                           \
+#define TU_RDMA_ACK_RECEIVED_MREND_REPLY_MSG \
 	12 //To inform the client we received the MREND_REPLY_MSG and can be released
 
-#define TU_RDMA_RECEIVED_ACK_MSG                                                                                       \
+#define TU_RDMA_RECEIVED_ACK_MSG \
 	14 //To inform the last message we have received. It should be usually sent from the client to the server.
 #define TU_RDMA_DISCONNECT_MSG 99
 
@@ -222,15 +221,14 @@ typedef struct connection_rdma {
 	/*new feature circular_buffer, only clients use it*/
 	circular_buffer *send_circular_buf;
 	circular_buffer *recv_circular_buf;
-	char *control_location;
 	char *reset_point;
-	uint32_t control_location_length;
 	volatile connection_type type;
 	/*To add to the list of connections open that handles the channel*/
 
 	SIMPLE_CONCURRENT_LIST *list;
 #ifdef CONNECTION_BUFFER_WITH_MUTEX_LOCK
 	pthread_mutex_t buffer_lock;
+	pthread_mutex_t allocation_lock;
 #else
 	pthread_spinlock_t buffer_lock;
 #endif
@@ -284,18 +282,17 @@ void crdma_init_client_connection_list_hosts(struct connection_rdma *conn, char 
 					     struct channel_rdma *channel, connection_type type);
 
 msg_header *allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
-void init_rdma_message(connection_rdma *conn, msg_header *msg, uint32_t message_type, uint32_t message_size,
-		       uint32_t message_payload_size, uint32_t padding);
-
 msg_header *client_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
-msg_header *client_try_allocate_rdma_message(connection_rdma *conn, int message_payload_size, int message_type);
 
 int send_rdma_message(connection_rdma *conn, msg_header *msg);
 int send_rdma_message_busy_wait(connection_rdma *conn, msg_header *msg);
-void free_rdma_local_message(connection_rdma *conn);
-void free_rdma_received_message(connection_rdma *conn, msg_header *msg);
+void set_receive_field(struct msg_header *msg, uint8_t value);
+uint8_t get_receive_field(volatile struct msg_header *msg);
 
-void client_free_rpc_pair(connection_rdma *conn, msg_header *msg);
+/** Free the space allocated from send/recv circular buffers for a specific rpc pair.
+ *  we found the request msg from the reply's triggering msg
+ *  reply must be volatile as it is receive via the network */
+void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply);
 
 struct rdma_message_context {
 	struct msg_header *msg;
@@ -320,10 +317,16 @@ void ec_sig_handler(int signo);
 uint32_t wait_for_payload_arrival(msg_header *hdr);
 int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_message_context *msg_ctx);
 
-void _zero_rendezvous_locations_l(msg_header *msg, uint32_t length);
-void _zero_rendezvous_locations(msg_header *msg);
-void _update_rendezvous_location(struct connection_rdma *conn, int message_size);
+void zero_rendezvous_locations_l(volatile msg_header *msg, uint32_t length);
+void zero_rendezvous_locations(volatile msg_header *msg);
+void update_rendezvous_location(struct connection_rdma *conn, uint32_t message_size);
+
+msg_header *triggering_msg_offt_to_real_address(connection_rdma *conn, uint32_t offt);
+
+uint32_t real_address_to_triggering_msg_offt(connection_rdma *conn, struct msg_header *msg);
 
 /*for starting a separate channel for each numa server*/
 struct ibv_context *get_rdma_device_context(char *devname);
 void *poll_cq(void *arg);
+
+uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf);

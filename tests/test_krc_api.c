@@ -1,11 +1,11 @@
-#include <assert.h>
-#include <stdio.h>
-#include <alloca.h>
-#include <string.h>
-#include <stdlib.h>
-#include <log.h>
-#include "../kreon_rdma_client/kreon_rdma_client.h"
 #include "../kreon_rdma_client/client_utils.h"
+#include "../kreon_rdma_client/kreon_rdma_client.h"
+#include <alloca.h>
+#include <assert.h>
+#include <log.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "../kreon_server/globals.h"
 
@@ -60,32 +60,32 @@ int main(int argc, char *argv[])
 
 	uint64_t i = 0;
 	uint64_t j = 0;
-	log_info("Checking region health....");
+	log_debug("Checking region health....");
 	char test_region_min_key[32] = { 0 };
 	struct cu_region_desc *c_desc = cu_get_region(test_region_min_key, 32);
 	krc_exists(c_desc->region.min_key_size, c_desc->region.min_key);
 
 	while (1) {
 		if (c_desc->region.max_key_size == 3 && memcmp(c_desc->region.max_key, "+oo", 3) == 0) {
-			log_info("Last region reached");
+			log_debug("Last region reached");
 			break;
 		}
 		c_desc = cu_get_region(c_desc->region.max_key, c_desc->region.max_key_size);
-		log_info("Probing region with min key %s", c_desc->region.max_key);
+		log_debug("Probing region with min key %s", c_desc->region.max_key);
 		krc_exists(c_desc->region.min_key_size, c_desc->region.min_key);
 	}
-	log_info("Regions healthy!");
+	log_debug("Regions healthy!");
 
-	log_info("Testing scan in empty db");
+	log_debug("Testing scan in empty db");
 	krc_scannerp sc = krc_scan_init(16, 64 * 1024);
 	while (krc_scan_get_next(sc, &s_key, &s_key_size, &s_value, &s_value_size)) {
 		log_fatal("Test failed scanner returned something on empty db! %s", s_key);
 		exit(EXIT_FAILURE);
 	}
 	krc_scan_close(sc);
-	log_info("Scan in empty db scenario success!");
+	log_debug("Scan in empty db scenario success!");
 
-	log_info("Testing scan in a single key value db");
+	log_debug("Testing scan in a single key value db");
 
 	key *k = (key *)malloc(KV_SIZE);
 	memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
@@ -94,21 +94,21 @@ int main(int argc, char *argv[])
 	value *v = (value *)((uint64_t)k + sizeof(key) + k->key_size);
 	v->value_size = KV_SIZE - ((2 * sizeof(key)) + k->key_size);
 	memset(v->value_buf, 0xDD, v->value_size);
-	log_info("inserting key %s", k->key_buf);
+	log_debug("inserting key %s", k->key_buf);
 	krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
-	log_info("Testing single value scan");
+	log_debug("Testing single value scan");
 	sc = krc_scan_init(16, 64 * 1024);
 	int entries = 0;
 	while (krc_scan_get_next(sc, &s_key, &s_key_size, &s_value, &s_value_size))
 		++entries;
 	if (entries != 1) {
-		log_info("Scan in single key value db scenario failed expected 1 got %d!", entries);
+		log_debug("Scan in single key value db scenario failed expected 1 got %d!", entries);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Single value scan success!");
+	log_debug("Single value scan success!");
 	krc_scan_close(sc);
 #if 0
-  log_info("Deleting key");
+  log_debug("Deleting key");
 	if (krc_delete(k->key_size, k->key_buf) != KRC_SUCCESS) {
 		log_fatal("key %s not found failed to clean state from scan in single key "
 			  "value db scenario!",
@@ -117,11 +117,11 @@ int main(int argc, char *argv[])
 	}
 #endif
 	// exit(EXIT_SUCCESS);
-	log_info("Starting population for %lu keys...", NUM_KEYS);
+	log_debug("Starting population for %lu keys...", NUM_KEYS);
 	for (i = BASE; i < (BASE + NUM_KEYS); i++) {
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 		if (i % 100000 == 0)
-			log_info("inserted up to %llu th key", i);
+			log_debug("inserted up to %llu th key", i);
 
 		sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
@@ -130,13 +130,13 @@ int main(int argc, char *argv[])
 		memset(v->value_buf, 0xDD, v->value_size);
 		krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
 	}
-	log_info("Population ended, testing gets");
+	log_debug("Population ended, testing gets");
 
 	get_buffer = NULL;
 	for (i = BASE; i < (BASE + NUM_KEYS); i++) {
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 		if (i % 100000 == 0)
-			log_info("looked up to %llu th key", i);
+			log_debug("looked up to %llu th key", i);
 
 		sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
@@ -155,7 +155,7 @@ int main(int argc, char *argv[])
 		get_buffer = NULL;
 	}
 #if 0
-	log_info("Gets successful ended, testing small put/get with offset....");
+	log_debug("Gets successful ended, testing small put/get with offset....");
 	uint64_t offset = 0;
 	uint32_t sum = 0;
 	uint32_t sum_g = 0;
@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
 			log_fatal("Corrupted value got %u expected %u", get_size, sizeof(uint32_t));
 			exit(EXIT_FAILURE);
 		}
-		log_info("Num got is %u", *(uint32_t *)get_buffer);
+		log_debug("Num got is %u", *(uint32_t *)get_buffer);
 		sum_g += (*(uint32_t *)get_buffer);
 		offset += sizeof(uint32_t);
 	}
@@ -199,13 +199,13 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	log_info("Put/get with offset successful expected %u got %u", sum, sum_g);
+	log_debug("Put/get with offset successful expected %u got %u", sum, sum_g);
 #endif
-	log_info("testing small scans....");
+	log_debug("testing small scans....");
 
 	for (i = BASE; i < (BASE + (NUM_KEYS - SCAN_SIZE)); i++) {
 		if (i % 10000 == 0)
-			log_info("<Scan no %llu>", i);
+			log_debug("<Scan no %llu>", i);
 
 		sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
@@ -246,13 +246,13 @@ int main(int argc, char *argv[])
 			}
 
 			if (i % 10000 == 0)
-				log_info("</Scan no %llu>", i);
+				log_debug("</Scan no %llu>", i);
 		}
 		krc_scan_close(sc);
 	}
 	log_info("small scan test Successfull");
 
-	log_info("Running a full scan");
+	log_debug("Running a full scan");
 
 	sc = krc_scan_init(PREFETCH_ENTRIES, PREFETCH_MEM_SIZE);
 	char minus_inf[7] = { '\0' };
@@ -275,7 +275,7 @@ int main(int argc, char *argv[])
 	krc_scan_close(sc);
 	log_info("full scan test Successfull");
 
-	log_info("Running a full scan fetching only keys");
+	log_debug("Running a full scan fetching only keys");
 
 	sc = krc_scan_init(PREFETCH_ENTRIES, PREFETCH_MEM_SIZE);
 	krc_scan_set_start(sc, 7, minus_inf, KRC_GREATER_OR_EQUAL);
@@ -294,13 +294,13 @@ int main(int argc, char *argv[])
 				  s_key);
 			exit(EXIT_FAILURE);
 		}
-		// log_info("zero value key %s", k->key_buf);
+		// log_debug("zero value key %s", k->key_buf);
 	}
 	krc_scan_close(sc);
 	log_info("full scan - only keys test Successfull");
 
 	int tuples = 0;
-	log_info("Testing stop key");
+	log_debug("Testing stop key");
 	sc = krc_scan_init(PREFETCH_ENTRIES, PREFETCH_MEM_SIZE);
 	krc_scan_set_start(sc, 7, minus_inf, KRC_GREATER_OR_EQUAL);
 	sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)BASE + (NUM_KEYS / 2));
@@ -325,8 +325,8 @@ int main(int argc, char *argv[])
 	}
 
 	krc_scan_close(sc);
-	log_info("Stop key test successful");
-	log_info("Testing prefix key");
+	log_debug("Stop key test successful");
+	log_debug("Testing prefix key");
 	tuples = 0;
 	sc = krc_scan_init(PREFETCH_ENTRIES, PREFETCH_MEM_SIZE);
 
@@ -342,14 +342,14 @@ int main(int argc, char *argv[])
 		log_fatal("Error tuples got %d expected %d", tuples, 1);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Prefix key test successful");
+	log_debug("Prefix key test successful");
 	krc_scan_close(sc);
 #if 0
-	log_info("Deleting half keys");
+	log_debug("Deleting half keys");
 	for (i = BASE; i < BASE + (NUM_KEYS / 2); i++) {
 		memcpy(k->key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
 		if (i % 100000 == 0)
-			log_info("deleted up to %llu th key", i);
+			log_debug("deleted up to %llu th key", i);
 
 		sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
@@ -358,11 +358,11 @@ int main(int argc, char *argv[])
 			exit(EXIT_FAILURE);
 		}
 	}
-	log_info("Verifying delete outcome");
+	log_debug("Verifying delete outcome");
 	tuples = 0;
 	for (i = BASE; i < (BASE + NUM_KEYS); i++) {
 		if (i % 100000 == 0)
-			log_info("looked up to %llu th key", i);
+			log_debug("looked up to %llu th key", i);
 
 		sprintf(k->key_buf + strlen(KEY_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
@@ -373,10 +373,10 @@ int main(int argc, char *argv[])
 		log_fatal("Test failed found %u keys should find %u", tuples, NUM_KEYS / 2);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Delete test success! :-)");
+	log_debug("Delete test success! :-)");
 #endif
-	log_info("Testing prefix match scans");
-	log_info("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_1);
+	log_debug("Testing prefix match scans");
+	log_debug("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_1);
 	memcpy(k->key_buf, PREFIX_1, strlen(PREFIX_1));
 	for (i = 0; i < PREFIX_TEST_KEYS; i++) {
 		sprintf(k->key_buf + strlen(PREFIX_1), "%llu", (long long unsigned)i);
@@ -386,8 +386,8 @@ int main(int argc, char *argv[])
 		memset(v->value_buf, 0xDD, v->value_size);
 		krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
 	}
-	log_info("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_1);
-	log_info("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_2);
+	log_debug("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_1);
+	log_debug("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_2);
 	memcpy(k->key_buf, PREFIX_2, strlen(PREFIX_2));
 	for (i = 0; i < PREFIX_TEST_KEYS; i++) {
 		sprintf(k->key_buf + strlen(PREFIX_2), "%llu", (long long unsigned)i);
@@ -397,8 +397,8 @@ int main(int argc, char *argv[])
 		memset(v->value_buf, 0xDD, v->value_size);
 		krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
 	}
-	log_info("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_2);
-	log_info("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_3);
+	log_debug("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_2);
+	log_debug("loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_3);
 	memcpy(k->key_buf, PREFIX_3, strlen(PREFIX_3));
 	for (i = 0; i < PREFIX_TEST_KEYS; i++) {
 		sprintf(k->key_buf + strlen(PREFIX_3), "%llu", (long long unsigned)i);
@@ -408,12 +408,12 @@ int main(int argc, char *argv[])
 		memset(v->value_buf, 0xDD, v->value_size);
 		krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
 	}
-	log_info("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_3);
+	log_debug("Done loading keys %u keys with prefix %s", PREFIX_TEST_KEYS, PREFIX_3);
 	char *prefix_start;
 	char *prefix_stop;
 
 	for (j = 0; j < 3; j++) {
-		log_info("Testing j = %d", j);
+		log_debug("Testing j = %d", j);
 		switch (j) {
 		case 0:
 			prefix_start = PREFIX_1;
@@ -437,20 +437,20 @@ int main(int argc, char *argv[])
 		krc_scan_set_stop(sc, k->key_size, k->key_buf, KRC_GREATER_OR_EQUAL);
 		tuples = 0;
 		while (krc_scan_get_next(sc, &s_key, &s_key_size, &s_value, &s_value_size)) {
-			log_info("Got key %s", s_key);
+			log_debug("Got key %s", s_key);
 			++tuples;
 		}
 		if (tuples != PREFIX_TEST_KEYS) {
 			log_fatal("Test failed got %u expected %u", tuples, PREFIX_TEST_KEYS);
 			exit(EXIT_FAILURE);
 		}
-		log_info("Ok for start %s stop %s", prefix_start, prefix_stop);
+		log_debug("Ok for start %s stop %s", prefix_start, prefix_stop);
 	}
 	log_info("prefix test scans successfull");
 	krc_scan_close(sc);
 #if 0
-	log_info("Testing reading large objects");
-	log_info("inserting value of 1MB");
+	log_debug("Testing reading large objects");
+	log_debug("inserting value of 1MB");
 	free(k);
 	k = (key *)malloc(2 * 1024 * 1024);
 	strcpy(k->key_buf, "large_key_1MB");
@@ -466,7 +466,7 @@ int main(int argc, char *argv[])
 	}
 
 	krc_put(k->key_size, k->key_buf, v->value_size, v->value_buf);
-	log_info("Uploaded to kreon value of 1 MB now read it");
+	log_debug("Uploaded to kreon value of 1 MB now read it");
 	get_buffer = NULL;
 	error_code = krc_get(k->key_size, k->key_buf, &get_buffer, &get_size, 0);
 	if (error_code != KRC_SUCCESS) {
@@ -490,11 +490,11 @@ int main(int argc, char *argv[])
 
 	free(get_buffer);
 
-	log_info("Testing zero sided value keys populating");
+	log_debug("Testing zero sided value keys populating");
 	for (i = BASE; i < (BASE + NUM_KEYS); i++) {
 		memcpy(k->key_buf, ZERO_VALUE_PREFIX, strlen(ZERO_VALUE_PREFIX));
 		if (i % 100000 == 0)
-			log_info("inserted up to %llu th key", i);
+			log_debug("inserted up to %llu th key", i);
 
 		sprintf(k->key_buf + strlen(ZERO_VALUE_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
@@ -508,7 +508,7 @@ int main(int argc, char *argv[])
 	krc_put(k->key_size, k->key_buf, 0, NULL);
 	sprintf(k->key_buf, "%s", ZERO_VALUE_PREFIX);
 
-	log_info("Scanning now zero sided value keys");
+	log_debug("Scanning now zero sided value keys");
 	krc_scannerp zero_sc = krc_scan_init(16, 64 * 1024);
 	krc_scan_set_prefix_filter(zero_sc, strlen(ZERO_VALUE_PREFIX), ZERO_VALUE_PREFIX);
 	i = BASE;
@@ -531,9 +531,9 @@ int main(int argc, char *argv[])
 		log_fatal("Failed did not retrieve all keys got %u expected %u", zeroed_value_keys, NUM_KEYS);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Zeroed value keys success");
+	log_debug("Zeroed value keys success");
 	for (i = BASE; i < BASE + 20; i++) {
-		log_info("Testing scan after delete scenario");
+		log_debug("Testing scan after delete scenario");
 		sprintf(k->key_buf + strlen(ZERO_VALUE_PREFIX), "%llu", (long long unsigned)i);
 		k->key_size = strlen(k->key_buf);
 		assert(krc_delete(k->key_size, k->key_buf) == KRC_SUCCESS);

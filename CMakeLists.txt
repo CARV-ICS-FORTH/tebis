@@ -14,6 +14,18 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
   set(default_build_type "Debug")
 endif()
 
+option(
+  RUN_IWYU
+  "Run include-what-you-use on the source files of the key-value store library."
+  OFF)
+
+option(DISABLE_ALL_WARNINGS "Disable all warnings to parse iwyu output." OFF)
+
+if(RUN_IWYU STREQUAL "ON")
+  file(COPY ${CMAKE_SOURCE_DIR}/scripts/CI/check-iwyu-output.py
+       DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(
     STATUS
@@ -102,9 +114,26 @@ if(NOT cmake-scripts_POPULATED)
   include(${cmake-scripts_SOURCE_DIR}/sanitizers.cmake)
 endif()
 
-set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
-find_path(Zookeeper_INCLUDE_DIR zookeeper.h /usr/local/include /usr/include
-          /usr/include/zookeeper /usr/local/include/zookeeper)
+# If users have zookeeper installed in a custom path they can provide it to
+# continue the build. e.g.
+# -DCUSTOM_ZOOKEEPER_LIB_PATH=/home/user/zookeeper/usr/local/lib e.g.
+# -DCUSTOM_ZOOKEEPER_INCLUDE_PATH=/home/user/zookeeper/usr/local/include/zookeeper
+if(NOT CUSTOM_ZOOKEEPER_LIB_PATH)
+  set(CUSTOM_ZOOKEEPER_LIB_PATH "")
+  set(CUSTOM_ZOOKEEPER_INCLUDE_PATH "")
+endif()
+
+set(Zookeeper_LIB_PATHS /usr/local/lib /opt/local/lib /usr/lib/x86_64-linux-gnu
+                        ${CUSTOM_ZOOKEEPER_LIB_PATH})
+find_path(
+  Zookeeper_INCLUDE_DIR
+  zookeeper.h
+  /usr/local/include
+  /usr/include
+  /usr/include/zookeeper
+  /usr/local/include/zookeeper
+  ${CUSTOM_ZOOKEEPER_INCLUDE_PATH})
+
 find_library(
   Zookeeper_LIBRARY
   NAMES libzookeeper_mt.a
@@ -121,16 +150,24 @@ include(CMakeconfig.txt)
 configure_file(config.h.in config.h @ONLY)
 
 include_directories(${CMAKE_BINARY_DIR})
+
+if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
+  string(APPEND CMAKE_C_FLAGS APPEND " -w")
+  string(APPEND CMAKE_CXX_FLAGS APPEND " -w")
+endif()
 string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
 string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
-string(APPEND CMAKE_C_FLAGS
-       " -Wstrict-prototypes -Wall -Wextra -std=gnu11 -fpic -gdwarf-4")
+string(
+  APPEND
+  CMAKE_C_FLAGS
+  " -Wstrict-prototypes -Wall -Werror -Wextra -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
+)
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
-string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4")
+string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
 set(CMAKE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+    "-Wl,-no-as-needed -lm -Werror -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
 )
 
 add_subdirectory(kreon_rdma)
@@ -139,7 +176,6 @@ add_subdirectory(kreon_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
-add_subdirectory(microbenchmarks)
 
 if(KREON_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR

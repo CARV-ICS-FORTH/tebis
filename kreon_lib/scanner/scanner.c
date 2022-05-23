@@ -11,14 +11,14 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include <assert.h>
-#include <stdlib.h>
-#include <signal.h>
-#include "stack.h"
-#include <log.h>
 #include "scanner.h"
 #include "../btree/btree.h"
 #include "../btree/conf.h"
+#include "stack.h"
+#include <assert.h>
+#include <log.h>
+#include <signal.h>
+#include <stdlib.h>
 
 extern int32_t index_order;
 extern int32_t leaf_order;
@@ -1421,7 +1421,7 @@ level_scanner *_init_reverse_spill_buffer_scanner(db_handle *handle, node_header
                                   log*/
 	/*position scanner now to the appropriate row*/
 	if (SeekLast(level_sc, NULL) == END_OF_DATABASE) {
-		log_info("empty internal buffer during spill operation, is that possible?");
+		log_debug("empty internal buffer during spill operation, is that possible?");
 		// will happen in close_spill_buffer_scanner stack_destroy(&(sc->stack));
 		// free(sc);
 		return NULL;

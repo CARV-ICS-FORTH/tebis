@@ -1,12 +1,17 @@
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
+#include "../utilities/circular_buffer.h"
+#include "conf.h"
 #include "djb2.h"
 #include "globals.h"
+#include "messages.h"
 #include "metadata.h"
-#include "../utilities/circular_buffer.h"
 #include "uthash.h"
+#include <infiniband/verbs.h>
 #include <log.h>
+#include <rdma/rdma_cma.h>
+#include <rdma/rdma_verbs.h>
+#include <stdint.h>
+#include <stdlib.h>
+const uint32_t S2S_MSG_SIZE = 256;
 
 struct sc_conn_per_server {
 	uint64_t hash_key;
@@ -14,78 +19,116 @@ struct sc_conn_per_server {
 	struct connection_rdma *conn;
 	UT_hash_handle hh;
 };
+
+struct fill_request_msg_info {
+	struct msg_header *request;
+	uint32_t request_size;
+	uint32_t request_padding;
+	uint32_t req_type;
+	struct msg_header *reply;
+};
 struct sc_conn_per_server *sc_root_data_cps = NULL;
 struct sc_conn_per_server *sc_root_compaction_cps = NULL;
 static pthread_mutex_t conn_map_lock = PTHREAD_MUTEX_INITIALIZER;
+static void fill_request_msg(connection_rdma *conn, struct fill_request_msg_info msg_info)
+{
+	msg_info.request->payload_length = 0;
+	msg_info.request->padding_and_tail_size = 0;
+	if (msg_info.request_size > 0) {
+		msg_info.request->payload_length = msg_info.request_size;
+		msg_info.request->padding_and_tail_size = msg_info.request_padding + TU_TAIL_SIZE;
+	}
+	msg_info.request->msg_type = msg_info.req_type;
+	msg_info.request->offset_in_send_and_target_recv_buffers =
+		calc_offset_in_send_and_target_recv_buffer(msg_info.request, conn->send_circular_buf);
+	msg_info.request->triggering_msg_offset_in_send_buffer =
+		real_address_to_triggering_msg_offt(conn, msg_info.request);
+	msg_info.request->offset_reply_in_recv_buffer =
+		((uint64_t)msg_info.reply - (uint64_t)conn->recv_circular_buf->memory_region);
+	msg_info.request->reply_length_in_recv_buffer =
+		sizeof(msg_header) + msg_info.reply->payload_length + msg_info.reply->padding_and_tail_size;
+	set_receive_field(msg_info.request, TU_RDMA_REGULAR_MSG);
+}
+
+static void fill_reply_msg(connection_rdma *conn, struct msg_header *reply, uint32_t reply_size, uint32_t reply_padding,
+			   uint32_t reply_type)
+{
+	reply->payload_length = 0;
+	reply->padding_and_tail_size = 0;
+	if (reply_size > 0) {
+		reply->payload_length = reply_size;
+		reply->padding_and_tail_size = reply_padding + TU_TAIL_SIZE;
+	}
+	reply->msg_type = reply_type;
+	reply->offset_in_send_and_target_recv_buffers =
+		calc_offset_in_send_and_target_recv_buffer(reply, conn->send_circular_buf);
+	reply->offset_reply_in_recv_buffer = UINT32_MAX;
+	reply->reply_length_in_recv_buffer = UINT32_MAX;
+	reply->triggering_msg_offset_in_send_buffer = UINT32_MAX;
+	set_receive_field(reply, 0);
+}
+
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type)
 {
 	struct sc_msg_pair rep = { .request = NULL, .reply = NULL, .stat = 0 };
-	rep.conn = conn;
-	char *addr;
-	uint32_t actual_request_size;
-	uint32_t actual_reply_size;
-	uint32_t request_padding;
-	uint32_t reply_padding;
-	uint32_t receive_type = TU_RDMA_REGULAR_MSG;
-	enum message_type req_type;
+	char *addr = NULL;
+	enum message_type req_type = type;
 	enum message_type rep_type;
+	rep.conn = conn;
 	/*calculate the sizes for both request and reply*/
+	/*request part*/
+	uint32_t actual_request_size = S2S_MSG_SIZE;
+	uint32_t request_padding = 0;
 	if (request_size > 0) {
 		actual_request_size = TU_HEADER_SIZE + request_size + TU_TAIL_SIZE;
-		if (actual_request_size % MESSAGE_SEGMENT_SIZE != 0) {
-			/*need to pad */
-			request_padding = (MESSAGE_SEGMENT_SIZE - (actual_request_size % MESSAGE_SEGMENT_SIZE));
+		if (actual_request_size % S2S_MSG_SIZE != 0) {
+			request_padding = (S2S_MSG_SIZE - (actual_request_size % S2S_MSG_SIZE));
 			actual_request_size += request_padding;
-		} else
-			request_padding = 0;
-	} else {
-		actual_request_size = MESSAGE_SEGMENT_SIZE;
-		request_padding = 0;
+		}
 	}
-
+	/*reply part*/
+	uint32_t actual_reply_size = S2S_MSG_SIZE;
+	uint32_t reply_padding = 0;
 	if (reply_size > 0) {
 		actual_reply_size = TU_HEADER_SIZE + reply_size + TU_TAIL_SIZE;
-		if (actual_reply_size % MESSAGE_SEGMENT_SIZE != 0) {
-			/*need to pad */
-			reply_padding = (MESSAGE_SEGMENT_SIZE - (actual_reply_size % MESSAGE_SEGMENT_SIZE));
+		if (actual_reply_size % S2S_MSG_SIZE != 0) {
+			reply_padding = (S2S_MSG_SIZE - (actual_reply_size % S2S_MSG_SIZE));
 			actual_reply_size += reply_padding;
-		} else
-			reply_padding = 0;
-	} else {
-		actual_reply_size = MESSAGE_SEGMENT_SIZE;
-		reply_padding = 0;
+		}
+	}
+
+	if (actual_reply_size != S2S_MSG_SIZE || actual_request_size != S2S_MSG_SIZE) {
+		log_fatal("Cant allocate a msg for s2s communication larger thant S2S_MSG_size = %lu", S2S_MSG_SIZE);
+		assert(0);
+		_exit(EXIT_FAILURE);
 	}
 
 	pthread_mutex_lock(&conn->buffer_lock);
-	switch (type) {
+	switch (req_type) {
 	case GET_LOG_BUFFER_REQ:
-		req_type = type;
 		rep_type = GET_LOG_BUFFER_REP;
 		break;
 	case FLUSH_COMMAND_REQ:
-		req_type = type;
 		rep_type = FLUSH_COMMAND_REP;
 		break;
 	case REPLICA_INDEX_GET_BUFFER_REQ:
-		req_type = type;
-		rep_type = REPLICA_INDEX_FLUSH_REP;
+		rep_type = REPLICA_INDEX_GET_BUFFER_REP;
 		break;
 	case REPLICA_INDEX_FLUSH_REQ:
-		req_type = type;
 		rep_type = REPLICA_INDEX_FLUSH_REP;
 		break;
 	default:
-		log_fatal("Unsupported message type %d", type);
-		exit(EXIT_FAILURE);
+		log_fatal("Unsupported s2s message type %d", type);
+		_exit(EXIT_FAILURE);
 	}
-	/*The idea is the following, if we are not able to allocate both
-           * buffers while acquiring the lock we should rollback. Also we need
-   * to
-           * allocate receive buffer first and then send buffer.
-           */
-	/*first allocate the receive buffer, aka where we expect the reply*/
+
+	/* The idea is the following, if we are not able to allocate both buffers while acquiring the lock we should rollback.
+     * Also we need to allocate receive buffer first and then send buffer.
+     * First we allocate the receive buffer, aka where we expect the reply
+     */
 retry_allocate_reply:
+	/*reply allocation*/
 	rep.stat = allocate_space_from_circular_buffer(conn->recv_circular_buf, actual_reply_size, &addr);
 	switch (rep.stat) {
 	case ALLOCATION_IS_SUCCESSFULL:
@@ -98,43 +141,14 @@ retry_allocate_reply:
 	case SPACE_NOT_READY_YET:
 		goto exit;
 	}
-
 	rep.reply = (struct msg_header *)addr;
 
-retry_allocate_request:
+	/*request allocation*/
 	rep.stat = allocate_space_from_circular_buffer(conn->send_circular_buf, actual_request_size, &addr);
 	switch (rep.stat) {
-	case NOT_ENOUGH_SPACE_AT_THE_END: {
-		log_fatal("Server 2 Server communication should not include RESET_RENDEZVOUS msg");
-		exit(EXIT_FAILURE);
-		char *addr;
-		struct msg_header *msg;
-		/*inform remote side that to reset the rendezvous*/
-		if (allocate_space_from_circular_buffer(conn->send_circular_buf, MESSAGE_SEGMENT_SIZE, &addr) !=
-		    ALLOCATION_IS_SUCCESSFULL) {
-			log_fatal("cannot send reset rendezvous");
-			exit(EXIT_FAILURE);
-		}
-		msg = (msg_header *)addr;
-		msg->pay_len = 0;
-		msg->padding_and_tail = 0;
-		msg->data = NULL;
-		msg->next = NULL;
-
-		msg->receive = RESET_RENDEZVOUS;
-		msg->type = RESET_RENDEZVOUS;
-		msg->local_offset = addr - conn->send_circular_buf->memory_region;
-		msg->remote_offset = addr - conn->send_circular_buf->memory_region;
-		// log_info("Sending to remote offset %llu\n", msg->remote_offset);
-		msg->ack_arrived = 0; // maybe?
-		msg->request_message_local_addr = NULL;
-		msg->reply = NULL;
-		msg->reply_length = 0;
-		client_send_rdma_message(conn, msg);
-		free_space_from_circular_buffer(conn->send_circular_buf, (char *)msg, MESSAGE_SEGMENT_SIZE);
-		reset_circular_buffer(conn->send_circular_buf);
-		goto retry_allocate_request;
-	}
+	case NOT_ENOUGH_SPACE_AT_THE_END:
+		log_fatal("Server 2 Server communication should not include no_op msg");
+		_exit(EXIT_FAILURE);
 	case SPACE_NOT_READY_YET:
 		/*rollback previous allocation*/
 		free_space_from_circular_buffer(conn->recv_circular_buf, (char *)rep.reply, actual_reply_size);
@@ -146,98 +160,44 @@ retry_allocate_request:
 	case BITMAP_RESET:
 		break;
 	}
-
 	rep.request = (struct msg_header *)addr;
+
 	/*init the headers*/
-
-	struct msg_header *msg;
-	struct circular_buffer *c_buf;
-	uint32_t payload_size;
-	uint32_t padding;
-	uint32_t msg_type;
-	int i = 0;
-	c_buf = conn->send_circular_buf;
-	msg = rep.request;
-	payload_size = request_size;
-	padding = request_padding;
-	msg_type = req_type;
-
-	while (i < 2) {
-		if (payload_size > 0) {
-			msg->pay_len = payload_size;
-			msg->padding_and_tail = padding + TU_TAIL_SIZE;
-			msg->data = (void *)((uint64_t)msg + TU_HEADER_SIZE);
-			msg->next = msg->data;
-			/*set the tail to the proper value*/
-			if (i == 0) {
-				// this is the request
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
-					      sizeof(uint32_t)) = receive_type;
-				msg->receive = receive_type;
-			} else { // this is the reply
-				*(uint32_t *)(((uint64_t)msg + TU_HEADER_SIZE + msg->pay_len + msg->padding_and_tail) -
-					      sizeof(uint32_t)) = 0;
-				msg->receive = 0;
-			}
-		} else {
-			msg->pay_len = 0;
-			msg->padding_and_tail = 0;
-			msg->data = NULL;
-			msg->next = NULL;
-		}
-
-		msg->type = msg_type;
-
-		msg->local_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-		msg->remote_offset = (uint64_t)msg - (uint64_t)c_buf->memory_region;
-
-		msg->ack_arrived = 0; //????? really?
-		msg->request_message_local_addr = NULL;
-		rep.request->reply = NULL;
-		rep.request->reply_length = 0;
-
-		c_buf = conn->recv_circular_buf;
-		msg = rep.reply;
-		payload_size = reply_size;
-		padding = reply_padding;
-		msg_type = rep_type;
-		++i;
-	}
-
-	rep.request->reply = (char *)((uint64_t)rep.reply - (uint64_t)conn->recv_circular_buf->memory_region);
-	rep.request->reply_length = sizeof(msg_header) + rep.reply->pay_len + rep.reply->padding_and_tail;
+	fill_reply_msg(conn, rep.reply, reply_size, reply_padding, rep_type);
+	struct fill_request_msg_info msg_info;
+	msg_info.request = rep.request;
+	msg_info.request_size = request_size;
+	msg_info.request_padding = request_padding;
+	msg_info.req_type = req_type;
+	msg_info.reply = rep.reply;
+	fill_request_msg(conn, msg_info);
 
 exit:
 	pthread_mutex_unlock(&conn->buffer_lock);
-
 	return rep;
 }
 
 void sc_free_rpc_pair(struct sc_msg_pair *p)
 {
-	uint32_t size;
-	msg_header *request;
-	msg_header *reply;
-	request = p->request;
-	reply = p->reply;
-	assert(request->reply_length != 0);
-	_zero_rendezvous_locations_l(reply, request->reply_length);
-	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply, request->reply_length);
+	msg_header *request = p->request;
+	msg_header *reply = p->reply;
+	assert(request->reply_length_in_recv_buffer != 0);
+	zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
+	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply,
+					request->reply_length_in_recv_buffer);
 
-	if (request->pay_len == 0) {
-		size = MESSAGE_SEGMENT_SIZE;
-	} else {
-		size = TU_HEADER_SIZE + request->pay_len + request->padding_and_tail;
-		assert(size % MESSAGE_SEGMENT_SIZE == 0);
-	}
+	uint32_t size = MESSAGE_SEGMENT_SIZE;
+	if (request->payload_length)
+		size = TU_HEADER_SIZE + request->payload_length + request->padding_and_tail_size;
+
+	assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
-	return;
 }
 
-extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc *my_desc, struct krm_server_name *dst,
-				  int *zk_rc);
+extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,
+				  struct krm_server_name *dst, int *zk_rc);
 
-static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char *hostname,
+static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
 	struct sc_conn_per_server *cps = NULL;
@@ -254,7 +214,7 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 			int rc = krm_zk_get_server_name(hostname, mydesc, &cps->server, NULL);
 			if (rc) {
 				log_fatal("Failed to refresh info for server %s", hostname);
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			}
 			char *IP = cps->server.RDMA_IP_addr;
 			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(mydesc), &IP, 1,
@@ -270,7 +230,7 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc *mydesc, char 
 	return cps->conn;
 }
 
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc *mydesc, char *hostname)
+struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname)
 {
 	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
 }

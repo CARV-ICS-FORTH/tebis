@@ -11,26 +11,25 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include <stdlib.h>
-#include <inttypes.h>
-#include <string.h>
-#include <signal.h>
-#include <pthread.h>
 #include <assert.h>
 #include <emmintrin.h>
-#include <sys/types.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
-#include <pthread.h>
+#include <sys/types.h>
 
+#include "../allocator/dmap-ioctl.h"
+#include "../btree/assertions.h"
+#include "../btree/conf.h"
+#include "../btree/stats.h"
+#include "../scanner/scanner.h"
 #include "btree.h"
 #include "gc.h"
 #include "segment_allocator.h"
-#include "../allocator/dmap-ioctl.h"
-#include "../scanner/scanner.h"
-#include "../btree/stats.h"
-#include "../btree/assertions.h"
-#include "../btree/conf.h"
 #include <log.h>
 
 #define PREFIX_STATISTICS_NO
@@ -430,7 +429,7 @@ static void bt_init_fresh_db(struct db_handle *hd, char *db_name, int group_id, 
 		// db_desc->commit_log->last_kv_log = NULL;
 		// db_desc->commit_log->kv_log_size = 0;
 	} else {
-		log_info("Initializing KV log for DB %s", hd->db_desc->db_name);
+		log_debug("Initializing KV log for DB %s", hd->db_desc->db_name);
 		hd->db_desc->KV_log_first_segment = seg_get_raw_log_segment(hd->volume_desc);
 		memset((void *)hd->db_desc->KV_log_first_segment->garbage_bytes, 0x00,
 		       2 * MAX_COUNTER_VERSIONS * sizeof(uint64_t));
@@ -521,10 +520,10 @@ static void bt_recover_db(struct db_handle *hd, struct pr_db_entry *db_entry, in
 	else
 		hd->db_desc->L1_segment = NULL;
 
-	log_info("DB: %s KV log status - First segment: %llu Last segment: %llu KV "
-		 "log size %llu",
-		 hd->db_desc->db_name, (LLU)hd->db_desc->KV_log_first_segment, (LLU)hd->db_desc->KV_log_last_segment,
-		 (LLU)hd->db_desc->KV_log_size);
+	log_debug("DB: %s KV log status - First segment: %llu Last segment: %llu KV "
+		  "log size %llu",
+		  hd->db_desc->db_name, (LLU)hd->db_desc->KV_log_first_segment, (LLU)hd->db_desc->KV_log_last_segment,
+		  (LLU)hd->db_desc->KV_log_size);
 }
 
 static void bt_recover_L0(struct db_handle *hd)
@@ -537,8 +536,8 @@ static void bt_recover_L0(struct db_handle *hd)
 	struct segment_header *curr = hd->db_desc->L1_segment;
 	char *cursor = (char *)((uint64_t)curr + (hd->db_desc->L1_index_end_log_offset % SEGMENT_SIZE));
 	uint64_t log_offset = hd->db_desc->L1_index_end_log_offset;
-	log_info("L1 index ends at offset %llu value log is at %llu", hd->db_desc->L1_index_end_log_offset,
-		 hd->db_desc->KV_log_size);
+	log_debug("L1 index ends at offset %llu value log is at %llu", hd->db_desc->L1_index_end_log_offset,
+		  hd->db_desc->KV_log_size);
 	while (log_offset < hd->db_desc->KV_log_size) {
 		struct kv_prefix p;
 		struct bt_insert_req ins_req;
@@ -607,9 +606,9 @@ static void bt_reclaim_db_space(struct db_descriptor *db_desc, struct volume_des
 {
 	for (int level_id = 1; level_id < MAX_LEVELS; level_id++) {
 		if (db_desc->levels[level_id].first_segment[1] != NULL) {
-			log_info("Reclaiming space from pending compactions for DB %s after an "
-				 "unclean shutdown",
-				 db_desc->db_name);
+			log_debug("Reclaiming space from pending compactions for DB %s after an "
+				  "unclean shutdown",
+				  db_desc->db_name);
 			struct segment_header *curr_segment = db_desc->levels[level_id].first_segment[1];
 			while (curr_segment != NULL) {
 				struct segment_header *next = NULL;
@@ -737,9 +736,9 @@ static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t si
 				  sizeof(node_header));
 			exit(EXIT_FAILURE);
 		}
-		log_info("index order set to: %d leaf order is set to %d sizeof "
-			 "node_header = %lu",
-			 index_order, leaf_order, sizeof(node_header));
+		log_debug("index order set to: %d leaf order is set to %d sizeof "
+			  "node_header = %lu",
+			  index_order, leaf_order, sizeof(node_header));
 	}
 
 	struct volume_descriptor *volume_desc = get_volume_desc(volumeName, start, 0);
@@ -751,7 +750,7 @@ static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t si
 	// open databases
 	struct db_descriptor *db_desc = klist_find_element_with_key(volume_desc->open_databases, db_name);
 	if (db_desc != NULL) {
-		log_info("DB %s already open in volume %s", db_name, volumeName);
+		log_debug("DB %s already open in volume %s", db_name, volumeName);
 		handle = calloc(1, sizeof(db_handle));
 		handle->volume_desc = volume_desc;
 		handle->db_desc = db_desc;
@@ -765,7 +764,7 @@ static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t si
 		int32_t empty_index;
 		int32_t j;
 
-		log_info("Searching volume's %s catalogue for db %s...", volume_desc->volume_name, db_name);
+		log_debug("Searching volume's %s catalogue for db %s...", volume_desc->volume_name, db_name);
 		empty_group = -1;
 		empty_index = -1;
 		// we are going to search system's catalogue to find the root_r of the
@@ -793,8 +792,8 @@ static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t si
 						    0) {
 							// found database, recover state and create the appropriate handle
 							// and store it in the open_db's list
-							log_info("DB: %s found at index [%d,%d]", db_entry->db_name, i,
-								 j);
+							log_debug("DB: %s found at index [%d,%d]", db_entry->db_name, i,
+								  j);
 							handle = calloc(1, sizeof(db_handle));
 							db_desc = calloc(1, sizeof(db_descriptor));
 
@@ -831,8 +830,8 @@ static db_handle *internal_db_open(char *volumeName, uint64_t start, uint64_t si
 			// new_group->epoch,
 			//	 volume_desc->mem_catalogue->epoch);
 		}
-		log_info("DB %s not found, allocating slot [%d,%d] for it", (const char *)db_name, empty_group,
-			 empty_index);
+		log_debug("DB %s not found, allocating slot [%d,%d] for it", (const char *)db_name, empty_group,
+			  empty_index);
 		pr_db_group *cur_group = (pr_db_group *)bt_get_real_address(
 			(uint64_t)volume_desc->mem_catalogue->db_group_index[empty_group]);
 		db_entry = &cur_group->db_entries[empty_index];
@@ -950,8 +949,8 @@ finish_init:
 	}
 
 	db_desc->log_tail_buf[0]->free = 0;
-	log_info("Recovered last segment of DB: %s in memory IOs completed %u", db_desc->db_name,
-		 db_desc->log_tail_buf[0]->IOs_completed_in_tail);
+	log_debug("Recovered last segment of DB: %s in memory IOs completed %u", db_desc->db_name,
+		  db_desc->log_tail_buf[0]->IOs_completed_in_tail);
 #endif
 
 	sem_init(&db_desc->compaction_daemon_interrupts, PTHREAD_PROCESS_PRIVATE, 0);
@@ -999,7 +998,7 @@ char db_close(db_handle *handle)
 	--handle->db_desc->ref_count;
 
 	if (handle->db_desc->ref_count > 0) {
-		log_info("More guys here");
+		log_debug("More guys here");
 		goto finish;
 		snapshot(handle->volume_desc);
 	}
@@ -1027,7 +1026,7 @@ char db_close(db_handle *handle)
 			continue;
 		}
 	}
-	log_info("All pending compactions done for db %s", handle->db_desc->db_name);
+	log_debug("All pending compactions done for db %s", handle->db_desc->db_name);
 	snapshot(handle->volume_desc);
 
 	if (!klist_remove_element(handle->volume_desc->open_databases, handle->db_desc)) {
@@ -1324,8 +1323,8 @@ static void do_log_chunk_IO(struct log_ticket *ticket, struct asyncio_ctx *async
 			   ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
 
 	if ((ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written) % 512 != 0) {
-		log_info("offset %llu is misaligned (should be aligned to 512 B)",
-			 ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
+		log_debug("offset %llu is misaligned (should be aligned to 512 B)",
+			  ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written);
 		assert((ticket->tail->dev_segment_offt + ticket->IO_start_offt + total_bytes_written) % 512 == 0);
 	}
 }
@@ -1353,7 +1352,7 @@ static void do_log_IO(struct log_ticket *ticket, struct asyncio_ctx *asyncio_han
 static void print_log_tail(struct db_descriptor *db_desc, struct log_tail *tail)
 {
 	int id = 0;
-	log_info("log tail");
+	log_debug("log tail");
 	uint32_t *start = (uint32_t *)&tail->buf[sizeof(struct segment_header)];
 	uint32_t *value = (uint32_t *)((uint64_t)start + sizeof(uint32_t) + *start);
 	uint32_t offt_in_buf = sizeof(struct segment_header);
@@ -1546,24 +1545,6 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 	uint8_t rc;
 
 	db_desc = ins_req->metadata.handle->db_desc;
-
-	int active_tree = db_desc->levels[0].active_tree;
-	while (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-		pthread_mutex_lock(&db_desc->client_barrier_lock);
-		active_tree = db_desc->levels[0].active_tree;
-
-		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-			sem_post(&db_desc->compaction_daemon_interrupts);
-			//if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
-			//	log_fatal("failed to throttle");
-			//	exit(EXIT_FAILURE);
-			//}
-			pthread_mutex_unlock(&db_desc->client_barrier_lock);
-			return FAILED;
-		}
-		active_tree = db_desc->levels[0].active_tree;
-		pthread_mutex_unlock(&db_desc->client_barrier_lock);
-	}
 	db_desc->dirty = 0x01;
 
 	if (ins_req->metadata.key_format == KV_FORMAT) {
@@ -1576,7 +1557,6 @@ uint8_t _insert_key_value(bt_insert_req *ins_req)
 	if (_writers_join_as_readers(ins_req) == SUCCESS)
 		rc = SUCCESS;
 	else if (_concurrent_insert(ins_req) != SUCCESS) {
-		log_warn("insert failed!");
 		rc = FAILED;
 	}
 	return rc;
@@ -1929,9 +1909,9 @@ static void insert_key_at_index(bt_insert_req *ins_req, index_node *node, node_h
 			assert(0);
 			exit(EXIT_FAILURE);
 		}
-		d_header =
-			seg_get_IN_log_block(handle->volume_desc, &handle->db_desc->levels[ins_req->metadata.level_id],
-					     ins_req->metadata.tree_id, allocation_code);
+		d_header = seg_get_IN_log_block(handle->volume_desc,
+						&handle->db_desc->levels[ins_req->metadata.level_id],
+						ins_req->metadata.tree_id, allocation_code);
 
 		d_header->next = NULL;
 		d_header->type = keyBlockHeader;
@@ -2242,9 +2222,9 @@ static bt_split_result bt_split_leaf(bt_insert_req *req, leaf_node *node)
 	rep.left_lchild = node;
 	// rep.left_lchild->header.v1++;
 	/*right leaf*/
-	rep.right_lchild =
-		seg_get_leaf_node(req->metadata.handle->volume_desc, &req->metadata.handle->db_desc->levels[level_id],
-				  req->metadata.tree_id, LEAF_SPLIT);
+	rep.right_lchild = seg_get_leaf_node(req->metadata.handle->volume_desc,
+					     &req->metadata.handle->db_desc->levels[level_id], req->metadata.tree_id,
+					     LEAF_SPLIT);
 	int split_point;
 	int left_entries;
 	int right_entries;
@@ -2573,6 +2553,17 @@ static void init_index_node(index_node *node)
 	node->header.numberOfEntriesInNode = 0;
 }
 
+static int is_current_active_tree_full(db_descriptor *db_desc)
+{
+	uint8_t active_tree = db_desc->levels[0].active_tree;
+	if (db_desc->levels[0].level_size[active_tree] >= db_desc->levels[0].max_level_size) {
+		sem_post(&db_desc->compaction_daemon_interrupts);
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
 uint8_t _concurrent_insert(bt_insert_req *ins_req)
 {
 	/*The array with the locks that belong to this thread from upper levels*/
@@ -2631,6 +2622,11 @@ release_and_retry:
 		log_fatal("Failed to acquire guard lock for level %u", level_id);
 		exit(EXIT_FAILURE);
 	}
+	if (FAILURE == is_current_active_tree_full(db_desc)) {
+		RWLOCK_UNLOCK(&guard_of_level->rx_lock);
+		return FAILURE;
+	}
+
 	/*now look which is the active_tree of L0*/
 	if (ins_req->metadata.level_id == 0) {
 		ins_req->metadata.tree_id = ins_req->metadata.handle->db_desc->levels[0].active_tree;
@@ -2673,9 +2669,9 @@ release_and_retry:
 			/*log_info("Allocating new active tree %d for level id %d epoch is at %llu",*/
 			/*ins_req->metadata.tree_id, level_id, (LLU)mem_catalogue->epoch);*/
 
-			leaf_node *t =
-				seg_get_leaf_node(ins_req->metadata.handle->volume_desc, &db_desc->levels[level_id],
-						  ins_req->metadata.tree_id, NEW_ROOT);
+			leaf_node *t = seg_get_leaf_node(ins_req->metadata.handle->volume_desc,
+							 &db_desc->levels[level_id], ins_req->metadata.tree_id,
+							 NEW_ROOT);
 			init_leaf_node(t);
 			t->header.type = leafRootNode;
 			t->header.epoch = mem_catalogue->epoch;
@@ -2905,6 +2901,10 @@ static uint8_t _writers_join_as_readers(bt_insert_req *ins_req)
 		log_fatal("Failed to acquire guard lock for db: %s", db_desc->db_name);
 		perror("Reason: ");
 		exit(EXIT_FAILURE);
+	}
+	if (FAILURE == is_current_active_tree_full(db_desc)) {
+		RWLOCK_UNLOCK(&guard_of_level->rx_lock);
+		return FAILURE;
 	}
 	/*now look which is the active_tree of L0*/
 	if (ins_req->metadata.level_id == 0)

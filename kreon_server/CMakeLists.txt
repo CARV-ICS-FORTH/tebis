@@ -67,3 +67,19 @@ if(KREON_BUILD_CPACK)
     PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
   set_target_properties(kreon_client PROPERTIES OUTPUT_NAME ${KREON_CLIENT_LIB})
 endif()
+
+if(RUN_IWYU STREQUAL "ON")
+  find_program(iwyu_path NAMES include-what-you-use iwyu iwyu-tool)
+  if(iwyu_path)
+    set_property(TARGET ${KREON_CLIENT_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
+                                                     ${iwyu_path})
+    set_property(TARGET ${KREON_SERVER_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
+                                                     ${iwyu_path})
+    set_property(TARGET create_region PROPERTY C_INCLUDE_WHAT_YOU_USE
+                                               ${iwyu_path})
+    set_property(TARGET create_server_node PROPERTY C_INCLUDE_WHAT_YOU_USE
+                                                    ${iwyu_path})
+  else()
+    message("Could not find the program include-what-you-use")
+  endif()
+endif()

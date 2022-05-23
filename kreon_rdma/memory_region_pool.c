@@ -6,34 +6,25 @@
 #define _POSIX_C_SOURCE 200112L // required for posix_memalign
 #include <assert.h>
 #include <infiniband/verbs.h>
-#include <rdma/rdma_verbs.h>
-#include <stdlib.h>
 #include <numa.h>
+#include <rdma/rdma_verbs.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
-#include "memory_region_pool.h"
+#include "../kreon_server/conf.h" // FIXME only included for the priority macros
 #include "../utilities/list.h"
 #include "../utilities/macros.h"
-#include "../kreon_server/conf.h" // FIXME only included for the priority macros
+#include "memory_region_pool.h"
 #include <log.h>
 
 #define ALLOC_LOCAL 1 // if true use numa_alloc_local, otherwise use posix_memalign
 
-const size_t MEM_REGION_BASE_SIZE = (2 * 1024 * 1024);
+const size_t MEM_REGION_BASE_SIZE = (8 * 1024);
 //const size_t MEM_REGION_BASE_SIZE = 8 * 1024 * 1024;
 const size_t MR_PREALLOCATE_COUNT = 128; // FIXME unused
 
 static int _mrpool_preallocate_mr(memory_region_pool *);
 static void _mrpool_initialize_mem_region(memory_region *, struct ibv_pd *, size_t);
-
-memory_region *mrpool_get_static_buffer(struct rdma_cm_id *id, uint32_t size)
-{
-	(void)id;
-	(void)size;
-	log_fatal("method not implemented!");
-	assert(0);
-	return NULL;
-}
 
 /**
  * Initialize a memory region pool. The mrpool struct is allocated by the caller
@@ -89,13 +80,11 @@ memory_region *mrpool_allocate_memory_region(memory_region_pool *pool, struct rd
    *
    * Perhaps we could asign the preallocation as a task to a worker
    */
-	struct klist *freelist;
-	struct klist_node *freelist_node;
 	memory_region *mr = NULL;
 
 	if (pool->type == PREALLOCATED) {
-		freelist = pool->free_mrs;
-		freelist_node = klist_get_first(freelist);
+		struct klist *freelist = pool->free_mrs;
+		struct klist_node *freelist_node = klist_get_first(freelist);
 		if (freelist_node) {
 			mr = (memory_region *)freelist_node->data;
 		}

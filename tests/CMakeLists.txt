@@ -49,4 +49,14 @@ if(Zookeeper_LIBRARY)
     PROPERTIES LINK_FLAGS
                "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
                COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
+
+  if(RUN_IWYU STREQUAL "ON")
+    find_program(iwyu_path NAMES include-what-you-use iwyu iwyu-tool)
+    if(iwyu_path)
+      set_property(TARGET test_krc_api PROPERTY C_INCLUDE_WHAT_YOU_USE
+                                                ${iwyu_path})
+    else()
+      message("Could not find the program include-what-you-use")
+    endif()
+  endif()
 endif()

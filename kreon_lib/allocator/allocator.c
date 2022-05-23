@@ -14,31 +14,31 @@
 
 #define _LARGEFILE64_SOURCE
 #define _GNU_SOURCE
-#include <pthread.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <time.h>
-#include <assert.h>
-#include <errno.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/time.h>
-#include <stdarg.h>
-#include <fcntl.h>
-#include <string.h>
-#include <inttypes.h>
-#include <linux/fs.h>
-#include <stdlib.h>
-#include <sys/ioctl.h>
-#include <math.h>
-#include <log.h>
-#include "dmap-ioctl.h"
 #include "allocator.h"
 #include "../btree/btree.h"
 #include "../btree/conf.h"
 #include "../btree/segment_allocator.h"
 #include "../utilities/list.h"
+#include "dmap-ioctl.h"
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <linux/fs.h>
+#include <log.h>
+#include <math.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 //#define USE_MLOCK
 #define __NR_mlock2 284
@@ -165,7 +165,7 @@ off64_t mount_volume(char *volume_name, int64_t start, int64_t unused_size)
 			exit(EXIT_FAILURE);
 		}
 
-		log_info("Creating virtual address space offset %lld size %ld\n", (long long)start, device_size);
+		log_debug("Creating virtual address space offset %lld size %ld\n", (long long)start, device_size);
 		// mmap the device
 		char *addr_space = mmap(NULL, device_size, PROT_READ | PROT_WRITE, MAP_SHARED, FD, start);
 		if (addr_space == MAP_FAILED) {
@@ -241,8 +241,8 @@ int32_t volume_init(char *dev_name, int64_t start, int64_t size, int typeOfVolum
 		log_fatal("code = %d,  ERROR = %s for device %s\n", errno, strerror(errno), dev_name);
 		exit(EXIT_FAILURE);
 	}
-	log_info("Initializing volume %s start %llu size %llu size in 4K blocks %llu", dev_name, (long long)start,
-		 (long long)size, (long long)dev_size_in_blocks);
+	log_debug("Initializing volume %s start %llu size %llu size in 4K blocks %llu", dev_name, (long long)start,
+		  (long long)size, (long long)dev_size_in_blocks);
 
 	/*check if the device is a fake_blk device, maybe add another ioctl for this
 purpose*/
@@ -260,7 +260,7 @@ purpose*/
 		// XXX Nothing more to do! volume_init() will touch all the other metadata
 		// XXX and this will change the bit values to 1.
 	} else
-		log_info("Volume: %s is not a fake_blk device!", dev_name);
+		log_debug("Volume: %s is not a fake_blk device!", dev_name);
 
 	/*
 * Finally, we are going to initiate the bitmap of the device. The idea is the
@@ -316,7 +316,7 @@ purpose*/
 	uint64_t pad =
 		(start + ((1 + FREE_LOG_SIZE_IN_BLOCKS + bitmap_size_in_blocks) * DEVICE_BLOCK_SIZE)) % SEGMENT_SIZE;
 	pad = SEGMENT_SIZE - pad;
-	log_info("Padding %llu bytes for alignment purposes", (LLU)pad);
+	log_debug("Padding %llu bytes for alignment purposes", (LLU)pad);
 	struct bitmap_bit {
 		char b0 : 1;
 		char b1 : 1;
@@ -415,7 +415,7 @@ purpose*/
 	}
 	free(zeroes);
 	offset += sizeof(segment_header);
-	log_info("Writing system catalogue at offset %llu\n", (LLU)offset);
+	log_debug("Writing system catalogue at offset %llu\n", (LLU)offset);
 	if (lwrite(fd, (off_t)offset, SEEK_SET, &sys_catalogue, (size_t)(sizeof(pr_system_catalogue))) == -1) {
 		log_fatal("code = %d,  ERROR = %s\n", errno, strerror(errno));
 		return -1;
@@ -479,8 +479,8 @@ void volume_close(volume_descriptor *volume_desc)
 {
 	/*1.first of all, is this volume present?*/
 	if (klist_find_element_with_key(volume_list, volume_desc->volume_id) == NULL) {
-		log_info("volume: %s with volume id:%s not found during close operation\n", volume_desc->volume_name,
-			 volume_desc->volume_id);
+		log_debug("volume: %s with volume id:%s not found during close operation\n", volume_desc->volume_name,
+			  volume_desc->volume_id);
 		return;
 	}
 	log_info("closing volume: %s with id %s\n", volume_desc->volume_name, volume_desc->volume_id);
@@ -1271,12 +1271,12 @@ void allocator_init(volume_descriptor *volume_desc)
 	}
 	volume_desc->start_addr = (void *)(MAPPED + volume_desc->offset);
 
-	log_info("Succesfully initialized volume partition %s address space starts "
-		 "at %llu\n\n",
-		 volume_desc->volume_name, (LLU)volume_desc->start_addr);
+	log_debug("Succesfully initialized volume partition %s address space starts "
+		  "at %llu\n\n",
+		  volume_desc->volume_name, (LLU)volume_desc->start_addr);
 	volume_desc->volume_superblock = volume_desc->start_addr;
-	log_info("superblock is at %llu and catalogue is at %llu\n", (LLU)volume_desc->volume_superblock,
-		 (LLU)volume_desc->volume_superblock->system_catalogue);
+	log_debug("superblock is at %llu and catalogue is at %llu\n", (LLU)volume_desc->volume_superblock,
+		  (LLU)volume_desc->volume_superblock->system_catalogue);
 
 	volume_desc->bitmap_start =
 		(void *)volume_desc->start_addr + DEVICE_BLOCK_SIZE + (FREE_LOG_SIZE_IN_BLOCKS * DEVICE_BLOCK_SIZE);
