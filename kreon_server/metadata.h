@@ -173,7 +173,6 @@ struct ru_master_log_buffer {
 	struct sc_msg_pair p;
 	enum ru_remote_buffer_status stat;
 	uint32_t segment_size;
-	int num_buffers;
 	struct ru_master_log_buffer_seg segment;
 };
 
@@ -191,8 +190,8 @@ struct ru_master_state {
 	struct ru_master_log_buffer r_buf[KRM_MAX_BACKUPS];
 };
 
-struct ru_replica_log_buffer_seg {
-	uint32_t segment_size;
+struct ru_replica_rdma_buffer {
+	uint32_t rdma_buf_size;
 	struct ibv_mr *mr;
 };
 
@@ -201,8 +200,7 @@ struct ru_replica_state {
 	struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
-	int num_buffers;
-	struct ru_replica_log_buffer_seg seg;
+	struct ru_replica_rdma_buffer rdma_buf;
 };
 
 struct krm_server_name {
