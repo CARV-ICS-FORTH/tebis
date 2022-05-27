@@ -473,7 +473,7 @@ static int ds_is_server2server_job(struct msg_header *msg)
 	case REPLICA_INDEX_FLUSH_REQ:
 	case REPLICA_INDEX_FLUSH_REP:
 	case FLUSH_COMMAND_REQ:
-	case GET_LOG_BUFFER_REQ:
+	case GET_RDMA_BUFFER_REQ:
 		return 1;
 	default:
 		return 0;
@@ -899,16 +899,16 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 					sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 
 				if (r_desc->m_state->r_buf[i].stat == RU_BUFFER_UNINITIALIZED) {
-					log_debug("Sending GET_LOG_BUFFER req to Server %s for DB %s",
+					log_debug("Sending GET_RDMA_BUFFER req to Server %s for DB %s",
 						  r_desc->region->backups[i].kreon_ds_hostname,
 						  r_desc->db->volume_desc->volume_name);
 
 					r_desc->m_state->r_buf[i].p = sc_allocate_rpc_pair(
 						conn,
-						sizeof(struct s2s_msg_get_log_buffer_req) +
+						sizeof(struct s2s_msg_get_rdma_buffer_req) +
 							r_desc->region->min_key_size,
-						sizeof(struct s2s_msg_get_log_buffer_rep) + (sizeof(struct ibv_mr)),
-						GET_LOG_BUFFER_REQ);
+						sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
+						GET_RDMA_BUFFER_REQ);
 
 					if (r_desc->m_state->r_buf[i].p.stat != ALLOCATION_IS_SUCCESSFULL)
 						continue;
@@ -926,9 +926,9 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 										  rep_header->padding_and_tail_size;
 					/*time to send the message*/
 					req_header->session_id = (uint64_t)r_desc->region;
-					struct s2s_msg_get_log_buffer_req *g_req =
-						(struct s2s_msg_get_log_buffer_req *)((uint64_t)req_header +
-										      sizeof(struct msg_header));
+					struct s2s_msg_get_rdma_buffer_req *g_req =
+						(struct s2s_msg_get_rdma_buffer_req *)((char *)req_header +
+										       sizeof(struct msg_header));
 					g_req->num_buffers = 1;
 					g_req->buffer_size = SEGMENT_SIZE;
 					g_req->region_key_size = r_desc->region->min_key_size;
@@ -958,10 +958,10 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 					if (tail != TU_RDMA_REGULAR_MSG)
 						continue;
 
-					struct s2s_msg_get_log_buffer_rep *rep =
-						(struct s2s_msg_get_log_buffer_rep *)(((char *)r_desc->m_state->r_buf[i]
-											       .p.reply) +
-										      sizeof(struct msg_header));
+					struct s2s_msg_get_rdma_buffer_rep *rep =
+						(struct s2s_msg_get_rdma_buffer_rep
+							 *)(((char *)r_desc->m_state->r_buf[i].p.reply) +
+							    sizeof(struct msg_header));
 					assert(rep->status == KREON_SUCCESS);
 
 					r_desc->m_state->r_buf[i].segment_size = SEGMENT_SIZE;
@@ -1833,12 +1833,12 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 */
 }
 
-static void execute_get_log_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	(void)mydesc;
 	(void)task;
-	assert(task->msg->msg_type == GET_LOG_BUFFER_REQ);
-	log_debug("Closing get_log_buffer req for parallax no replication porting");
+	assert(task->msg->msg_type == GET_RDMA_BUFFER_REQ);
+	log_debug("Closing get_rdma_buffer req for parallax no replication porting");
 	assert(0);
 	_exit(EXIT_FAILURE);
 	/*
@@ -2157,7 +2157,7 @@ typedef void execute_task(struct krm_server_desc const *mydesc, struct krm_work_
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
-							 execute_get_log_buffer_req,
+							 execute_get_rdma_buffer_req,
 							 execute_flush_command_req,
 							 execute_put_req,
 							 execute_delete_req,

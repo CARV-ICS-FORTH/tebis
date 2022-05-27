@@ -106,8 +106,8 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 
 	pthread_mutex_lock(&conn->buffer_lock);
 	switch (req_type) {
-	case GET_LOG_BUFFER_REQ:
-		rep_type = GET_LOG_BUFFER_REP;
+	case GET_RDMA_BUFFER_REQ:
+		rep_type = GET_RDMA_BUFFER_REP;
 		break;
 	case FLUSH_COMMAND_REQ:
 		rep_type = FLUSH_COMMAND_REP;

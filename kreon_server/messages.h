@@ -17,7 +17,7 @@
 enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REQ = 0,
 	REPLICA_INDEX_FLUSH_REQ,
-	GET_LOG_BUFFER_REQ,
+	GET_RDMA_BUFFER_REQ,
 	FLUSH_COMMAND_REQ,
 	PUT_REQUEST,
 	DELETE_REQUEST,
@@ -34,7 +34,7 @@ enum message_type {
 	NO_OP_ACK,
 	/*server2server data replication*/
 	FLUSH_COMMAND_REP,
-	GET_LOG_BUFFER_REP,
+	GET_RDMA_BUFFER_REP,
 	/*server2server index transfer*/
 	REPLICA_INDEX_GET_BUFFER_REP,
 	REPLICA_INDEX_FLUSH_REP,
@@ -158,14 +158,14 @@ typedef struct msg_multi_get_rep {
 
 /*server2server used for replication*/
 /*msg pair for initializing remote log buffers*/
-struct s2s_msg_get_log_buffer_req {
+struct s2s_msg_get_rdma_buffer_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	int num_buffers;
 	int buffer_size;
 	int region_key_size;
 };
 
-struct s2s_msg_get_log_buffer_rep {
+struct s2s_msg_get_rdma_buffer_rep {
 	struct ibv_mr mr;
 	uint32_t status;
 	int num_buffers;

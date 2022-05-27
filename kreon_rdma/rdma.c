@@ -223,8 +223,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case DELETE_REQUEST:
 		case TEST_REQUEST:
 		case TEST_REQUEST_FETCH_PAYLOAD:
-		case GET_LOG_BUFFER_REQ:
-		case GET_LOG_BUFFER_REP:
+		case GET_RDMA_BUFFER_REQ:
+		case GET_RDMA_BUFFER_REP:
 		case FLUSH_COMMAND_REQ:
 		case FLUSH_COMMAND_REP:
 		case REPLICA_INDEX_GET_BUFFER_REQ:
@@ -843,8 +843,8 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 			if (msg) {
 				switch (msg->msg_type) {
 				/*server to server new school*/
-				case GET_LOG_BUFFER_REQ:
-				case GET_LOG_BUFFER_REP:
+				case GET_RDMA_BUFFER_REQ:
+				case GET_RDMA_BUFFER_REP:
 				case FLUSH_COMMAND_REQ:
 				case FLUSH_COMMAND_REP:
 					break;
