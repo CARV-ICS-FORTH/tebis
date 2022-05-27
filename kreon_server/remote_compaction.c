@@ -415,23 +415,19 @@ int rco_flush_last_log_segment(void *handle)
 	uint64_t lc1 = 0;
 	uint64_t lc2 = 0;
 	int seg_id_to_flush = -1;
-	for (int i = 0; i < RU_REPLICA_NUM_SEGMENTS; i++) {
-	retry:
-		lc1 = r_desc->m_state->r_buf[0].segment[i].lc1;
-		/*XXX TODO no replication should not care about this*/
-		/*log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
+retry:
+	lc1 = r_desc->m_state->r_buf[0].segment.lc1;
+	/*XXX TODO no replication should not care about this*/
+	/*log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
 			 i, r_desc->m_state->r_buf[0].segment[i].start, i, r_desc->m_state->r_buf[0].segment[i].end);
 		if (hd->db_desc->KV_log_size > r_desc->m_state->r_buf[0].segment[i].start &&
 		    hd->db_desc->KV_log_size <= r_desc->m_state->r_buf[0].segment[i].end) {
 			seg_id_to_flush = i;
 		}
 		*/
-		lc2 = r_desc->m_state->r_buf[0].segment[i].lc2;
-		if (lc1 != lc2)
-			goto retry;
-		if (seg_id_to_flush != -1)
-			break;
-	}
+	lc2 = r_desc->m_state->r_buf[0].segment.lc2;
+	if (lc1 != lc2)
+		goto retry;
 	if (seg_id_to_flush == -1) {
 		log_fatal("Can't find segment id of the last segment");
 		assert(0);

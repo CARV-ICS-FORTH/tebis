@@ -25,7 +25,6 @@
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 
-#define RU_REPLICA_NUM_SEGMENTS 1
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
 #define RU_MAX_NUM_REPLICAS 4
@@ -175,7 +174,7 @@ struct ru_master_log_buffer {
 	enum ru_remote_buffer_status stat;
 	uint32_t segment_size;
 	int num_buffers;
-	struct ru_master_log_buffer_seg segment[RU_REPLICA_NUM_SEGMENTS];
+	struct ru_master_log_buffer_seg segment;
 };
 
 struct ru_master_state {
@@ -203,7 +202,7 @@ struct ru_replica_state {
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	int num_buffers;
-	struct ru_replica_log_buffer_seg seg[RU_REPLICA_NUM_SEGMENTS];
+	struct ru_replica_log_buffer_seg seg;
 };
 
 struct krm_server_name {
