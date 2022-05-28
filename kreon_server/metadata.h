@@ -1,4 +1,5 @@
 #pragma once
+#include "messages.h"
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 #include "../kreon_rdma/rdma.h"
@@ -109,8 +110,7 @@ struct krm_work_task {
 	struct connection_rdma *conn;
 	msg_header *msg;
 	struct krm_region_desc *r_desc;
-	struct msg_put_key *key;
-	struct msg_put_value *value;
+	struct msg_put_kv *kv;
 	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;

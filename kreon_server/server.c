@@ -841,6 +841,7 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 
 // This function is called by the poll_cq thread every time a notification
 // arrives
+/*
 static void wait_for_replication_completion_callback(struct rdma_message_context *r_cnxt)
 {
 	if (r_cnxt->__is_initialized != 1) {
@@ -850,6 +851,7 @@ static void wait_for_replication_completion_callback(struct rdma_message_context
 	}
 	sem_post(&r_cnxt->wait_for_completion);
 }
+*/
 
 static void send_get_rdma_buffers_requests(struct krm_region_desc *r_desc, struct krm_server_desc const *server)
 {
@@ -1083,8 +1085,20 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 	while (1) {
 		switch (task->kreon_operation_status) {
 		case INS_TO_KREON: {
-			if (insert_key_value(task->r_desc->db, task->key->key, task->value->value, task->key->key_size,
-					     task->value->value_size, insertOp) == PARALLAX_FAILURE) {
+			struct par_key_value KV_pair = { .k = { .size = 0, .data = NULL },
+							 .v = { .val_buffer = NULL } };
+
+			/* Important note, Parallax will internally reformat kv
+			 * from <key_size,value_size,keybuf,valbuf> format
+			 * to  <key_size,key,value_size,value> format
+			 * So we need to point k.data and v.val_buffer to the apropriate offsets inside the kv msg payload
+			 * */
+			KV_pair.k.size = task->kv->key_size;
+			KV_pair.v.val_size = task->kv->value_size;
+			KV_pair.k.data = task->kv->kv_payload;
+			KV_pair.v.val_buffer = (char *)task->kv->kv_payload + task->kv->key_size;
+
+			if (par_put(task->r_desc->db, &KV_pair) == PAR_FAILURE) {
 				krm_leave_kreon(task->r_desc);
 				return;
 			}
@@ -1254,7 +1268,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 		}
 
 		case REPLICATE: {
-			struct krm_region_desc *r_desc = task->r_desc;
+			/*struct krm_region_desc *r_desc = task->r_desc;
 			task->kv_size = task->key->key_size + sizeof(struct msg_put_key);
 			task->kv_size = task->kv_size + task->value->value_size + sizeof(struct msg_put_value);
 			uint32_t remote_offset = 0;
@@ -1262,7 +1276,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 				remote_offset = task->ins_req.metadata.log_offset % (uint64_t)SEGMENT_SIZE;
 			for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
 				uint32_t replicate_success = 0;
-				/*find appropriate seg buffer to rdma the mutation*/
+				//find appropriate seg buffer to rdma the mutation
+
 				pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
 				uint64_t lc1;
 				uint64_t lc2;
@@ -1284,8 +1299,8 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 					task->msg_ctx[i].on_completion_callback =
 						wait_for_replication_completion_callback;
 					task->replicated_bytes[i] = &r_desc->m_state->r_buf[i].segment.replicated_bytes;
-					/*BUG Is this necessery gesalous? I think this is a logical error because
-						 *a task may go for replication wait without sending its rdma write properly */
+					//BUG Is this necessery gesalous? I think this is a logical error because
+					//	 *a task may go for replication wait without sending its rdma write properly
 					//task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 					while (1) {
 						int ret = rdma_post_write(
@@ -1312,8 +1327,9 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 
 			if (task->r_desc->region->num_of_backup != task->last_replica_to_ack)
 				return;
-			/*Reset the counter to count replies*/
+			//Reset the counter to count replies
 			task->last_replica_to_ack = 0;
+		*/
 			task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 			break;
 		}
@@ -1380,8 +1396,8 @@ static uint8_t key_exists(struct krm_work_task *task)
 	assert(task);
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_key pkey;
-	pkey.data = task->key->key;
-	pkey.size = task->key->key_size;
+	pkey.data = task->kv->kv_payload;
+	pkey.size = task->kv->key_size;
 	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
 		return 0;
 
@@ -1391,27 +1407,26 @@ static uint8_t key_exists(struct krm_work_task *task)
 static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
-	//retrieve region handle for the corresponding key, find_region
-	//initiates internally rdma connections if needed
-	if (task->key == NULL) {
-		task->key = (struct msg_put_key *)((char *)task->msg + sizeof(struct msg_header));
-		task->value = (struct msg_put_value *)((char *)task->key + sizeof(msg_put_key) + task->key->key_size);
-		uint32_t key_length = task->key->key_size;
+	/* retrieve region handle for the corresponding key, find_region
+	 * initiates internally rdma connections if needed
+	 * */
+	if (task->kv == NULL) {
+		task->kv = (struct msg_put_kv *)((char *)task->msg + sizeof(struct msg_header));
+		uint32_t key_length = task->kv->key_size;
 		if (key_length == 0) {
 			assert(0);
 			_exit(EXIT_FAILURE);
 		}
-		struct krm_region_desc *r_desc = krm_get_region(mydesc, task->key->key, task->key->key_size);
+		task->r_desc = krm_get_region(mydesc, task->kv->kv_payload, task->kv->key_size);
 
-		if (r_desc == NULL) {
-			log_fatal("Region not found for key size %u:%s", task->key->key_size, task->key->key);
+		if (task->r_desc == NULL) {
+			log_fatal("Region not found for key size key %u:%s", task->kv->key_size, task->kv->kv_payload);
 			_exit(EXIT_FAILURE);
 		}
-		task->r_desc = (void *)r_desc;
 		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
 			if (!key_exists(task)) {
-				log_warn("Key %s in update if exists for region %s not found!", task->key->key,
-					 r_desc->region->id);
+				log_warn("Key %.*s in update if exists for region %s not found!", task->kv->key_size,
+					 task->kv->kv_payload, task->r_desc->region->id);
 				_exit(EXIT_FAILURE);
 			}
 		}
@@ -1427,13 +1442,13 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		krm_leave_kreon(task->r_desc);
 
 		/*prepare the reply*/
-		task->reply_msg = (struct msg_header *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+		task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 							task->msg->offset_reply_in_recv_buffer);
 
 		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
-			msg_put_rep *put_rep = (msg_put_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+			msg_put_rep *put_rep = (msg_put_rep *)((char *)task->reply_msg + sizeof(msg_header));
 			put_rep->status = KREON_SUCCESS;
 			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 		} else {

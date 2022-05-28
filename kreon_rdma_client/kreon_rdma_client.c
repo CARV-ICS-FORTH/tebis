@@ -1054,15 +1054,26 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	}
 }
 
+/** This function fills the requests kv payload, that is key_size value_size key and value bufs
+ *  These informations must be stored after the header of the request (req_header + sizeof(msg_header)) */
+static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t value_size, void *key, void *value)
+{
+	char *put_kv = (char *)req_header + sizeof(msg_header);
+	/*fill key_size value_size*/
+	*(uint32_t *)put_kv = key_size;
+	*(uint32_t *)(put_kv + sizeof(uint32_t)) = value_size;
+	put_kv += 2 * sizeof(uint32_t);
+	/*fill keybuf valuebuf*/
+	memcpy(put_kv, key, key_size);
+	memcpy(put_kv + key_size, value, value_size);
+}
+
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				      void *context, int is_update_if_exists)
 {
 	msg_header *req_header = NULL;
-	msg_put_key *put_key = NULL;
-	msg_put_value *put_value = NULL;
 	msg_header *rep_header = NULL;
 	msg_put_rep *put_rep = NULL;
-
 	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
 		log_fatal("KV size too large currently for Kreon, current max value size supported = %lu bytes",
 			  SEGMENT_SIZE - sizeof(segment_header));
@@ -1078,13 +1089,9 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	_krc_get_rpc_pair(conn, &req_header, req_type, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
 			  PUT_REPLY, sizeof(msg_put_rep));
 
-	put_key = (msg_put_key *)((uint64_t)req_header + sizeof(msg_header));
-	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
-	put_key->key_size = key_size;
-	memcpy(put_key->key, key, key_size);
-	put_value = (msg_put_value *)((uint64_t)put_key + sizeof(msg_put_key) + put_key->key_size);
-	put_value->value_size = val_size;
-	memcpy(put_value->value, value, val_size);
+	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)
+	 *kvs follow the <key_size,value_size,key_buf,value_buf> format */
+	fill_kv_payload(req_header, key_size, val_size, key, value);
 
 	/*Now the reply part*/
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));

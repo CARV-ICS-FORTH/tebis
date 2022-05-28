@@ -108,6 +108,12 @@ typedef struct msg_put_value {
 	char value[];
 } msg_put_value;
 
+struct msg_put_kv {
+	uint32_t key_size;
+	uint32_t value_size;
+	char kv_payload[];
+};
+
 typedef struct msg_put_rep {
 	uint32_t status;
 } msg_put_rep;
