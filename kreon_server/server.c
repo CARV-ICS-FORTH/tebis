@@ -17,6 +17,7 @@
 #include <include/parallax.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #endif
 #include <alloca.h>
@@ -1866,6 +1867,8 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 			perror("Reason\n");
 			_exit(EXIT_FAILURE);
 		}
+		/*Zero RDMA buffer*/
+		memset(addr, 0, get_log->buffer_size);
 		r_desc->r_state->rdma_buf.rdma_buf_size = get_log->buffer_size;
 		r_desc->r_state->rdma_buf.mr = rdma_reg_write(task->conn->rdma_cm_id, addr, get_log->buffer_size);
 	} else {
