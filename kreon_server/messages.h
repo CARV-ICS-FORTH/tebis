@@ -109,9 +109,12 @@ typedef struct msg_put_value {
 } msg_put_value;
 
 struct msg_put_kv {
+	uint64_t log_offt;
+	uint32_t lsn;
 	uint32_t key_size;
 	uint32_t value_size;
-	char kv_payload[];
+	uint8_t sizes_tail;
+	char kv_payload[]; /*XXX TODO XXX holds kv pairs as <key_size,key,value_size,value>*/
 };
 
 typedef struct msg_put_rep {

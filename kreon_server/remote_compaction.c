@@ -737,7 +737,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			case internalNode:
 			case rootNode:
 			case leafRootNode:
-			case keyBlockHeader:
+			//case keyBlockHeader:
 			case paddedSpace:
 				break;
 			default:

@@ -1055,19 +1055,38 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 }
 
 /** This function fills the requests kv payload, that is key_size value_size key and value bufs
- *  These informations must be stored after the header of the request (req_header + sizeof(msg_header)) */
+ *  These informations must be stored after the header of the request (req_header + sizeof(msg_header)
+ *  kvs follow the [offt|lsn|key_size|value_size|tail|<key_size,key_buf,value_size,value_buf>|tail] format */
 static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t value_size, void *key, void *value)
 {
-	char *put_kv = (char *)req_header + sizeof(msg_header);
-	/*fill key_size value_size*/
-	*(uint32_t *)put_kv = key_size;
-	*(uint32_t *)(put_kv + sizeof(uint32_t)) = value_size;
-	put_kv += 2 * sizeof(uint32_t);
-	/*fill keybuf valuebuf*/
-	memcpy(put_kv, key, key_size);
-	memcpy(put_kv + key_size, value, value_size);
+	struct msg_put_kv *put_kv = (struct msg_put_kv *)((char *)req_header + sizeof(msg_header));
+	put_kv->log_offt = 0;
+	put_kv->lsn = 0;
+	put_kv->key_size = key_size;
+	put_kv->value_size = value_size;
+	put_kv->sizes_tail = 0;
+	/*fill the kv_payload the Parallax way*/
+	char *kv_payload = put_kv->kv_payload;
+	*(uint32_t *)kv_payload = key_size; /*key_size*/
+	memcpy(kv_payload + sizeof(uint32_t), key, key_size); /*key*/
+	*(uint32_t *)(kv_payload + sizeof(uint32_t) + key_size) = value_size; /*value_size*/
+	memcpy(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size); /*value*/
+	/*tail for payload*/
+	*(uint8_t *)(kv_payload + sizeof(uint32_t) + key_size + +sizeof(uint32_t) + value_size) = 0;
 }
 
+/** Function returning the message size of a put request*/
+static uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
+{
+	/*put request format:
+	 * - <off_t, lsn, key_size, value_size, tail, kv_payload, tail>*/
+	uint32_t offt_size = sizeof(uint64_t);
+	uint32_t lsn_size = sizeof(uint32_t);
+	uint32_t tail_size = TU_TAIL_SIZE;
+	uint32_t kv_payload_size = key_size + value_size + 2 * sizeof(uint32_t);
+
+	return offt_size + lsn_size + 2 * sizeof(uint32_t) + tail_size + kv_payload_size + tail_size;
+}
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				      void *context, int is_update_if_exists)
 {
@@ -1086,11 +1105,11 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, seed);
 
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
-	_krc_get_rpc_pair(conn, &req_header, req_type, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
-			  PUT_REPLY, sizeof(msg_put_rep));
+	uint32_t req_size = calculate_put_msg_size(key_size, val_size);
+	//log_debug("key_size val_size is <%u,%u>, total put_msg size is %lu", key_size, val_size, req_size);
+	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 
-	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)
-	 *kvs follow the <key_size,value_size,key_buf,value_buf> format */
+	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
 	fill_kv_payload(req_header, key_size, val_size, key, value);
 
 	/*Now the reply part*/

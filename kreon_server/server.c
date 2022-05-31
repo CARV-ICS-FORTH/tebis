@@ -1086,20 +1086,7 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 	while (1) {
 		switch (task->kreon_operation_status) {
 		case INS_TO_KREON: {
-			struct par_key_value KV_pair = { .k = { .size = 0, .data = NULL },
-							 .v = { .val_buffer = NULL } };
-
-			/* Important note, Parallax will internally reformat kv
-			 * from <key_size,value_size,keybuf,valbuf> format
-			 * to  <key_size,key,value_size,value> format
-			 * So we need to point k.data and v.val_buffer to the apropriate offsets inside the kv msg payload
-			 * */
-			KV_pair.k.size = task->kv->key_size;
-			KV_pair.v.val_size = task->kv->value_size;
-			KV_pair.k.data = task->kv->kv_payload;
-			KV_pair.v.val_buffer = (char *)task->kv->kv_payload + task->kv->key_size;
-
-			if (par_put(task->r_desc->db, &KV_pair) == PAR_FAILURE) {
+			if (serialized_insert_key_value(task->r_desc->db, task->kv->kv_payload) == PAR_FAILURE) {
 				krm_leave_kreon(task->r_desc);
 				return;
 			}
@@ -1397,8 +1384,8 @@ static uint8_t key_exists(struct krm_work_task *task)
 	assert(task);
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_key pkey;
-	pkey.data = task->kv->kv_payload;
-	pkey.size = task->kv->key_size;
+	pkey.data = task->kv->kv_payload + sizeof(uint32_t);
+	pkey.size = *(uint32_t *)task->kv->kv_payload;
 	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
 		return 0;
 
@@ -1414,20 +1401,21 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	if (task->kv == NULL) {
 		task->kv = (struct msg_put_kv *)((char *)task->msg + sizeof(struct msg_header));
 		uint32_t key_length = task->kv->key_size;
+		char *key = task->kv->kv_payload + sizeof(uint32_t);
 		if (key_length == 0) {
 			assert(0);
 			_exit(EXIT_FAILURE);
 		}
-		task->r_desc = krm_get_region(mydesc, task->kv->kv_payload, task->kv->key_size);
+		task->r_desc = krm_get_region(mydesc, key, key_length);
 
 		if (task->r_desc == NULL) {
-			log_fatal("Region not found for key size key %u:%s", task->kv->key_size, task->kv->kv_payload);
+			log_fatal("Region not found for key size key %u:%s", key_length, key);
 			_exit(EXIT_FAILURE);
 		}
 		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
 			if (!key_exists(task)) {
-				log_warn("Key %.*s in update if exists for region %s not found!", task->kv->key_size,
-					 task->kv->kv_payload, task->r_desc->region->id);
+				log_warn("Key %.*s in update if exists for region %s not found!", key_length, key,
+					 task->r_desc->region->id);
 				_exit(EXIT_FAILURE);
 			}
 		}
