@@ -416,7 +416,7 @@ int rco_flush_last_log_segment(void *handle)
 	uint64_t lc2 = 0;
 	int seg_id_to_flush = -1;
 retry:
-	lc1 = r_desc->m_state->r_buf[0].segment.lc1;
+	lc1 = r_desc->m_state->r_buf.segment.lc1;
 	/*XXX TODO no replication should not care about this*/
 	/*log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
 			 i, r_desc->m_state->r_buf[0].segment[i].start, i, r_desc->m_state->r_buf[0].segment[i].end);
@@ -425,7 +425,7 @@ retry:
 			seg_id_to_flush = i;
 		}
 		*/
-	lc2 = r_desc->m_state->r_buf[0].segment.lc2;
+	lc2 = r_desc->m_state->r_buf.segment.lc2;
 	if (lc1 != lc2)
 		goto retry;
 	if (seg_id_to_flush == -1) {

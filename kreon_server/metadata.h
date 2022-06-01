@@ -187,7 +187,7 @@ struct ru_master_state {
 	uint32_t current_active_tree_in_the_forest;
 #endif
 	int num_backup;
-	struct ru_master_log_buffer r_buf[KRM_MAX_BACKUPS];
+	struct ru_master_log_buffer r_buf;
 };
 
 struct ru_replica_rdma_buffer {
