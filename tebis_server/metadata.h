@@ -20,10 +20,12 @@
 #define KRM_MAX_REGION_ID_SIZE 16
 #define KRM_MAX_BACKUPS 4
 #define KRM_MAX_RDMA_IP_SIZE 22
+#define KRM_GUID "tebis-"
 #define KRM_ROOT_PATH "/kreonR"
 #define KRM_SERVERS_PATH "/servers"
 #define KRM_SLASH "/"
 #define KRM_LEADER_PATH "/leader"
+#define KRM_LEADER_CLOCK "/clock"
 #define KRM_MAILBOX_PATH "/mailbox"
 #define KRM_MAIL_TITLE "/msg"
 #define KRM_ALIVE_SERVERS_PATH "/alive_dataservers"
