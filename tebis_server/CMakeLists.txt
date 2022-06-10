@@ -19,6 +19,7 @@ target_link_libraries(tebis_client ${Zookeeper_LIBRARY})
 add_executable(
   tebis_server
   server.c
+  master.c
   metadata_server.c
   build_index/build_index.c
   send_index/send_index.c
