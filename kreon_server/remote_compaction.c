@@ -412,22 +412,24 @@ int rco_flush_last_log_segment(void *handle)
 	spin_loop(&(hd->db_desc->levels[0].active_operations), 0);
 	/*Now check what is the rdma's buffer id which corresponds to the last
 * segment*/
-	uint64_t lc1 = 0;
-	uint64_t lc2 = 0;
 	int seg_id_to_flush = -1;
+
+	/*XXX TODO no replication should not care about this
 retry:
 	lc1 = r_desc->m_state->r_buf.segment.lc1;
-	/*XXX TODO no replication should not care about this*/
-	/*log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
+
+	log_info("KV_log_size %llu segment[%d].start = %llu segment[%d].end = %llu", hd->db_desc->KV_log_size,
 			 i, r_desc->m_state->r_buf[0].segment[i].start, i, r_desc->m_state->r_buf[0].segment[i].end);
 		if (hd->db_desc->KV_log_size > r_desc->m_state->r_buf[0].segment[i].start &&
 		    hd->db_desc->KV_log_size <= r_desc->m_state->r_buf[0].segment[i].end) {
 			seg_id_to_flush = i;
 		}
-		*/
+
 	lc2 = r_desc->m_state->r_buf.segment.lc2;
 	if (lc1 != lc2)
 		goto retry;
+
+		*/
 	if (seg_id_to_flush == -1) {
 		log_fatal("Can't find segment id of the last segment");
 		assert(0);

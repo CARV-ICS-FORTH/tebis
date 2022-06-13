@@ -76,8 +76,6 @@ enum krm_work_task_status {
 	REPLICATE,
 	WAIT_FOR_REPLICATION_COMPLETION,
 	ALL_REPLICAS_ACKED,
-	SEGMENT_BARRIER,
-	FLUSH_REPLICA_BUFFERS,
 	SEND_FLUSH_COMMANDS,
 	WAIT_FOR_FLUSH_REPLIES,
 	TASK_GET_KEY,
@@ -163,9 +161,8 @@ struct ru_master_log_buffer_seg {
 	enum ru_remote_buffer_status flush_cmd_stat;
 	volatile uint64_t start;
 	volatile uint64_t end;
+	volatile uint64_t curr_end;
 	struct ibv_mr mr;
-	volatile uint64_t lc1;
-	volatile uint64_t lc2;
 	volatile uint64_t replicated_bytes;
 };
 

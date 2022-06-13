@@ -1072,11 +1072,11 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
 	*(uint32_t *)(kv_payload + sizeof(uint32_t) + key_size) = value_size; /*value_size*/
 	memcpy(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size); /*value*/
 	/*tail for payload*/
-	*(uint8_t *)(kv_payload + sizeof(uint32_t) + key_size + +sizeof(uint32_t) + value_size) = 0;
+	*(uint8_t *)(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size) = 0;
 }
 
 /** Function returning the message size of a put request*/
-static uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
+uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
 {
 	/*put request format:
 	 * - <off_t, lsn, key_size, value_size, tail, kv_payload, tail>*/
