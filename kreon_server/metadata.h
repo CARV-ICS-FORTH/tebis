@@ -99,7 +99,7 @@ struct krm_work_task {
 	/*from client*/
 	bt_insert_req ins_req;
 	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
-	volatile uint64_t *replicated_bytes[RU_MAX_NUM_REPLICAS];
+	volatile uint64_t *replicated_bytes;
 	uint32_t last_replica_to_ack;
 	uint64_t kv_size;
 	/*possible messages to other server generated from this task*/
@@ -123,31 +123,6 @@ struct krm_work_task {
 	enum krm_work_task_status kreon_operation_status;
 };
 
-/*this staff are rdma registered*/
-struct ru_seg_metadata {
-	uint64_t master_segment;
-	uint64_t end_of_log;
-	uint64_t log_padding;
-	uint64_t segment_id;
-	uint32_t region_key_size;
-	char region_key[RU_REGION_KEY_SIZE];
-	uint64_t tail;
-};
-
-struct ru_rdma_buffer {
-	struct msg_header msg;
-	struct ru_seg_metadata metadata;
-	char padding[4096 - sizeof(struct ru_seg_metadata)];
-	uint8_t seg[SEGMENT_SIZE];
-};
-
-struct ru_replica_log_segment {
-	struct ru_rdma_buffer *rdma_local_buf;
-	struct ru_rdma_buffer *rdma_remote_buf;
-	int64_t bytes_wr_per_seg;
-	int64_t buffer_free;
-};
-
 enum ru_remote_buffer_status {
 	RU_BUFFER_UNINITIALIZED,
 	RU_BUFFER_REQUESTED,
@@ -156,21 +131,24 @@ enum ru_remote_buffer_status {
 	RU_REPLICA_BUFFER_OK
 };
 
-struct ru_master_log_buffer_seg {
-	struct sc_msg_pair flush_cmd;
-	enum ru_remote_buffer_status flush_cmd_stat;
-	volatile uint64_t start;
-	volatile uint64_t end;
-	volatile uint64_t curr_end;
-	struct ibv_mr mr;
-	volatile uint64_t replicated_bytes;
-};
-
 struct ru_primary_to_backup_comm {
 	/*msg between primary and backup*/
 	struct sc_msg_pair msg_pair;
 	/*status of the remote buffers*/
 	enum ru_remote_buffer_status stat;
+};
+
+struct ru_master_log_buffer_seg {
+	/* IMPORTANT, primary's segment is related with many backups memory regions.
+	 * The address of each backup's  memory region differ, we have allocated the space with posix memalign*/
+	struct ibv_mr mr[KRM_MAX_BACKUPS];
+	/*The flush commands send to backups will be equal to the number of backups.
+	 *All flush cmds must be allocated and freed accordingly */
+	struct ru_primary_to_backup_comm flush_cmd[KRM_MAX_BACKUPS];
+	volatile uint64_t start;
+	volatile uint64_t end;
+	volatile uint64_t curr_end;
+	volatile uint64_t replicated_bytes;
 };
 
 struct ru_master_log_buffer {

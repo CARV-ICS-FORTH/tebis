@@ -929,9 +929,9 @@ static uint32_t got_all_get_rdma_buffers_replies(struct krm_region_desc *r_desc)
 			r_desc->m_state->r_buf.segment.start = 0;
 			r_desc->m_state->r_buf.segment.end = SEGMENT_SIZE;
 			r_desc->m_state->r_buf.segment.curr_end = 0;
-			r_desc->m_state->r_buf.segment.mr = rep->mr;
+			r_desc->m_state->r_buf.segment.mr[i] = rep->mr;
 
-			assert(r_desc->m_state->r_buf.segment.mr.length == SEGMENT_SIZE);
+			assert(r_desc->m_state->r_buf.segment.mr[i].length == SEGMENT_SIZE);
 
 			r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_OK;
 			/*finally free the message*/
@@ -1153,26 +1153,26 @@ void insert_kv_to_store(struct krm_work_task *task)
 
 void send_flush_commands(struct krm_server_desc const *server, struct krm_work_task *task)
 {
-	//log_debug("Send flush commands");
+	log_debug("Send flush commands");
 	struct krm_region_desc *r_desc = task->r_desc;
 
 	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
-		if (r_desc->m_state->r_buf.segment.flush_cmd_stat == RU_BUFFER_UNINITIALIZED) {
+		if (r_desc->m_state->r_buf.segment.flush_cmd[i].stat == RU_BUFFER_UNINITIALIZED) {
 			/*allocate and send command*/
 			struct connection_rdma *r_conn =
 				sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 			/*send flush req and piggyback it with the seg id num*/
 			uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + r_desc->region->min_key_size;
 			uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
-			r_desc->m_state->r_buf.segment.flush_cmd =
+			r_desc->m_state->r_buf.segment.flush_cmd[i].msg_pair =
 				sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
 
-			if (r_desc->m_state->r_buf.segment.flush_cmd.stat != ALLOCATION_IS_SUCCESSFULL) {
+			if (r_desc->m_state->r_buf.segment.flush_cmd[i].msg_pair.stat != ALLOCATION_IS_SUCCESSFULL) {
 				task->last_replica_to_ack = i;
 				return;
 			}
 
-			msg_header *req_header = r_desc->m_state->r_buf.segment.flush_cmd.request;
+			msg_header *req_header = r_desc->m_state->r_buf.segment.flush_cmd[i].msg_pair.request;
 
 			//time to send the message
 			req_header->session_id = (uint64_t)task->r_desc->region;
@@ -1194,7 +1194,7 @@ void wait_for_flush_replies(struct krm_work_task *task)
 	struct krm_region_desc *r_desc = task->r_desc;
 	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
 		/*check if header has arrived*/
-		msg_header *reply = r_desc->m_state->r_buf.segment.flush_cmd.reply;
+		msg_header *reply = r_desc->m_state->r_buf.segment.flush_cmd[i].msg_pair.reply;
 
 		if (reply->receive != TU_RDMA_REGULAR_MSG) {
 			task->last_replica_to_ack = i;
@@ -1212,7 +1212,7 @@ void wait_for_flush_replies(struct krm_work_task *task)
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; i++) {
 		r_desc->m_state->r_buf.segment.curr_end = 0;
 		r_desc->m_state->r_buf.segment.replicated_bytes = 0;
-		sc_free_rpc_pair(&r_desc->m_state->r_buf.segment.flush_cmd);
+		sc_free_rpc_pair(&r_desc->m_state->r_buf.segment.flush_cmd[i].msg_pair);
 	}
 	// log_info("Resume possible halted tasks after flush");
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
@@ -1225,7 +1225,9 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 	//log_debug("replicate task");
 	struct krm_region_desc *r_desc = task->r_desc;
 	struct ru_master_state *primary = task->r_desc->m_state;
+
 	uint32_t remote_offset = primary->r_buf.segment.curr_end;
+	task->replicated_bytes = &primary->r_buf.segment.replicated_bytes;
 	for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
 		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 
@@ -1233,18 +1235,18 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 
 		task->msg_ctx[i].args = task;
 		task->msg_ctx[i].on_completion_callback = wait_for_replication_completion_callback;
-		task->replicated_bytes[i] = &primary->r_buf.segment.replicated_bytes;
 		while (1) {
 			int ret = rdma_post_write(r_conn->rdma_cm_id, &task->msg_ctx[i], task->kv, task->kv_size,
 						  task->conn->rdma_memory_regions->remote_memory_region,
 						  IBV_SEND_SIGNALED,
-						  (uint64_t)primary->r_buf.segment.mr.addr + remote_offset,
-						  primary->r_buf.segment.mr.rkey);
+						  (uint64_t)primary->r_buf.segment.mr[i].addr + remote_offset,
+						  primary->r_buf.segment.mr[i].rkey);
 
 			if (ret == 0)
 				break;
 		}
 	}
+
 	primary->r_buf.segment.curr_end += task->kv_size;
 	__sync_fetch_and_add(&lsn_to_be_replicated, 1);
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
@@ -1262,16 +1264,16 @@ void wait_for_replication_completion(struct krm_work_task *task)
 			log_fatal("Replication RDMA write error: %s", ibv_wc_status_str(task->msg_ctx[i].wc.status));
 			_exit(EXIT_FAILURE);
 		}
-
-		/*count bytes replicated for this segment*/
-		__sync_fetch_and_add(task->replicated_bytes[i], task->kv_size);
-		//log_debug("replicated bytes %lu", *task->replicated_bytes[i]);
-		//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
-		//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
-		//	 *task->replicated_bytes[i], i, task->kv_size,
-		//	 task->ins_req.metadata.segment_full_event);
-		assert(*task->replicated_bytes[i] <= SEGMENT_SIZE);
 	}
+	/*count bytes replicated for this segment*/
+	__sync_fetch_and_add(task->replicated_bytes, task->kv_size);
+	//log_debug("replicated bytes %lu", *task->replicated_bytes[i]);
+	//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
+	//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
+	//	 *task->replicated_bytes[i], i, task->kv_size,
+	//	 task->ins_req.metadata.segment_full_event);
+	assert(*task->replicated_bytes <= SEGMENT_SIZE);
+
 	task->kreon_operation_status = ALL_REPLICAS_ACKED;
 }
 
