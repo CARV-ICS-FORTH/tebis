@@ -166,25 +166,22 @@ struct ru_master_log_buffer_seg {
 	volatile uint64_t replicated_bytes;
 };
 
-struct ru_master_log_buffer {
-	struct sc_msg_pair p;
+struct ru_primary_to_backup_comm {
+	/*msg between primary and backup*/
+	struct sc_msg_pair msg_pair;
+	/*status of the remote buffers*/
 	enum ru_remote_buffer_status stat;
-	uint32_t segment_size;
+};
+
+struct ru_master_log_buffer {
 	struct ru_master_log_buffer_seg segment;
+	uint32_t segment_size;
 };
 
 struct ru_master_state {
-#if 0
-	/*parameters used for remote spills at replica with tiering*/
-	node_header *last_node_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t cur_nodes_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t num_of_nodes_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t entries_in_semilast_node[RU_MAX_TREE_HEIGHT];
-	uint64_t entries_in_last_node[RU_MAX_TREE_HEIGHT];
-	uint32_t current_active_tree_in_the_forest;
-#endif
-	int num_backup;
 	struct ru_master_log_buffer r_buf;
+	struct ru_primary_to_backup_comm primary_to_backup[KRM_MAX_BACKUPS];
+	int num_backup;
 };
 
 struct ru_replica_rdma_buffer {
