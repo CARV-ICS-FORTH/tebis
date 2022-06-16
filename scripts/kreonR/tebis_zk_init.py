@@ -12,10 +12,12 @@ SERVERS_PATH = ROOT_PATH + "/servers"
 MAILBOX_PATH = ROOT_PATH + "/mailbox"
 REGIONS_PATH = ROOT_PATH + "/regions"
 LEADER_PATH = ROOT_PATH + "/leader"
-ELECTIONS_PATH = ROOT_PATH + "/elections"
-LEADER_CLOCK_PATH = ROOT_PATH + "/clock"
 ALIVE_LEADER_PATH = ROOT_PATH + "/alive_leader"
 ALIVE_DATASERVERS_PATH = ROOT_PATH + "/alive_dataservers"
+# new staff
+ELECTIONS_PATH = ROOT_PATH + "/elections"
+LEADER_CLOCK_PATH = ROOT_PATH + "/clock"
+TRANSACTIONS = ROOT_PATH + "/transactions"
 
 
 def parse_arguments():
@@ -77,6 +79,7 @@ def main():
         value=bytes(json.dumps(clock_info), "utf8"),
     )
 
+    zk.create(TRANSACTIONS, acl=OPEN_ACL_UNSAFE)
     zk.create(ALIVE_LEADER_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(ALIVE_DATASERVERS_PATH, acl=OPEN_ACL_UNSAFE)
 
