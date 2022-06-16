@@ -13,8 +13,6 @@
 
 typedef void (*master_watcher_t)(zhandle_t *, int, int, const char *, void *);
 
-enum dataserver_status { DEAD = 0, ALIVE = 1, UNKNOWN };
-
 struct server_to_region_relation {
 	uint64_t server_key;
 	int32_t len;
@@ -27,7 +25,6 @@ struct region_server {
 	struct krm_server_name server_name;
 	struct server_to_region_relation *server_to_region;
 	uint64_t server_key;
-	enum dataserver_status status;
 	UT_hash_handle hh;
 };
 
@@ -53,12 +50,14 @@ struct region_to_server_relation {
 
 struct master {
 	char proposal[PROPOSAL_VALUE_LEN];
+	pthread_mutex_t reassignment_lock;
 	struct krm_server_name server_name;
 	master_watcher_t master_watcher;
 	sem_t try_to_get_leadership;
 	int64_t leadership_clock;
 	zhandle_t *zhandle;
-	struct region_server *server_table;
+	struct region_server *alive_server_table;
+	struct region_server *dead_server_table;
 	struct region *region_table;
 	struct region_to_server_relation *region_to_server_map;
 	struct server_to_region_relation *server_to_region_map;
@@ -248,6 +247,7 @@ static void fill_hostname(struct master *master, int port)
 static void init_master(struct master *master, int port)
 {
 	fill_hostname(master, port);
+	MUTEX_INIT(&master->reassignment_lock, NULL);
 	log_debug("Initializing connection with zookeeper at %s", globals_get_zk_host());
 	master->master_watcher = master_watcher;
 	sem_init(&master->try_to_get_leadership, 0, 0);
@@ -331,10 +331,10 @@ static void build_server_table(struct master *master)
 
 		server->server_key = djb2_hash((unsigned char *)server->server_name.kreon_ds_hostname,
 					       server->server_name.kreon_ds_hostname_length);
-		server->status = UNKNOWN;
+		// server->status = UNKNOWN;
 		log_debug("Adding server hostname: %s with hash key %lu", server->server_name.kreon_ds_hostname,
 			  server->server_key);
-		HASH_ADD_PTR(master->server_table, server_key, server);
+		HASH_ADD_PTR(master->alive_server_table, server_key, server);
 	}
 
 	free(zk_path);
@@ -454,6 +454,9 @@ static void build_region_table(struct master *master)
 	free(zk_path);
 }
 
+/**
+  * Iterator for retrieving regions hosted in a server.
+*/
 struct server_region_iterator {
 	struct master *master;
 	struct server_to_region_relation *regions;
@@ -461,6 +464,12 @@ struct server_region_iterator {
 	int pos;
 };
 
+/**
+  * Creates and initializes a region iterator.
+  * @param master: the tebis master descriptor
+  * @param hostname: The server name in the form hostname:rdma_port
+  * @return: the iterator handle
+  */
 static struct server_region_iterator *init_server_region_iterator(struct master *master, char *hostname)
 {
 	struct server_region_iterator *iterator = calloc(1, sizeof(*iterator));
@@ -475,6 +484,11 @@ static struct server_region_iterator *init_server_region_iterator(struct master 
 	return iterator;
 }
 
+/**
+  * Retrieves the next region host in the configured server
+  * @param: iterator
+  * @return the next region
+  */
 static struct region *get_next_region(struct server_region_iterator *iterator)
 {
 	if (++iterator->pos == iterator->regions->len)
@@ -489,15 +503,167 @@ static struct region *get_next_region(struct server_region_iterator *iterator)
 	}
 	return region;
 }
-static void close_iterator(struct server_region_iterator *iterator)
-{
-	free(iterator);
-}
+
+/**
+  *Returns the role that the server has in the current region (PRIMARY or
+  * BACKUP)
+  * @param iterator the iterator handle
+  * @return the role that his region has
+*/
 
 static enum region_role get_role(struct server_region_iterator *iterator)
 {
 	return iterator->regions->region_info_table[iterator->pos].role;
 }
+
+/**
+  * Closes and frees the region iterator
+**/
+static void close_iterator(struct server_region_iterator *iterator)
+{
+	free(iterator);
+}
+
+static int zk_children_comparator(const void *child_1, const void *child_2)
+{
+	char *left_child = (char *)child_1;
+	char *right_child = (char *)child_2;
+	return strcmp(left_child, right_child);
+}
+
+static bool remove_alive_server(struct String_vector *alive_servers, int idx)
+{
+	memmove(alive_servers->data[idx], alive_servers->data[idx + 1],
+		(alive_servers->count - (idx + 1)) * sizeof(char *));
+	--alive_servers->count;
+	return true;
+}
+
+static bool find_alive_server(struct String_vector *alive_servers, char *server)
+{
+	int start = 0;
+	int end = alive_servers->count - 1;
+	while (start <= end) {
+		int middle = (end + start) / 2;
+		int ret = zk_children_comparator(alive_servers->data[middle], server);
+		if (ret > 0)
+			start = middle + 1;
+		else if (ret < 0)
+			end = middle - 1;
+		else
+			return remove_alive_server(alive_servers, middle);
+	}
+	return false;
+}
+
+static void reassign_regions(struct master *master, struct region_server *server)
+{
+	struct server_region_iterator *it = init_server_region_iterator(master, server->server_name.kreon_ds_hostname);
+	for (struct region *region = get_next_region(it); region != NULL; region = get_next_region(it))
+		log_debug("I must reassign region %s with role %d of dead server %s", region->id, get_role(it),
+			  server->server_name.kreon_ds_hostname);
+}
+
+static void region_server_health_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
+{
+	(void)zkh;
+	(void)type;
+	(void)state;
+	(void)path;
+	struct master *master = (struct master *)context;
+	MUTEX_LOCK(&master->reassignment_lock);
+	struct String_vector *alive_servers = calloc(1, sizeof(struct String_vector));
+	char *alive_servers_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH);
+	int rc = zoo_wget_children(master->zhandle, alive_servers_path, region_server_health_watcher, master,
+				   alive_servers);
+	if (rc != ZOK) {
+		log_fatal("failed to read alive_servers %s error code %s", alive_servers_path, zerror(rc));
+		_exit(EXIT_FAILURE);
+	}
+	log_debug("Total alive servers: %d", alive_servers->count);
+	qsort(alive_servers->data, alive_servers->count, sizeof(char *), zk_children_comparator);
+	struct region_server *fresh_dead_servers = { 0 };
+	struct region_server *curr = { 0 };
+	struct region_server *tmp = { 0 };
+	HASH_ITER(hh, master->alive_server_table, curr, tmp)
+	{
+		if (!find_alive_server(alive_servers, curr->server_name.kreon_ds_hostname)) {
+			log_debug("Server: %s is dead", curr->server_name.kreon_ds_hostname);
+			HASH_DEL(master->alive_server_table, curr);
+			HASH_ADD_PTR(fresh_dead_servers, server_key, curr);
+		}
+	}
+	log_debug("Freshly joined servers number is %d", alive_servers->count);
+	for (int i = 0; i < alive_servers->count; ++i) {
+		uint64_t server_key =
+			djb2_hash((const unsigned char *)alive_servers->data[i], strlen(alive_servers->data[i]));
+		struct region_server *server = { 0 };
+		HASH_FIND_PTR(master->dead_server_table, &server_key, server);
+		if (!server) {
+			log_fatal("Cannot locate server which should be fresh dead");
+			_exit(EXIT_FAILURE);
+		}
+		HASH_DEL(master->dead_server_table, server);
+		HASH_ADD_PTR(master->alive_server_table, server_key, server);
+	}
+
+	HASH_ITER(hh, fresh_dead_servers, curr, tmp)
+	{
+		reassign_regions(master, curr);
+		HASH_DEL(fresh_dead_servers, curr);
+		HASH_ADD_PTR(master->dead_server_table, server_key, curr);
+	}
+	MUTEX_UNLOCK(&master->reassignment_lock);
+	free(alive_servers);
+}
+
+#if 0
+enum transaction_status { ERROR = 0, PENDING, COMMITED };
+
+static void transaction_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
+{
+	(void)zkh;
+	(void)type;
+	(void)state;
+	(void)path;
+	(void)context;
+}
+/**
+  * Starts a two phase commit protocol (2PC). First, it writes, according to
+  * the Zookeeper 2PC recipe, under root path the transaction id and the
+  * transaction result. First it notifies the involved dataservers by writing
+  * the corresponding command to their mailbox.G
+  */
+static void prepare_transaction(struct master *master)
+{
+	char *new_transaction = zku_concat_strings(3, KRM_ROOT_PATH, KRM_TRANSACTIONS, KRM_TRANSACTION_GUUID);
+	char new_transaction_id[PROPOSAL_VALUE_LEN] = { 0 };
+	int rc = zoo_create(master->zhandle, new_transaction, NULL, -1, &ZOO_OPEN_ACL_UNSAFE,
+			    ZOO_PERSISTENT | ZOO_SEQUENCE, new_transaction_id, PROPOSAL_VALUE_LEN);
+	if (ZOK != rc) {
+		log_fatal("Master: %s failed to begin transaction reason: %s", master->server_name.kreon_ds_hostname,
+			  zku_op2String(rc));
+		_exit(EXIT_FAILURE);
+	}
+	char *new_transaction_result = zku_concat_strings(3, new_transaction_id, KRM_SLASH, KRM_TRANS_RESULT);
+	enum transaction_status status = PENDING;
+	rc = zoo_create(master->zhandle, new_transaction_result, (const char *)&status, sizeof(status),
+			&ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, NULL, 0);
+	if (ZOK != rc) {
+		log_fatal("Master: %s failed to begin Two Phase Commit Reason %s",
+			  master->server_name.kreon_ds_hostname, zku_op2String(rc));
+		_exit(EXIT_FAILURE);
+	}
+	/*Set watch for transaction id*/
+	struct Stat stat = { 0 };
+	/*wait until leader is up*/
+	rc = zoo_wexists(master->zhandle, new_transaction_id, transaction_watcher, master, &stat);
+	if (rc != ZOK) {
+		log_fatal("Cannot set watch for new transaction %s", new_transaction_id);
+		_exit(EXIT_FAILURE);
+	}
+}
+#endif
 
 static void tm_boot_master(struct master *master, int port)
 {
@@ -509,6 +675,7 @@ static void tm_boot_master(struct master *master, int port)
 	increase_leadership_clock(master);
 	build_server_table(master);
 	build_region_table(master);
+	region_server_health_watcher(master->zhandle, -1, -1, NULL, master);
 }
 
 void *run_master(void *args)
@@ -519,7 +686,7 @@ void *run_master(void *args)
 	tm_boot_master(master, port);
 	struct region_server *cur = { 0 };
 	struct region_server *tmp = { 0 };
-	HASH_ITER(hh, master->server_table, cur, tmp)
+	HASH_ITER(hh, master->alive_server_table, cur, tmp)
 	{
 		struct server_region_iterator *it =
 			init_server_region_iterator(master, cur->server_name.kreon_ds_hostname);

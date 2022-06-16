@@ -25,13 +25,17 @@
 #define KRM_SERVERS_PATH "/servers"
 #define KRM_SLASH "/"
 #define KRM_LEADER_PATH "/leader"
-#define KRM_ELECTIONS_PATH "/elections"
-#define KRM_LEADER_CLOCK "/clock"
 #define KRM_MAILBOX_PATH "/mailbox"
 #define KRM_MAIL_TITLE "/msg"
 #define KRM_ALIVE_SERVERS_PATH "/alive_dataservers"
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
+//new master staff
+#define KRM_ELECTIONS_PATH "/elections"
+#define KRM_LEADER_CLOCK "/clock"
+#define KRM_TRANSACTIONS "/transactions"
+#define KRM_TRANSACTION_GUUID "/trans-"
+#define KRM_TRANS_RESULT "/tx_result"
 
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
