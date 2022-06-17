@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "../utilities/spin_loop.h"
 #include "djb2.h"
 #include "globals.h"
@@ -50,10 +51,10 @@ struct region_to_server_relation {
 
 struct master {
 	char proposal[PROPOSAL_VALUE_LEN];
-	pthread_mutex_t reassignment_lock;
+	pthread_mutex_t management_lock;
 	struct krm_server_name server_name;
 	master_watcher_t master_watcher;
-	sem_t try_to_get_leadership;
+	sem_t barrier;
 	int64_t leadership_clock;
 	zhandle_t *zhandle;
 	struct region_server *alive_server_table;
@@ -61,6 +62,7 @@ struct master {
 	struct region *region_table;
 	struct region_to_server_relation *region_to_server_map;
 	struct server_to_region_relation *server_to_region_map;
+	bool master_started;
 	uint8_t zookeeper_conn_state;
 };
 
@@ -207,7 +209,7 @@ static void take_over_as_master(struct master *master)
 		struct Stat stat = { 0 };
 		rc = zoo_wexists(master->zhandle, watch_path, master->master_watcher, master, &stat);
 		if (rc == ZOK)
-			sem_wait(&master->try_to_get_leadership);
+			sem_wait(&master->barrier);
 		free(watch_path);
 	}
 }
@@ -226,7 +228,7 @@ static void master_watcher(zhandle_t *zhandle, int type, int state, const char *
 	}
 	log_warn("Server %s died", path);
 	struct master *master = (struct master *)context;
-	sem_post(&master->try_to_get_leadership);
+	sem_post(&master->barrier);
 }
 
 static void fill_hostname(struct master *master, int port)
@@ -247,10 +249,10 @@ static void fill_hostname(struct master *master, int port)
 static void init_master(struct master *master, int port)
 {
 	fill_hostname(master, port);
-	MUTEX_INIT(&master->reassignment_lock, NULL);
+	MUTEX_INIT(&master->management_lock, NULL);
 	log_debug("Initializing connection with zookeeper at %s", globals_get_zk_host());
 	master->master_watcher = master_watcher;
-	sem_init(&master->try_to_get_leadership, 0, 0);
+	sem_init(&master->barrier, 0, 0);
 	master->zhandle = zookeeper_init(globals_get_zk_host(), zk_main_watcher, 15000, 0, master, 0);
 	if (!master->zhandle) {
 		log_fatal("failed to connect to zk %s", globals_get_zk_host());
@@ -279,7 +281,6 @@ static void increase_leadership_clock(struct master *master)
 		_exit(EXIT_FAILURE);
 	}
 	// Parse json string with server's krm_server_name struct
-	log_debug("Buffer is of len %d", buffer_len);
 	cJSON *json = cJSON_ParseWithLength(buffer, buffer_len);
 	if (!cJSON_IsObject(json)) {
 		cJSON_Delete(json);
@@ -526,32 +527,32 @@ static void close_iterator(struct server_region_iterator *iterator)
 
 static int zk_children_comparator(const void *child_1, const void *child_2)
 {
-	char *left_child = (char *)child_1;
-	char *right_child = (char *)child_2;
+	char *left_child = *(char **)child_1;
+	char *right_child = *(char **)child_2;
 	return strcmp(left_child, right_child);
 }
 
-static bool remove_alive_server(struct String_vector *alive_servers, int idx)
+static bool is_server_removed(struct String_vector *alive_servers, int idx)
 {
-	memmove(alive_servers->data[idx], alive_servers->data[idx + 1],
+	memmove(&alive_servers->data[idx], &alive_servers->data[idx + 1],
 		(alive_servers->count - (idx + 1)) * sizeof(char *));
 	--alive_servers->count;
 	return true;
 }
 
-static bool find_alive_server(struct String_vector *alive_servers, char *server)
+static bool is_server_alive(struct String_vector *alive_servers, char *server)
 {
 	int start = 0;
 	int end = alive_servers->count - 1;
 	while (start <= end) {
 		int middle = (end + start) / 2;
-		int ret = zk_children_comparator(alive_servers->data[middle], server);
-		if (ret > 0)
+		int ret = zk_children_comparator(&alive_servers->data[middle], &server);
+		if (ret < 0)
 			start = middle + 1;
-		else if (ret < 0)
+		else if (ret > 0)
 			end = middle - 1;
 		else
-			return remove_alive_server(alive_servers, middle);
+			return is_server_removed(alive_servers, middle);
 	}
 	return false;
 }
@@ -564,14 +565,29 @@ static void reassign_regions(struct master *master, struct region_server *server
 			  server->server_name.kreon_ds_hostname);
 }
 
+static void print_watch_event(int type, const char *path)
+{
+	if (type == ZOO_CREATED_EVENT)
+		log_debug("Node created for path %s", path);
+	else if (type == ZOO_DELETED_EVENT)
+		log_debug("Node deleted for path %s", path);
+	else if (type == ZOO_CHANGED_EVENT)
+		log_debug("Data changed for path %s", path);
+	else if (type == ZOO_CHILD_EVENT)
+		log_debug("Child add for path %s", path);
+	else
+		log_debug("Unknown type of watcher for path %s", path);
+}
+
 static void region_server_health_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
 	(void)zkh;
 	(void)type;
 	(void)state;
 	(void)path;
+	print_watch_event(type, path);
 	struct master *master = (struct master *)context;
-	MUTEX_LOCK(&master->reassignment_lock);
+	MUTEX_LOCK(&master->management_lock);
 	struct String_vector *alive_servers = calloc(1, sizeof(struct String_vector));
 	char *alive_servers_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH);
 	int rc = zoo_wget_children(master->zhandle, alive_servers_path, region_server_health_watcher, master,
@@ -580,14 +596,14 @@ static void region_server_health_watcher(zhandle_t *zkh, int type, int state, co
 		log_fatal("failed to read alive_servers %s error code %s", alive_servers_path, zerror(rc));
 		_exit(EXIT_FAILURE);
 	}
-	log_debug("Total alive servers: %d", alive_servers->count);
+
 	qsort(alive_servers->data, alive_servers->count, sizeof(char *), zk_children_comparator);
 	struct region_server *fresh_dead_servers = { 0 };
 	struct region_server *curr = { 0 };
 	struct region_server *tmp = { 0 };
 	HASH_ITER(hh, master->alive_server_table, curr, tmp)
 	{
-		if (!find_alive_server(alive_servers, curr->server_name.kreon_ds_hostname)) {
+		if (!is_server_alive(alive_servers, curr->server_name.kreon_ds_hostname)) {
 			log_debug("Server: %s is dead", curr->server_name.kreon_ds_hostname);
 			HASH_DEL(master->alive_server_table, curr);
 			HASH_ADD_PTR(fresh_dead_servers, server_key, curr);
@@ -613,8 +629,9 @@ static void region_server_health_watcher(zhandle_t *zkh, int type, int state, co
 		HASH_DEL(fresh_dead_servers, curr);
 		HASH_ADD_PTR(master->dead_server_table, server_key, curr);
 	}
-	MUTEX_UNLOCK(&master->reassignment_lock);
+	MUTEX_UNLOCK(&master->management_lock);
 	free(alive_servers);
+	free(alive_servers_path);
 }
 
 #if 0
@@ -665,6 +682,44 @@ static void prepare_transaction(struct master *master)
 }
 #endif
 
+/**
+  *Waits until all servers join during a fresh boot
+  */
+static void fresh_boot_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
+{
+	(void)zkh;
+	(void)type;
+	(void)state;
+	(void)path;
+
+	struct master *master = (struct master *)context;
+	MUTEX_LOCK(&master->management_lock);
+	struct String_vector *alive_servers = calloc(1, sizeof(struct String_vector));
+	char *alive_servers_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH);
+	if (master->master_started)
+		goto exit;
+
+	int rc = zoo_wget_children(master->zhandle, alive_servers_path, fresh_boot_watcher, master, alive_servers);
+	if (rc != ZOK) {
+		log_fatal("failed to read alive_servers %s error code %s", alive_servers_path, zerror(rc));
+		_exit(EXIT_FAILURE);
+	}
+	log_debug("Total alive servers: %d Total team member: %u", alive_servers->count,
+		  HASH_COUNT(master->alive_server_table));
+	if (alive_servers->count == (int)HASH_COUNT(master->alive_server_table)) {
+		log_debug("System ready for fresh boot all %d servers joined!", alive_servers->count);
+		master->master_started = true;
+		sem_post(&master->barrier);
+	} else
+		log_debug("Waiting for more dataservers to join current number %d out of %u", alive_servers->count,
+			  HASH_COUNT(master->alive_server_table));
+
+exit:
+	MUTEX_UNLOCK(&master->management_lock);
+	free(alive_servers_path);
+	free(alive_servers);
+}
+
 static void tm_boot_master(struct master *master, int port)
 {
 	init_master(master, port);
@@ -674,12 +729,22 @@ static void tm_boot_master(struct master *master, int port)
 	/*After this step I am the leader*/
 	increase_leadership_clock(master);
 	build_server_table(master);
+	master->master_started = true;
+	log_debug("Master clock is %lu", master->leadership_clock);
+	if (1 == master->leadership_clock) {
+		master->master_started = false;
+		fresh_boot_watcher(master->zhandle, -1, -1, NULL, master);
+		log_debug("Waiting for team to join");
+		sem_wait(&master->barrier);
+		log_debug("All team members are here");
+	}
 	build_region_table(master);
 	region_server_health_watcher(master->zhandle, -1, -1, NULL, master);
 }
 
 void *run_master(void *args)
 {
+	pthread_setname_np(pthread_self(), "masterd");
 	int port = *(int *)args;
 	struct master *master = calloc(1, sizeof(*master));
 

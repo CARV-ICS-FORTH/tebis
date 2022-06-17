@@ -69,11 +69,27 @@ char *krm_msg_type_tostring(enum krm_msg_type type)
 	return tostring_array[type];
 }
 
+static void announce_region_server_presence(struct krm_server_desc *server)
+{
+	char path[KRM_HOSTNAME_SIZE];
+	/*create an ephemeral node under /kreonR/aliveservers*/
+	char *zk_path =
+		zku_concat_strings(4, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH, KRM_SLASH, server->name.kreon_ds_hostname);
+	int rc = zoo_create(server->zh, zk_path, (const char *)&server->name, sizeof(struct krm_server_name),
+			    &ZOO_OPEN_ACL_UNSAFE, ZOO_EPHEMERAL, path, KRM_HOSTNAME_SIZE);
+	if (rc != ZOK) {
+		log_fatal("Failed to annouce my presence code %s", zku_op2String(rc));
+		_exit(EXIT_FAILURE);
+	}
+	free(zk_path);
+}
+
 static void krm_get_IP_Addresses(struct krm_server_desc *server)
 {
 	char addr[INET_ADDRSTRLEN] = { 0 };
-	struct ifaddrs *ifaddr, *ifa;
-	int family;
+	struct ifaddrs *ifaddr = { 0 };
+	struct ifaddrs *ifa = { 0 };
+	int family = -1;
 
 	if (getifaddrs(&ifaddr) == -1) {
 		perror("getifaddrs");
@@ -104,8 +120,7 @@ static void krm_get_IP_Addresses(struct krm_server_desc *server)
 
 static uint8_t krm_check_ld_regions_sorted(struct krm_leader_regions *ld_regions)
 {
-	int i;
-	for (i = 0; i < ld_regions->num_regions; i++) {
+	for (int i = 0; i < ld_regions->num_regions; i++) {
 		if (zku_key_cmp(ld_regions->regions[i].min_key_size, ld_regions->regions[i].min_key,
 				ld_regions->regions[i].max_key_size, ld_regions->regions[i].max_key) >= 0) {
 			log_fatal("Unsorted min max key within region id %s min key %s, max key "
@@ -1002,6 +1017,11 @@ void *krm_metadata_server(void *args)
 				_exit(EXIT_FAILURE);
 			}
 
+			log_debug("Announcing my presence: %s", my_desc->name.kreon_ds_hostname);
+			announce_region_server_presence(my_desc);
+			log_debug("Woke up server: %s", my_desc->name.kreon_ds_hostname);
+			sem_wait(&my_desc->wake_up);
+
 			if (my_desc->name.epoch == 0) {
 				log_debug("First time I join setting my epoch to 1 and initializing "
 					  "volume %s",
@@ -1051,6 +1071,7 @@ void *krm_metadata_server(void *args)
 			my_desc->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
 			memset(my_desc->ds_regions, 0x00, sizeof(struct krm_ds_regions));
 			my_desc->state = KRM_CLEAN_MAILBOX;
+
 			break;
 		}
 		case KRM_CLEAN_MAILBOX: {
@@ -1424,76 +1445,6 @@ void *krm_metadata_server(void *args)
 	}
 	return NULL;
 }
-
-#if 0
-struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
-						   uint32_t region_id_size)
-{
-	struct krm_region_desc *r_desc = NULL;
-
-	uint64_t lc2, lc1;
-retry:
-	lc2 = desc->ds_regions->lamport_counter_2;
-	int start_idx;
-	int end_idx;
-	int middle;
-	int ret;
-	start_idx = 0;
-	end_idx = desc->ds_regions->num_ds_regions - 1;
-	r_desc = NULL;
-	/*log_info("start %d end %d", start_idx, end_idx);*/
-	while (start_idx <= end_idx) {
-		middle = (start_idx + end_idx) / 2;
-		ret = zku_key_cmp(desc->ds_regions->r_desc[middle]->region->min_key_size,
-				  desc->ds_regions->r_desc[middle]->region->min_key, region_id_size, region_id);
-
-		if (ret < 0 || ret == 0) {
-			/*log_info("got 0 checking with max key %s",
-* desc->ds_regions->r_desc[middle].region->max_key);*/
-			start_idx = middle + 1;
-			if (zku_key_cmp(desc->ds_regions->r_desc[middle]->region->max_key_size,
-					desc->ds_regions->r_desc[middle]->region->max_key, region_id_size,
-					region_id) > 0) {
-				r_desc = desc->ds_regions->r_desc[middle];
-				break;
-			}
-		} else
-			end_idx = middle - 1;
-	}
-	/*cornercase*/
-	if (r_desc == NULL) {
-		int ret1;
-		int ret2;
-		assert(desc->ds_regions->num_ds_regions > 0);
-		end_idx = desc->ds_regions->num_ds_regions - 1;
-		ret1 = zku_key_cmp(desc->ds_regions->r_desc[end_idx]->region->min_key_size,
-				   desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id);
-		ret2 = zku_key_cmp(region_id_size, region_id, desc->ds_regions->r_desc[end_idx]->region->max_key_size,
-				   desc->ds_regions->r_desc[end_idx]->region->max_key);
-		log_info("region_min_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx]->region->min_key_size,
-			 desc->ds_regions->r_desc[end_idx]->region->min_key, region_id_size, region_id, end_idx);
-
-		log_info("region_max_key %d:%s   key %d:%s  end idx %d",
-			 desc->ds_regions->r_desc[end_idx]->region->max_key_size,
-			 desc->ds_regions->r_desc[end_idx]->region->max_key, region_id_size, region_id, end_idx);
-		if (ret1 >= 0 && ret2 < 0)
-			r_desc = desc->ds_regions->r_desc[end_idx];
-	}
-
-	lc1 = desc->ds_regions->lamport_counter_2;
-
-	if (lc1 != lc2)
-		goto retry;
-
-	if (r_desc == NULL) {
-		log_fatal("NULL region for region_id %s", region_id);
-		raise(SIGINT);
-		_exit(EXIT_FAILURE);
-	}
-	return r_desc;
-}
-#endif
 
 struct krm_region_desc *krm_get_region(struct krm_server_desc const *server_desc, char *key, uint32_t key_size)
 {

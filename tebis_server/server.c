@@ -2185,11 +2185,19 @@ int main(int argc, char *argv[])
 		 server->server_id, server->rdma_port, server->spinner.spinner_id);
 
 	server->meta_server.root_server_id = server_idx;
+
+	log_info("Initializing Tebis master server");
+	if (pthread_create(&server->meta_server_cnxt, NULL, run_master, &rdma_port)) {
+		log_fatal("Failed to start metadata_server");
+		_exit(EXIT_FAILURE);
+	}
+#if 1
 	log_info("Initializing kreonR metadata server");
 	if (pthread_create(&server->meta_server_cnxt, NULL, krm_metadata_server, &server->meta_server)) {
 		log_fatal("Failed to start metadata_server");
 		_exit(EXIT_FAILURE);
 	}
+#endif
 
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	// A long long
