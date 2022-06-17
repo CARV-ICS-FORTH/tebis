@@ -332,7 +332,6 @@ static void build_server_table(struct master *master)
 
 		server->server_key = djb2_hash((unsigned char *)server->server_name.kreon_ds_hostname,
 					       server->server_name.kreon_ds_hostname_length);
-		// server->status = UNKNOWN;
 		log_debug("Adding server hostname: %s with hash key %lu", server->server_name.kreon_ds_hostname,
 			  server->server_key);
 		HASH_ADD_PTR(master->alive_server_table, server_key, server);
@@ -593,7 +592,7 @@ static void region_server_health_watcher(zhandle_t *zkh, int type, int state, co
 	int rc = zoo_wget_children(master->zhandle, alive_servers_path, region_server_health_watcher, master,
 				   alive_servers);
 	if (rc != ZOK) {
-		log_fatal("failed to read alive_servers %s error code %s", alive_servers_path, zerror(rc));
+		log_fatal("failed to read alive_servers: %s error code: %s ", alive_servers_path, zerror(rc));
 		_exit(EXIT_FAILURE);
 	}
 
@@ -701,7 +700,7 @@ static void fresh_boot_watcher(zhandle_t *zkh, int type, int state, const char *
 
 	int rc = zoo_wget_children(master->zhandle, alive_servers_path, fresh_boot_watcher, master, alive_servers);
 	if (rc != ZOK) {
-		log_fatal("failed to read alive_servers %s error code %s", alive_servers_path, zerror(rc));
+		log_fatal("failed to read alive_servers: %s error code: %s ", alive_servers_path, zerror(rc));
 		_exit(EXIT_FAILURE);
 	}
 	log_debug("Total alive servers: %d Total team member: %u", alive_servers->count,

@@ -1,13 +1,9 @@
-
 #define _GNU_SOURCE
 #include "../utilities/spin_loop.h"
-#include "build_index/build_index.h"
 #include "djb2.h"
 #include "globals.h"
 #include "list.h"
 #include "metadata.h"
-#include "parallax_callbacks/parallax_callbacks.h"
-#include "send_index/send_index_callbacks.h"
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
@@ -23,36 +19,21 @@
 #include <zookeeper/zookeeper.h>
 #include <zookeeper/zookeeper.jute.h>
 
-#if 0
 uint64_t ds_hash_key;
 
-par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_type, uint32_t num_of_backups)
+par_handle open_db(const char *path)
 {
 	disable_gc();
-
-	par_db_options db_options = { .volume_name = strdup(path),
+	par_db_options db_options = { .volume_name = (char *)path,
 				      .create_flag = PAR_CREATE_DB,
-				      .db_name = strdup(db_name),
+				      .db_name = "tebis_storage_engine",
 				      .options = par_get_default_options() };
-	db_options.options[LEVEL0_SIZE].value = KB(globals_get_l0_size());
-	db_options.options[GROWTH_FACTOR].value = globals_get_growth_factor();
-	if (msg_type == KRM_OPEN_REGION_AS_BACKUP) {
-		// open DB as backup
-		db_options.options[PRIMARY_MODE].value = 0;
-		db_options.options[REPLICA_MODE].value = 1;
-	}
-	if (globals_get_send_index()) {
-		db_options.options[NUMBER_OF_REPLICAS].value = num_of_backups;
-		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
-		db_options.options[WCURSOR_SPIN_FOR_FLUSH_REPLIES].value = 1;
-	}
 	const char *error_message = NULL;
 	par_handle handle = par_open(&db_options, &error_message);
 	if (error_message) {
 		log_fatal("Error uppon opening the DB, error %s", error_message);
 		_exit(EXIT_FAILURE);
 	}
-
 	return handle;
 }
 
@@ -804,15 +785,13 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
-			r_desc->next_lsn_to_be_replicated = 1;
+#if 0
 			for (int i = 0; i < MAX_LEVELS; i++)
 				r_desc->replica_index_map[i] = NULL;
+#endif
 			/*open the db*/
 			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
-			uint32_t num_of_backups = r_desc->region->num_of_backup;
-			r_desc->db = open_db(globals_get_dev(), r_desc->region->id, msg->type, num_of_backups);
-			if (globals_get_send_index())
-				send_index_init_callbacks(server, r_desc);
+			r_desc->db = open_db(globals_get_dev());
 
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
@@ -1328,17 +1307,14 @@ void *krm_metadata_server(void *args)
 
 				// open the db
 				// TODO replace db_open with custom db open as should be
-				uint32_t num_of_backups = r_desc->region->num_of_backup;
-				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_BACKUP,
-						     num_of_backups);
-				if (globals_get_send_index())
-					send_index_init_callbacks(my_desc, r_desc);
+				r_desc->db = open_db(globals_get_dev());
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
-				r_desc->next_lsn_to_be_replicated = 1;
+#if 0
 				for (int i = 0; i < MAX_LEVELS; i++)
 					r_desc->replica_index_map[i] = NULL;
+#endif
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
 				/*find system ref*/
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,
@@ -1465,6 +1441,8 @@ retry:
 				      server_desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
 
 		if (ret < 0 || ret == 0) {
+			/*log_info("got 0 checking with max key %s",
+* desc->ds_regions->r_desc[middle].region->max_key);*/
 			start_idx = middle + 1;
 			if (zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->max_key_size,
 					server_desc->ds_regions->r_desc[middle]->region->max_key, key_size, key) > 0) {
@@ -1506,4 +1484,3 @@ retry:
 	}
 	return r_desc;
 }
-#endif
