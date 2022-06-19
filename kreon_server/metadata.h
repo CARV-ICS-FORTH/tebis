@@ -84,6 +84,9 @@ enum krm_work_task_status {
 	TASK_NO_OP
 };
 
+enum tb_kv_category { SMALL = 0, MEDIUM, BIG };
+
+enum tb_rdma_buf_category { L0_RECOVERY_RDMA_BUF, BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
 struct sc_msg_pair {
 	/*out variables*/
@@ -109,6 +112,7 @@ struct krm_work_task {
 	msg_header *msg;
 	struct krm_region_desc *r_desc;
 	struct msg_put_kv *kv;
+	enum tb_kv_category kv_category; /*XXX TODO make these a struct XXX*/
 	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;
@@ -142,9 +146,6 @@ struct ru_master_log_buffer_seg {
 	/* IMPORTANT, primary's segment is related with many backups memory regions.
 	 * The address of each backup's  memory region differ, we have allocated the space with posix memalign*/
 	struct ibv_mr mr[KRM_MAX_BACKUPS];
-	/*The flush commands send to backups will be equal to the number of backups.
-	 *All flush cmds must be allocated and freed accordingly */
-	struct ru_primary_to_backup_comm flush_cmd[KRM_MAX_BACKUPS];
 	volatile uint64_t start;
 	volatile uint64_t end;
 	volatile uint64_t curr_end;
@@ -157,8 +158,14 @@ struct ru_master_log_buffer {
 };
 
 struct ru_master_state {
-	struct ru_master_log_buffer r_buf;
+	/*rdma buffer for keeping small and medium kv categories*/
+	struct ru_master_log_buffer l0_recovery_rdma_buf;
+	/*rdma buffer for keeping big kv category*/
+	struct ru_master_log_buffer big_recovery_rdma_buf;
 	struct ru_primary_to_backup_comm primary_to_backup[KRM_MAX_BACKUPS];
+	/*The flush commands send to backups will be equal to the number of backups.
+	 *All flush cmds must be allocated and freed accordingly */
+	struct ru_primary_to_backup_comm flush_cmd[KRM_MAX_BACKUPS];
 	int num_backup;
 };
 
@@ -172,7 +179,10 @@ struct ru_replica_state {
 	struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
-	struct ru_replica_rdma_buffer rdma_buf;
+	/*rdma buffer keeping small and medium kv categories*/
+	struct ru_replica_rdma_buffer l0_recovery_rdma_buf;
+	/*rdma buffer keepint the big kv category*/
+	struct ru_replica_rdma_buffer big_recovery_rdma_buf;
 };
 
 struct krm_server_name {
