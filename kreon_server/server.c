@@ -1128,8 +1128,16 @@ static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, stru
 
 static void calc_kv_category(struct krm_work_task *task)
 {
-	/*calculate the kv category....*/
-	task->kv_category = BIG;
+	uint32_t value_size = task->kv->value_size;
+	uint32_t key_size = task->kv->key_size;
+	double kv_ratio = ((double)key_size) / value_size;
+
+	if (kv_ratio >= 0.0 && kv_ratio < 0.02)
+		task->kv_category = BIG;
+	else if (kv_ratio >= 0.02 && kv_ratio <= 0.2)
+		task->kv_category = MEDIUM;
+	else
+		task->kv_category = SMALL;
 }
 
 uint64_t lsn_to_be_replicated = 0;
