@@ -1061,6 +1061,7 @@ static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task 
 			__sync_fetch_and_add(&r_desc->pending_region_tasks, 1);
 			break;
 		case REPLICATE:
+		case WAIT_FOR_REPLICATION_TURN:
 		case WAIT_FOR_REPLICATION_COMPLETION:
 		case ALL_REPLICAS_ACKED:
 		case SEND_FLUSH_COMMANDS:
@@ -1153,22 +1154,8 @@ void insert_kv_to_store(struct krm_work_task *task)
 	if (task->r_desc->region->num_of_backup) {
 		/*this needs the Parallax support*/
 		fill_replication_fields(task->kv);
-
 		calc_kv_category(task);
-		/*find which rdma_buffer must be appended*/
-		struct ru_master_state *primary = task->r_desc->m_state;
-		struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
-		if (task->kv_category == BIG)
-			rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
-
-		while (task->kv->lsn != lsn_to_be_replicated) {
-			; /*spin, its not my turn yet*/
-		}
-		/*only 1 threads enters this region at a time*/
-		if (!buffer_have_enough_space(rdma_buffer_to_fill, task))
-			task->kreon_operation_status = SEND_FLUSH_COMMANDS;
-		else
-			task->kreon_operation_status = REPLICATE;
+		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
 	} else
 		task->kreon_operation_status = TASK_COMPLETE;
 }
@@ -1308,6 +1295,24 @@ void wait_for_replication_completion(struct krm_work_task *task)
 	task->kreon_operation_status = ALL_REPLICAS_ACKED;
 }
 
+static void wait_for_replication_turn(struct krm_work_task *task)
+{
+	if (task->kv->lsn != lsn_to_be_replicated)
+		return; /*its not my turn yet*/
+
+	/*only 1 threads enters this region at a time*/
+	/*find which rdma_buffer must be appended*/
+	struct ru_master_state *primary = task->r_desc->m_state;
+	struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
+	if (task->kv_category == BIG)
+		rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
+
+	if (!buffer_have_enough_space(rdma_buffer_to_fill, task))
+		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
+	else
+		task->kreon_operation_status = REPLICATE;
+}
+
 static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	//############## fsm state logic follows ###################
@@ -1325,6 +1330,11 @@ static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work
 
 		case WAIT_FOR_FLUSH_REPLIES: {
 			wait_for_flush_replies(task);
+			break;
+		}
+
+		case WAIT_FOR_REPLICATION_TURN: {
+			wait_for_replication_turn(task);
 			break;
 		}
 
