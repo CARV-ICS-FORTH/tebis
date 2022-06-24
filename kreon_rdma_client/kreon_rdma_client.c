@@ -934,7 +934,6 @@ void krc_scan_set_start(krc_scannerp sp, uint32_t start_key_size, void *start_ke
 	sc->start_key->key_size = start_key_size;
 	memcpy(sc->start_key->key_buf, start_key, start_key_size);
 	//log_info("start key set to %s", sc->start_key->key_buf);
-	return;
 }
 
 void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, krc_seek_mode seek_mode)
@@ -1015,6 +1014,9 @@ krc_ret_code krc_close()
 		}
 		log_info("Reply checker exited!");
 		reply_checker_exit = 0;
+#if CREATE_TRACE_FILE
+		globals_close_trace_file();
+#endif
 	}
 	//cu_close_open_connections();
 	return KRC_SUCCESS;
@@ -1099,6 +1101,10 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 		log_fatal("Contact gesalous@ics.forth.gr");
 		_exit(EXIT_FAILURE);
 	}
+
+#if CREATE_TRACE_FILE
+	globals_append_trace_file(key_size, key, val_size, value, TEB_PUT);
+#endif
 
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	uint64_t seed = djb2_hash((unsigned char *)key, key_size);
@@ -1268,6 +1274,10 @@ static void *krc_reply_checker(void *args)
 
 krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context)
 {
+#if CREATE_TRACE_FILE
+	globals_append_trace_file(key_size, key, 0, NULL, TEB_GET);
+#endif
+
 	uint32_t reply_size = *buf_size;
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
@@ -1292,6 +1302,9 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 
 uint8_t krc_start_async_thread(void)
 {
+#if CREATE_TRACE_FILE
+	globals_open_trace_file("tracefile.txt");
+#endif
 	if (pthread_create(&spinner_cnxt, NULL, krc_reply_checker, NULL) != 0) {
 		log_fatal("Failed to spawn async reply checker");
 		_exit(EXIT_FAILURE);

@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
+enum operation_type { TEB_PUT = 0, TEB_GET };
 char *globals_get_RDMA_IP_filter(void);
 void globals_set_RDMA_IP_filter(char *RDMA_IP_filter);
 
@@ -32,3 +33,7 @@ uint32_t globals_get_growth_factor(void);
 
 void globals_set_send_index(int enable);
 int globals_get_send_index(void);
+
+void globals_open_trace_file(const char *filename);
+void globals_append_trace_file(uint32_t key_size, void *key, uint32_t value_size, void *value, enum operation_type op);
+void globals_close_trace_file(void);

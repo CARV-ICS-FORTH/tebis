@@ -166,6 +166,9 @@ include(CMakeconfig.txt)
 configure_file(config.h.in config.h @ONLY)
 
 include_directories(${CMAKE_BINARY_DIR})
+if(CREATE_TRACE_FILE)
+  add_compile_definitions(CREATE_TRACE_FILE=1)
+endif()
 
 if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
   string(APPEND CMAKE_C_FLAGS APPEND " -w")
