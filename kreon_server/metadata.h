@@ -6,6 +6,7 @@
 #include "../utilities/list.h"
 #include "uthash.h"
 #include <btree/btree.h>
+#include <include/parallax.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
@@ -263,7 +264,7 @@ struct krm_region_desc {
 	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
 
 	enum krm_region_role role;
-	db_handle *db;
+	par_handle *db;
 	volatile uint64_t next_segment_to_flush;
 	union {
 		struct ru_master_state *m_state;

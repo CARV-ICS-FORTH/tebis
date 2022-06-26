@@ -868,8 +868,8 @@ static void send_get_rdma_buffers_requests(struct krm_region_desc *r_desc, struc
 		struct connection_rdma *conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 
 		if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_UNINITIALIZED) {
-			log_debug("Sending GET_RDMA_BUFFERs req to Server %s for DB %s",
-				  r_desc->region->backups[i].kreon_ds_hostname, r_desc->db->volume_desc->volume_name);
+			log_debug("Sending GET_RDMA_BUFFERs req to Server %s",
+				  r_desc->region->backups[i].kreon_ds_hostname);
 
 			r_desc->m_state->primary_to_backup[i].msg_pair = sc_allocate_rpc_pair(
 				conn, sizeof(struct s2s_msg_get_rdma_buffer_req) + r_desc->region->min_key_size,
@@ -1144,12 +1144,19 @@ static void calc_kv_category(struct krm_work_task *task)
 uint64_t lsn_to_be_replicated = 0;
 void insert_kv_to_store(struct krm_work_task *task)
 {
+#if CREATE_TRACE_FILE
+	uint32_t key_size = *(uint32_t *)task->kv->kv_payload;
+	char *key = task->kv->kv_payload + sizeof(uint32_t);
+	uint32_t value_size = *(uint32_t *)(task->kv->kv_payload + sizeof(uint32_t) + key_size);
+	char *value = task->kv->kv_payload + 2 * sizeof(uint32_t) + key_size;
+	globals_append_trace_file(key_size, key, value_size, value, TEB_PUT);
+#endif
+
 	/*insert kv to data store*/
-	if (serialized_insert_key_value(task->r_desc->db, task->kv->kv_payload) == PAR_FAILURE) {
+	if (par_put_serialized(task->r_desc->db, task->kv->kv_payload) == PAR_FAILURE) {
 		krm_leave_kreon(task->r_desc);
 		return;
 	}
-
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
 		/*this needs the Parallax support*/
@@ -2223,6 +2230,10 @@ static void sigint_handler(int signo)
 #define MAX_CORES_PER_NUMA 64
 int main(int argc, char *argv[])
 {
+#if CREATE_TRACE_FILE
+	globals_open_trace_file("tracefile.txt");
+#endif
+
 	int num_of_numa_servers = 1;
 	int next_argv;
 	if (argc != 8) {

@@ -299,7 +299,8 @@ void globals_append_trace_file(uint32_t key_size, void *key, uint32_t value_size
 	if (op == TEB_GET)
 		fprintf(fptr, "GET %u %s\n", key_size, (char *)key);
 	else
-		fprintf(fptr, "PUT %u %s %u %s\n", key_size, (char *)key, value_size, (char *)value);
+		fprintf(fptr, "PUT %u %.*s %u %.*s\n", key_size, key_size, (char *)key, value_size, value_size,
+			(char *)value);
 }
 
 void globals_close_trace_file(void)

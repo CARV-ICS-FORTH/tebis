@@ -1075,6 +1075,14 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
 	memcpy(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size); /*value*/
 	/*tail for payload*/
 	*(uint8_t *)(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size) = 0;
+
+#if CREATE_TRACE_FILE
+	uint32_t kv_key_size = *(uint32_t *)kv_payload;
+	char *kv_key = kv_payload + sizeof(uint32_t);
+	uint32_t kv_value_size = *(uint32_t *)(kv_payload + sizeof(uint32_t) + key_size);
+	char *kv_value = kv_payload + 2 * sizeof(uint32_t) + key_size;
+	globals_append_trace_file(kv_key_size, kv_key, kv_value_size, kv_value, TEB_PUT);
+#endif
 }
 
 /** Function returning the message size of a put request*/
@@ -1101,10 +1109,6 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 		log_fatal("Contact gesalous@ics.forth.gr");
 		_exit(EXIT_FAILURE);
 	}
-
-#if CREATE_TRACE_FILE
-	globals_append_trace_file(key_size, key, val_size, value, TEB_PUT);
-#endif
 
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	uint64_t seed = djb2_hash((unsigned char *)key, key_size);

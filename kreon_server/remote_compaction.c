@@ -545,8 +545,8 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	memset(t, 0x00, sizeof(struct rco_task));
 	t->r_desc = db_entry->r_desc;
 	assert(t->r_desc != NULL);
-	t->curr_index_segment = t->r_desc->db->db_desc->levels[c->dst_level].first_segment[c->dst_local_tree];
-	t->index_offset = t->r_desc->db->db_desc->levels[c->dst_level].offset[c->dst_local_tree];
+	//t->curr_index_segment = t->r_desc->db->db_desc->levels[c->dst_level].first_segment[c->dst_local_tree];
+	//t->index_offset = t->r_desc->db->db_desc->levels[c->dst_level].offset[c->dst_local_tree];
 	log_debug("Segments of index[%d][%d]", c->dst_level, c->dst_local_tree);
 	// struct segment_header *S = t->curr_index_segment;
 	// int id = 0;
@@ -653,10 +653,11 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 			if (tail != TU_RDMA_REGULAR_MSG)
 				return;
 			/*unroll the reply*/
-			log_info("Got buffers from replica id %u from my group for db: %s of "
-				 "tree[%d][%d]",
-				 task->replica_id_cnt, task->r_desc->db->db_desc->db_volume->volume_name,
-				 task->level_id, task->tree_id);
+			//log_info(
+			//	"Got buffers from replica id %u from my group for db: %s of "
+			//	"tree[%d][%d]",
+			//		 task->replica_id_cnt, task->r_desc->db->db_desc->db_volume->volume_name,
+			//	task->level_id, task->tree_id);
 			struct s2s_msg_replica_index_get_buffer_rep *g_rep =
 				(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply +
 										sizeof(struct msg_header));
@@ -874,24 +875,22 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 				log_info("Attached hash seg[%u] = %lu", f_req->seg_id % MAX_REPLICA_INDEX_BUFFERS,
 					 f_req->seg_hash);
 				f_req->is_last = task->is_seg_last;
-				if (task->is_seg_last) {
-					if (task->r_desc->db->db_desc->levels[task->level_id]
-						    .root_w[task->local_tree_id] == NULL)
-						f_req->root_w = 0;
-					else
-						f_req->root_w =
-							(uint64_t)task->r_desc->db->db_desc->levels[task->level_id]
-								.root_w[task->local_tree_id] -
-							MAPPED;
-					if (task->r_desc->db->db_desc->levels[task->level_id]
-						    .root_r[task->local_tree_id] == NULL)
-						f_req->root_r = 0;
-					else
-						f_req->root_r =
-							(uint64_t)task->r_desc->db->db_desc->levels[task->level_id]
-								.root_r[task->local_tree_id] -
-							MAPPED;
-				}
+				//if (task->is_seg_last) {
+				//	if (task->r_desc->db->db_desc->levels[task->level_id]
+				//		    .root_w[task->local_tree_id] == NULL)
+				//	f_req->root_w = 0;
+				//	else f_req->root_w = (uint64_t)task->r_desc->db->db_desc->levels[task->level_id]
+				//				     .root_w[task->local_tree_id] -
+				//			     MAPPED;
+				//	if (task->r_desc->db->db_desc->levels[task->level_id]
+				//		    .root_r[task->local_tree_id] == NULL)
+				//		f_req->root_r = 0;
+				//	else
+				//		f_req->root_r =
+				//			(uint64_t)task->r_desc->db->db_desc->levels[task->level_id]
+				//				.root_r[task->local_tree_id] -
+				//			MAPPED;
+				//}
 
 				f_req->region_key_size = task->r_desc->region->min_key_size;
 				if (f_req->region_key_size > RU_REGION_KEY_SIZE) {
@@ -929,7 +928,7 @@ void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
 {
 	pthread_mutex_lock(&db_map_lock);
 	struct rco_db_map_entry *e = (struct rco_db_map_entry *)malloc(sizeof(struct rco_db_map_entry));
-	e->db_desc = r_desc->db->db_desc;
+	//e->db_desc = r_desc->db->db_desc;
 	e->r_desc = r_desc;
 	e->pool = pool;
 	HASH_ADD_PTR(db_map, db_desc, e);
@@ -1009,15 +1008,15 @@ void rco_build_index(struct rco_build_index_task *task)
 	struct rco_key *key = NULL;
 	struct rco_value *value = NULL;
 	struct segment_header *curr_segment = task->segment;
-	struct db_descriptor *db_desc = task->r_desc->db->db_desc;
+	//struct db_descriptor *db_desc = task->r_desc->db->db_desc;
 	uint64_t log_offt = task->log_start;
 	key = (struct rco_key *)((uint64_t)curr_segment + sizeof(struct segment_header));
 
 	uint32_t remaining = SEGMENT_SIZE - sizeof(struct segment_header);
 	while (1) {
-		db_desc->dirty = 0x01;
+		//db_desc->dirty = 0x01;
 		struct bt_insert_req ins_req;
-		ins_req.metadata.handle = task->r_desc->db;
+		//ins_req.metadata.handle = task->r_desc->db;
 		ins_req.metadata.level_id = 0;
 		ins_req.metadata.tree_id = 0; // will be filled properly by the engine
 		ins_req.metadata.special_split = 0;
@@ -1025,20 +1024,20 @@ void rco_build_index(struct rco_build_index_task *task)
 		ins_req.metadata.append_to_log = 1;
 		kv = (char *)key;
 		ins_req.key_value_buf = kv;
-		int active_tree = task->r_desc->db->db_desc->levels[0].active_tree;
-		if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-			pthread_mutex_lock(&db_desc->client_barrier_lock);
-			active_tree = db_desc->levels[0].active_tree;
+		//int active_tree = task->r_desc->db->db_desc->levels[0].active_tree;
+		//if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+		//	pthread_mutex_lock(&db_desc->client_barrier_lock);
+		//	active_tree = db_desc->levels[0].active_tree;
 
-			if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
-				sem_post(&db_desc->compaction_daemon_interrupts);
-				if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
-					log_fatal("failed to throttle");
-					exit(EXIT_FAILURE);
-				}
-			}
-			pthread_mutex_unlock(&db_desc->client_barrier_lock);
-		}
+		//	if (db_desc->levels[0].level_size[active_tree] > db_desc->levels[0].max_level_size) {
+		//		sem_post(&db_desc->compaction_daemon_interrupts);
+		//		if (pthread_cond_wait(&db_desc->client_barrier, &db_desc->client_barrier_lock) != 0) {
+		//			log_fatal("failed to throttle");
+		//			exit(EXIT_FAILURE);
+		//		}
+		//	}
+		//	pthread_mutex_unlock(&db_desc->client_barrier_lock);
+		//}
 		/*log_info("Level 0 size %d", db_desc->levels[0].level_size[active_tree]);*/
 		/*log_info("Adding index entry for key %u:%s offset %llu log end %llu",*/
 		/*		key->size, key->key, log_offt, task->log_end);*/
