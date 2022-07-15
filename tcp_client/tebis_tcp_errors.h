@@ -11,8 +11,8 @@
 
 #define print_debug(msg) fprintf(stderr, "[%d] %s: %s (%d)\n", __LINE__, msg, strerror(errno), errno)
 
-#define TTE_WAIT_REP  -2
-#define TTE_WAIT_REQ  -3
+#define TTE_WAIT_REP -2
+#define TTE_WAIT_REQ -3
 
 /* char * tcp_error_strings[] =\
 {
@@ -33,5 +33,4 @@ char * tcp_print_error(int errc)
     return tcp_error_strings[-errc];
 } */
 
-#endif  /** TEBIS_TCP_ERRORS_H **/
-
+#endif /** TEBIS_TCP_ERRORS_H **/
