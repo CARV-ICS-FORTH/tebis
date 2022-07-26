@@ -9,6 +9,7 @@ int main(int argc, char **argv)
 	printf("this.process.pid = %d\n", getpid());
 
 	cHandle chandle;
+
 	c_tcp_req req;
 	c_tcp_rep rep;
 
@@ -66,14 +67,15 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	generic_data_t *repbuf;
+	/* generic_data_t *repbuf;
 
 	if (c_tcp_recv_rep(chandle, rep, &repbuf) < 0) {
 		print_debug("tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	c_tcp_print_repbuf(repbuf);
+	c_tcp_print_repbuf(repbuf); */
+	(void)getchar();
 	printf("terminating main()...\n");
 
 	return EXIT_SUCCESS;

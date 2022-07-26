@@ -17,7 +17,8 @@ typedef void *s_tcp_rep;
  * @param port
  * @return int
  */
-int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict interface, unsigned short port);
+int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict interface, unsigned short port,
+		 uint threads);
 
 /**
  * @brief
@@ -57,23 +58,6 @@ int s_tcp_req_destroy(s_tcp_req req);
  * @return int
  */
 int s_tcp_rep_push_data(s_tcp_rep restrict rep, generic_data_t *restrict gdata);
-
-/**
- * @brief
- *
- * @param shandle
- * @param rep
- * @return int
- */
-int s_tcp_recv_req(sHandle restrict shandle, s_tcp_req restrict req);
-
-/**
- * @brief
- *
- * @param shandle
- * @return int
- */
-int s_tcp_send_rep(sHandle shandle, int8_t retcode, s_tcp_rep restrict rep);
 
 void s_tcp_print_req(s_tcp_req req);
 

@@ -35,7 +35,7 @@ typedef struct {
 
 	} buf;
 
-} __client_handle;
+} client_handle;
 
 struct kvlist_node {
 	kv_t kv;
@@ -55,9 +55,9 @@ typedef struct {
 	} kvlist;
 
 	uint32_t flags;
-	uint64_t __pad[2]; // future use: options
+	uint64_t pad[2]; // future use: options
 
-} __c_tcp_req;
+} tcp_req;
 
 typedef struct {
 	int8_t retc;
@@ -77,16 +77,16 @@ typedef struct {
 
 	} buf;
 
-} __c_tcp_rep;
+} tcp_rep;
 
 /*******************************************************************/
 
 #include <stdio.h>
 
-#define __check_result(ret) __check_result_func(ret, __LINE__) // debug-only, not release
-#define __req_in_get_family(rtype) (rtype <= REQ_EXISTS)
+#define check_result(ret) check_result_func(ret, __LINE__) // debug-only, not release
+#define req_in_get_family(rtype) (rtype <= REQ_EXISTS)
 
-void __check_result_func(int64_t ret, int line)
+void check_result_func(int64_t ret, int line)
 {
 	if (ret < 0LL) {
 		fprintf(stderr, "[%d] %s: %s (%d)\n", line, "failure occured", strerror(errno), errno);
@@ -96,6 +96,28 @@ void __check_result_func(int64_t ret, int line)
 
 /*****************************************************************************/
 
+static int server_version_check(int ssock)
+{
+	uint8_t tbuf[5];
+
+	*tbuf = INIT_CONN_TYPE;
+	*(tbuf + 1UL) = htobe32(TEBIS_TCP_VERSION);
+
+	send(ssock, tbuf, 5UL, 0);
+
+	int64_t ret = recv(ssock, tbuf + 4UL, 1UL, 0);
+
+	if (ret < 0) {
+		perror("server_version_check::recv()");
+		return -(EXIT_FAILURE);
+	} else if (!ret) {
+		fprintf(stderr, "server has shutdown!\n");
+		return -(EXIT_FAILURE);
+	}
+
+	return EXIT_SUCCESS;
+}
+
 int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, const char *restrict port)
 {
 	if (!chandle || !addr || !port) {
@@ -103,12 +125,12 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		return -(EXIT_FAILURE);
 	}
 
-	if (!(*chandle = malloc(sizeof(__client_handle))))
+	if (!(*chandle = malloc(sizeof(client_handle))))
 		return -(EXIT_FAILURE);
 
 	/** END OF ERROR HANDLING **/
 
-	__client_handle *ch = *chandle;
+	client_handle *ch = *chandle;
 
 	ch->flags1 = MAGIC_INIT_NUM;
 	ch->flags2 = CLHF_SND_REQ;
@@ -142,9 +164,15 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		}
 
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
-			/** TODO: validate version with server */
-
 			freeaddrinfo(res);
+
+			if (server_version_check(ch->sock) < 0) {
+				close(ch->sock);
+				return -(EXIT_FAILURE);
+			}
+
+			printf("all good\n");
+
 			return EXIT_SUCCESS;
 		} else
 			close(ch->sock);
@@ -164,7 +192,7 @@ int chandle_destroy(cHandle chandle)
 
 	/** END OF ERROR HANDLING **/
 
-	__client_handle *ch = chandle;
+	client_handle *ch = chandle;
 
 	close(ch->sock);
 	free(ch->buf.mem);
@@ -182,7 +210,7 @@ c_tcp_req c_tcp_req_init(req_t rt)
 
 	/** END OF ERROR HANDLING **/
 
-	__c_tcp_req *treq;
+	tcp_req *treq;
 
 	if (!(treq = calloc(1UL, sizeof(*treq))))
 		return NULL;
@@ -209,7 +237,7 @@ int c_tcp_req_destroy(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	__c_tcp_req *treq = req;
+	tcp_req *treq = req;
 
 	/** TODO: free list */
 
@@ -228,7 +256,7 @@ int c_tcp_rep_destroy(c_tcp_rep rep)
 
 	/** END OF ERROR HANDLING **/
 
-	__c_tcp_rep *trep = rep;
+	tcp_rep *trep = rep;
 
 	free(trep->buf.mem);
 	free(trep->ret_to_usr.payload);
@@ -238,7 +266,7 @@ int c_tcp_rep_destroy(c_tcp_rep rep)
 
 c_tcp_rep c_tcp_rep_init(void)
 {
-	__c_tcp_rep *trep;
+	tcp_rep *trep;
 
 	if (!(trep = malloc(sizeof(*trep))))
 		return NULL;
@@ -255,7 +283,7 @@ c_tcp_rep c_tcp_rep_init(void)
 
 int c_tcp_req_push_kv(c_tcp_req restrict req, kv_t *restrict kv)
 {
-	__c_tcp_req *treq = req;
+	tcp_req *treq = req;
 
 	if (!req || !kv) {
 		errno = EINVAL;
@@ -275,7 +303,7 @@ int c_tcp_req_push_kv(c_tcp_req restrict req, kv_t *restrict kv)
 	++treq->kvlist.nokvs;
 	treq->kvlist.bytes += kv->key.size;
 
-	if (!__req_in_get_family(treq->type)) // belongs in PUT request family
+	if (!req_in_get_family(treq->type)) // belongs in PUT request family
 		treq->kvlist.bytes += kv->value.size;
 
 	return EXIT_SUCCESS;
@@ -288,7 +316,7 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 		return -(EXIT_FAILURE);
 	}
 
-	__client_handle *ch = chandle;
+	client_handle *ch = chandle;
 
 	if (ch->flags1 != MAGIC_INIT_NUM) // chandle is not initialized!
 	{
@@ -302,7 +330,7 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 		return -(EXIT_FAILURE);
 	}
 
-	__c_tcp_req *treq = req;
+	tcp_req *treq = req;
 
 	if (treq->kvlist.head == treq->kvlist.tail) // not a single kv is pushed
 	{
@@ -326,7 +354,7 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 
 	dindex = sindex;
 
-	if (__req_in_get_family(treq->type))
+	if (req_in_get_family(treq->type))
 		dindex += (treq->kvlist.nokvs * sizeof(treq->kvlist.head->kv.key.size));
 	else /* PUT family */
 		dindex += (treq->kvlist.nokvs *
@@ -342,7 +370,7 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 		memcpy(ch->buf.mem + dindex, kvn->kv.key.data, kvn->kv.key.size);
 		dindex += kvn->kv.key.size;
 
-		if (!__req_in_get_family(treq->type)) // branch predictor <3
+		if (!req_in_get_family(treq->type)) // branch predictor <3
 		{
 			/** PUT family (put, put-if-ex) **/
 
@@ -374,7 +402,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 		return -(EXIT_FAILURE);
 	}
 
-	__client_handle *ch = chandle;
+	client_handle *ch = chandle;
 
 	if (ch->flags2 & CLHF_SND_REQ) // clients waits to send a 'request' (not a 'reply')
 	{
@@ -389,7 +417,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 	if ((ret = recv(ch->sock, ch->buf.mem, 1024UL, 0)) < 0)
 		return -(EXIT_FAILURE);
 
-	__c_tcp_rep *trep = rep;
+	tcp_rep *trep = rep;
 	uint64_t index = 0UL;
 
 	trep->retc = *((int8_t *)(ch->buf.mem));

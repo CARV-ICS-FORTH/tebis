@@ -11,12 +11,14 @@ int main(int argc, char **argv)
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, "127.0.0.1", 25565)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, "127.0.0.1", 25565, 2)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}
 
-	s_tcp_req *req;
+	pause();
+
+	/* 	s_tcp_req *req;
 
 	if (!(req = s_tcp_req_init())) {
 		print_debug("s_tcp_req_init()");
@@ -53,7 +55,7 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	getc(stdin);
+	getc(stdin); */
 	shandle_destroy(shandle);
 
 	return EXIT_SUCCESS;

@@ -1,6 +1,3 @@
-/** TODO: replace all of these mallocs with a single one, outside the loop ---> s_tcp_recv_req() */
-/** TODO: make sh->buf resizable ---> s_tcp_send_rep() */
-/** TODO: validate version with server (errno = ECONNREFUSED) ---> shandle_init() */
 /** TODO: check if req/rep struct is initialized, using MAGIC num */
 /** TODO: implement s_tcp_rep_destroy() */
 
@@ -12,27 +9,40 @@
 
 #include <endian.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 
-typedef struct {
-	uint16_t flags1;
-	uint16_t flags2;
-
 #define MAGIC_INIT_NUM (0xCAFE)
+#define EPOLL_MAX_EVENTS 50
 
-	int sockfd;
-	int clientfd;
+typedef struct {
+	pthread_t tid;
+
+	int32_t sock;
+	int32_t epfd;
 
 	struct {
 		uint64_t size;
 		void *mem;
-
 	} buf;
+
+} worker_t;
+
+typedef struct {
+	uint16_t magic_init_num;
+	uint16_t flags;
+
+	int32_t sock;
+	int32_t epfd;
+
+	worker_t *workers;
 
 } server_handle;
 
@@ -69,12 +79,237 @@ typedef struct {
 } tcp_rep;
 
 #define req_int_get_family(rtype) ((rtype) <= REQ_EXISTS)
+#define MAX_LISTEN_CLIENTS 50
 
 /*******************************************************************/
 
-static const char *printable_req(req_t type);
+static const char *printable_req(req_t type)
+{
+	switch (type) {
+	case REQ_GET:
+		return "REQ_GET";
+	case REQ_DEL:
+		return "REQ_DEL";
+	case REQ_EXISTS:
+		return "REQ_EXISTS";
+	case REQ_PUT:
+		return "REQ_PUT";
+	case REQ_PUT_IFEX:
+		return "REQ_PUT_IF_EX";
 
-int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict addr, unsigned short port)
+	default:
+		return "wrong req-type";
+	}
+}
+
+/**
+ * @brief
+ *
+ * @param csock
+ * @param worker
+ * @return int
+ */
+static int client_version_check(int csock, worker_t *worker)
+{
+	uint32_t version = be32toh(*((uint8_t *)(worker->buf.mem) + 1UL));
+
+	if (version != TEBIS_TCP_VERSION) {
+		fprintf(stderr, "client is not compatible with the server!\n");
+		epoll_ctl(worker->epfd, EPOLL_CTL_DEL, csock, NULL);
+		close(csock);
+
+		errno = ECONNABORTED;
+
+		return -(EXIT_FAILURE);
+	}
+
+	if (send(csock, &version, sizeof(version), 0) < 0) {
+		perror("client_version_check::send()\n");
+		epoll_ctl(worker->epfd, EPOLL_CTL_DEL, csock, NULL);
+		close(csock);
+
+		errno = ECONNRESET;
+
+		return -(EXIT_FAILURE);
+	}
+
+	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = csock };
+
+	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, csock, &epev) < 0) {
+		perror("client_version_check::epoll_ctl(MOD)");
+		exit(EXIT_FAILURE);
+	}
+
+	return EXIT_SUCCESS;
+}
+
+/**
+ * @brief
+ *
+ * @param this
+ * @return int
+ */
+static int handle_new_connection(worker_t *this)
+{
+	for (;;) {
+		struct sockaddr_storage caddr;
+		struct epoll_event epev;
+
+		socklen_t socklen;
+		int tmpfd;
+
+		if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) <
+		    0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+
+			perror("handle_new_connection::accept4()");
+			continue; // replace with "return -(EXIT_FAILURE)" ? EPOLLET
+		}
+
+		epev.data.fd = tmpfd;
+		epev.events = EPOLLIN | EPOLLONESHOT;
+
+		if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
+			perror("handle_new_connection::epoll_ctl(ADD)");
+			close(tmpfd);
+		}
+
+		epev.events = EPOLLIN | EPOLLONESHOT;
+		epev.data.fd = this->sock;
+
+		if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev) < 0) {
+			perror("handle_new_connection::epoll_ctl(MOD)");
+			exit(EXIT_FAILURE); // Will this ever happen ?
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
+
+int s_tcp_recv_req(worker_t *restrict worker, int clifd, s_tcp_req restrict req);
+int s_tcp_send_rep(worker_t *restrict worker, int clifd, int8_t retcode, s_tcp_rep restrict rep);
+
+static void *thread_routine(void *arg)
+{
+	worker_t *this = arg;
+
+	// pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+	// push cleanup function (like at_exit())
+
+	for (;;) {
+		struct epoll_event events[EPOLL_MAX_EVENTS];
+		struct epoll_event epev;
+
+		struct sockaddr_storage caddr;
+
+		socklen_t socklen;
+		ssize_t bytesread;
+
+		int norfds;
+
+		norfds = epoll_wait(this->epfd, events, EPOLL_MAX_EVENTS, -1);
+
+		if (norfds < 0) {
+			perror("epoll()");
+			continue;
+		}
+
+		int clifd;
+		int fdindex;
+
+		for (fdindex = 0; fdindex < norfds; ++fdindex) {
+			clifd = events[fdindex].data.fd;
+
+			if (events[fdindex].events & EPOLLHUP) /** connection closed by peer **/
+			{
+				/** terminate connection with client **/
+
+				printf("t[%lu]: EPOLLRDHUP\n", this->tid);
+				epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
+				close(clifd);
+			} else if (events[fdindex].events & EPOLLIN) /** read event **/
+			{
+				printf("t[%lu]: events[%d out of %d] = EPOLLIN\n", this->tid, fdindex, norfds - 1);
+
+				if (clifd == this->sock) /** new connection **/
+				{
+					printf("new connection!\n");
+					handle_new_connection(this);
+				} else {
+					bytesread = recv(clifd, this->buf.mem, this->buf.size, 0);
+					// printf("bytesread = %ld\n", bytesread);
+
+					if (bytesread < 0) {
+						perror("thread_routine::recv(EPOLLIN)");
+						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
+						close(clifd);
+						continue;
+					}
+
+					uint8_t *tbuf = this->buf.mem;
+
+					if (*tbuf == 0xFF) { // INIT_CONN_TYPE
+						if (client_version_check(clifd, this) < 0)
+							perror("thread_routine::client_version_check()");
+
+						continue;
+					}
+
+					s_tcp_req treq = s_tcp_req_init();
+
+					s_tcp_recv_req(this, clifd, treq);
+					s_tcp_print_req(treq);
+
+					// tebis_handle_request();
+				}
+			} else if (events[fdindex].events & EPOLLERR) /** error **/
+			{
+				printf("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
+				continue;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+static int spawn_workers(server_handle *sh, uint32_t workers)
+{
+	int32_t index;
+
+	if ((sh->workers[0].buf.mem = mmap(NULL, workers * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
+					   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
+		return -(EXIT_FAILURE);
+
+	for (index = 0; index < workers; ++index) {
+		sh->workers[index].sock = sh->sock;
+		sh->workers[index].epfd = sh->epfd;
+		sh->workers[index].buf.size = DEF_BUF_SIZE;
+		sh->workers[index].buf.mem = sh->workers[0].buf.mem + (index * DEF_BUF_SIZE);
+
+		if (pthread_create(&sh->workers[index].tid, NULL, thread_routine, sh->workers + index)) {
+			int32_t tmp;
+
+			for (tmp = 0; tmp < index; ++tmp)
+				pthread_cancel(sh->workers[tmp].tid);
+
+			for (tmp = 0; tmp < index; ++tmp)
+				pthread_join(sh->workers[tmp].tid, NULL);
+
+			munmap(sh->workers[0].buf.mem, workers * DEF_BUF_SIZE);
+
+			return -(EXIT_FAILURE);
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
+
+/*******************************************************************/
+
+int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict addr, unsigned short port,
+		 uint nothreads)
 {
 	if (!shandle || !addr) {
 		errno = EINVAL;
@@ -84,7 +319,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 	struct sockaddr_storage addrstore;
 	socklen_t addrlen;
 
-	if (afamily == AF_INET) // ipv4
+	if (afamily == AF_INET) /** IPv4 init() **/
 	{
 		if (inet_pton(afamily, addr, &(((struct sockaddr_in *)(&addrstore))->sin_addr)) != 1) {
 			errno = EINVAL;
@@ -95,7 +330,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 		((struct sockaddr_in *)(&addrstore))->sin_port = htons(port);
 
 		addrlen = sizeof(struct sockaddr_in);
-	} else if (afamily == AF_INET6) // ipv6
+	} else if (afamily == AF_INET6) /** IPv6 init() **/
 	{
 		if (inet_pton(afamily, addr, &(((struct sockaddr_in6 *)(&addrstore))->sin6_addr)) != 1) {
 			errno = EINVAL;
@@ -114,58 +349,42 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	/** END OF ERROR HANDLING **/
 
-	if (!(*shandle = malloc(sizeof(server_handle))))
+	if (!(*shandle = malloc(sizeof(server_handle) + (nothreads * sizeof(worker_t)))))
 		return -(EXIT_FAILURE);
 
 	server_handle *sh = *shandle;
 
-	sh->flags1 = MAGIC_INIT_NUM;
+	sh->workers = (worker_t *)((uint8_t *)(sh) + sizeof(server_handle));
+	sh->sock = -1;
+	sh->epfd = -1;
 
-	if (!(sh->buf.mem = malloc(DEF_BUF_SIZE))) {
-		free(*shandle);
-		return -(EXIT_FAILURE);
-	}
-
-	sh->buf.size = DEF_BUF_SIZE;
-
-	if ((sh->sockfd = socket(afamily, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {
-		free(sh->buf.mem);
-		free(*shandle);
-
-		return -(EXIT_FAILURE);
-	}
-
-	if (bind(sh->sockfd, (struct sockaddr *)(&addrstore), addrlen) < 0) {
-		close(sh->sockfd);
-		free(sh->buf.mem);
-		free(*shandle);
-
-		return -(EXIT_FAILURE);
-	}
-
-	if (listen(sh->sockfd, 10) < 0) {
-		close(sh->sockfd);
-		free(sh->buf.mem);
-		free(*shandle);
-
-		return -(EXIT_FAILURE);
-	}
-
-	struct sockaddr_storage client;
-
-	if ((sh->clientfd = accept4(sh->sockfd, (struct sockaddr *)(&client), &addrlen, SOCK_CLOEXEC)) <
-	    0) // user accept4()
+	if ((sh->sock = socket(afamily, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) < 0)
 		goto cleanup;
 
-	/** TODO: validate version with server (errno = ECONNREFUSED) */
+	if (bind(sh->sock, (struct sockaddr *)(&addrstore), addrlen) < 0)
+		goto cleanup;
 
-	sh->flags1 = MAGIC_INIT_NUM;
+	if (listen(sh->sock, MAX_LISTEN_CLIENTS) < 0)
+		goto cleanup;
+
+	if ((sh->epfd = epoll_create1(EPOLL_CLOEXEC)) < 0)
+		goto cleanup;
+
+	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = sh->sock };
+
+	if (epoll_ctl(sh->epfd, EPOLL_CTL_ADD, sh->sock, &epev) < 0)
+		goto cleanup;
+
+	if (spawn_workers(sh, nothreads) < 0)
+		goto cleanup;
+
+	sh->magic_init_num = MAGIC_INIT_NUM;
 
 	return EXIT_SUCCESS;
 
 cleanup:
-	close(sh->sockfd);
-	free(sh->buf.mem);
+	close(sh->sock);
+	close(sh->epfd);
 	free(*shandle);
 
 	return -(EXIT_FAILURE);
@@ -175,15 +394,16 @@ int shandle_destroy(sHandle shandle)
 {
 	server_handle *sh = shandle;
 
-	if (!shandle || sh->flags1 != MAGIC_INIT_NUM) {
+	if (!shandle || sh->magic_init_num != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	/** END OF ERROR HANDLING **/
 
-	close(sh->sockfd);
-	free(sh->buf.mem);
+	//
+
+	close(sh->sock);
 	free(shandle);
 
 	return EXIT_SUCCESS;
@@ -241,29 +461,35 @@ int s_tcp_req_destroy(s_tcp_req req)
 	return EXIT_SUCCESS;
 }
 
-int s_tcp_recv_req(sHandle restrict shandle, s_tcp_req restrict req)
+int s_tcp_rep_push_data(s_tcp_rep restrict rep, generic_data_t *restrict gdata)
 {
-	if (!shandle) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	server_handle *sh = shandle;
-
-	if (sh->flags1 != MAGIC_INIT_NUM) {
+	if (!rep || !gdata) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	/** END OF ERROR HANDLING **/
 
-	if (recv(sh->clientfd, sh->buf.mem, sh->buf.size, 0) < 0)
+	tcp_rep *trep = rep;
+
+	if (!(trep->datalist.tail->next = calloc(1UL, sizeof(*(trep->datalist.tail->next)))))
 		return -(EXIT_FAILURE);
 
+	trep->datalist.tail->next->data = *gdata;
+	trep->datalist.tail = trep->datalist.tail->next;
+
+	++trep->datalist.size;
+	trep->datalist.bytes += gdata->size;
+
+	return EXIT_SUCCESS;
+}
+
+int s_tcp_recv_req(worker_t *restrict worker, int clifd, s_tcp_req restrict req)
+{
 	tcp_req *treq = req; // tcp-request
 
-	treq->type = *((uint8_t *)(sh->buf.mem));
-	treq->nokvs = be64toh(*((uint64_t *)(sh->buf.mem + 1UL)));
+	treq->type = *((uint8_t *)(worker->buf.mem));
+	treq->nokvs = be64toh(*((uint64_t *)(worker->buf.mem + 1UL)));
 
 	if (treq->nokvs > treq->kvarray.size) {
 		void *tptr;
@@ -291,7 +517,7 @@ int s_tcp_recv_req(sHandle restrict shandle, s_tcp_req restrict req)
 	for (uint64_t i = 0UL, lim = treq->nokvs; i < lim; ++i) {
 		kv_t *tkv = treq->kvarray.kv + i;
 
-		tkv->key.size = be64toh(*((uint64_t *)(sh->buf.mem + sindex)));
+		tkv->key.size = be64toh(*((uint64_t *)(worker->buf.mem + sindex)));
 		sindex += sizeof(tkv->key.size);
 
 		/** TODO: replace all of these malloc()s with a single one, outside the loop */
@@ -299,64 +525,39 @@ int s_tcp_recv_req(sHandle restrict shandle, s_tcp_req restrict req)
 		if (!(tkv->key.data = malloc(tkv->key.size)))
 			return -(EXIT_FAILURE); // any error handling?
 
-		memcpy(tkv->key.data, sh->buf.mem + dindex, tkv->key.size);
+		memcpy(tkv->key.data, worker->buf.mem + dindex, tkv->key.size);
 		dindex += tkv->key.size;
 
 		if (!req_int_get_family(treq->type)) {
 			/** PUT family (put, put-if-ex) **/
 
-			tkv->value.size = be64toh(*((typeof(tkv->value.size) *)(sh->buf.mem + sindex)));
+			tkv->value.size = be64toh(*((typeof(tkv->value.size) *)(worker->buf.mem + sindex)));
 			sindex += sizeof(tkv->value.size);
 
 			if (!(tkv->value.data = malloc(tkv->value.size)))
 				return -(EXIT_FAILURE); // any error handling?
 
-			memcpy(tkv->value.data, sh->buf.mem + dindex, tkv->value.size);
+			memcpy(tkv->value.data, worker->buf.mem + dindex, tkv->value.size);
 			dindex += tkv->value.size;
 		}
 	}
 
-	return EXIT_SUCCESS;
-}
+	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = clifd };
 
-int s_tcp_rep_push_data(s_tcp_rep restrict rep, generic_data_t *restrict gdata)
-{
-	if (!rep || !gdata) {
-		errno = EINVAL;
+	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, clifd, &epev) < 0) {
+		perror("s_tcp_recv_req::epoll_ctl(MOD)");
 		return -(EXIT_FAILURE);
 	}
-
-	/** END OF ERROR HANDLING **/
-
-	tcp_rep *trep = rep;
-
-	if (!(trep->datalist.tail->next = calloc(1UL, sizeof(*(trep->datalist.tail->next)))))
-		return -(EXIT_FAILURE);
-
-	trep->datalist.tail->next->data = *gdata;
-	trep->datalist.tail = trep->datalist.tail->next;
-
-	++trep->datalist.size;
-	trep->datalist.bytes += gdata->size;
 
 	return EXIT_SUCCESS;
 }
 
-int s_tcp_send_rep(sHandle shandle, int8_t retcode, s_tcp_rep restrict rep)
+int s_tcp_send_rep(worker_t *restrict worker, int clifd, int8_t retcode, s_tcp_rep restrict rep)
 {
-	server_handle *sh = shandle;
-
-	if (!shandle || !rep || sh->flags1 != MAGIC_INIT_NUM) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
 	tcp_rep *trep = rep;
 
-	*((int8_t *)(sh->buf.mem)) = retcode;
-	*((uint64_t *)(sh->buf.mem + 1UL)) = htobe64(trep->datalist.size);
+	*((int8_t *)(worker->buf.mem)) = retcode;
+	*((uint64_t *)(worker->buf.mem + 1UL)) = htobe64(trep->datalist.size);
 
 	struct datalist_node *dtn; // data-node
 
@@ -364,39 +565,20 @@ int s_tcp_send_rep(sHandle shandle, int8_t retcode, s_tcp_rep restrict rep)
 	uint64_t dindex = sindex + (trep->datalist.size * sizeof(dtn->data.size)); // data-index
 
 	for (dtn = trep->datalist.head->next; dtn; dtn = dtn->next) {
-		*((uint64_t *)(sh->buf.mem + sindex)) = htobe64(dtn->data.size);
+		*((uint64_t *)(worker->buf.mem + sindex)) = htobe64(dtn->data.size);
 		sindex += sizeof(dtn->data.size);
 
-		memcpy(sh->buf.mem + dindex, dtn->data.data, dtn->data.size);
+		memcpy(worker->buf.mem + dindex, dtn->data.data, dtn->data.size);
 		dindex += dtn->data.size;
 	}
 
 	uint64_t tsz =
 		trep->datalist.bytes + (trep->datalist.size * sizeof(uint64_t)) + 1UL + sizeof(trep->datalist.size);
 
-	if (send(sh->clientfd, sh->buf.mem, tsz, 0) < 0)
+	if (send(clifd, worker->buf.mem, tsz, 0) < 0)
 		return -(EXIT_FAILURE);
 
 	return EXIT_SUCCESS;
-}
-
-static const char *printable_req(req_t type)
-{
-	switch (type) {
-	case REQ_GET:
-		return "REQ_GET";
-	case REQ_DEL:
-		return "REQ_DEL";
-	case REQ_EXISTS:
-		return "REQ_EXISTS";
-	case REQ_PUT:
-		return "REQ_PUT";
-	case REQ_PUT_IFEX:
-		return "REQ_PUT_IF_EX";
-
-	default:
-		return "wrong req-type";
-	}
 }
 
 void s_tcp_print_req(s_tcp_req req)

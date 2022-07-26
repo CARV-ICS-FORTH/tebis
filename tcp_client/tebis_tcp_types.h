@@ -30,6 +30,7 @@ typedef enum {
 /** buffer scheme: [1B type | 8B nokeys | size_t[] | payload[]] **/
 
 #define OPSNO 5U
+#define INIT_CONN_TYPE 0xFF
 
 	/** GET-request family **/
 
