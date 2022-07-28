@@ -238,7 +238,6 @@ static void *thread_routine(void *arg)
 					handle_new_connection(this);
 				} else {
 					bytesread = recv(clifd, this->buf.mem, this->buf.size, 0);
-					// printf("bytesread = %ld\n", bytesread);
 
 					if (bytesread < 0) {
 						perror("thread_routine::recv(EPOLLIN)");
@@ -256,12 +255,32 @@ static void *thread_routine(void *arg)
 						continue;
 					}
 
+
+					/* error_handling() */
+
 					s_tcp_req treq = s_tcp_req_init();
 
 					s_tcp_recv_req(this, clifd, treq);
 					s_tcp_print_req(treq);
 
-					// tebis_handle_request();
+					/* tebis_handle_request(); */
+
+					s_tcp_rep *rep = s_tcp_rep_init();
+					generic_data_t data = { .size = 10UL, .data = malloc(10UL)};
+
+					strcpy(data.data, "saloustros");
+
+					if (s_tcp_rep_push_data(rep, &data) < 0) {
+						perror("s_tcp_rep_push_data()");
+						/* abort_send_rep(); */
+						continue;
+					}
+
+					if (s_tcp_send_rep(this, clifd, 1, rep) < 0) {
+						perror("s_tcp_send_rep()");
+						/* abort_send_rep(); */
+						continue;
+					}
 				}
 			} else if (events[fdindex].events & EPOLLERR) /** error **/
 			{
@@ -382,7 +401,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-cleanup:
+	cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);

@@ -58,23 +58,23 @@ int main(int argc, char **argv)
 	strncpy(kv.value.data, "somedata|aaabbb", 15UL);
 
 	if (c_tcp_req_push_kv(req, &kv) < 0) {
-		print_debug("tcp_req_commit_data()");
+		print_debug("c_tcp_req_commit_data()");
 		exit(EXIT_FAILURE);
 	}
 
 	if (c_tcp_send_req(chandle, req) < 0) {
-		print_debug("tcp_recv_rep()");
+		print_debug("c_tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	/* generic_data_t *repbuf;
+	generic_data_t *repbuf;
 
 	if (c_tcp_recv_rep(chandle, rep, &repbuf) < 0) {
-		print_debug("tcp_recv_rep()");
+		print_debug("c_tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	c_tcp_print_repbuf(repbuf); */
+	c_tcp_print_repbuf(repbuf);
 	(void)getchar();
 	printf("terminating main()...\n");
 
