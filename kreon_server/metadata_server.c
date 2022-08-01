@@ -778,13 +778,14 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			struct krm_region_desc *t = krm_get_region(server, region->min_key, region->min_key_size);
 			/*set the callback and context for remote compaction*/
 			//log_info("Setting DB %s in replicated mode", t->db->db_desc->db_volume->volume_name);
-			bt_set_db_in_replicated_mode((struct db_handle *)t->db);
-			set_init_index_transfer((struct db_descriptor *)t->db, &rco_init_index_transfer);
-			set_destroy_local_rdma_buffer((struct db_descriptor *)t->db, &rco_destroy_local_rdma_buffer);
-			set_send_index_segment_to_replicas((struct db_descriptor *)t->db,
-							   &rco_send_index_segment_to_replicas);
-			bt_set_flush_replicated_logs_callback((struct db_descriptor *)t->db,
-							      rco_flush_last_log_segment);
+			// XXX TODO XXX @geostyl FIXME these functions are commented out, do we need them?
+			//bt_set_db_in_replicated_mode((struct db_handle *)t->db);
+			//set_init_index_transfer((struct db_descriptor *)t->db, &rco_init_index_transfer);
+			//set_destroy_local_rdma_buffer((struct db_descriptor *)t->db, &rco_destroy_local_rdma_buffer);
+			//set_send_index_segment_to_replicas((struct db_descriptor *)t->db,
+			//				   &rco_send_index_segment_to_replicas);
+			//bt_set_flush_replicated_logs_callback((struct db_descriptor *)t->db,
+			//				      rco_flush_last_log_segment);
 			rco_add_db_to_pool(server->compaction_pool, t);
 
 			reply.type = (msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_ACK_OPEN_PRIMARY :
@@ -1291,7 +1292,8 @@ void *krm_metadata_server(void *args)
 									   current->lr_state.region->min_key_size);
 				/*set the callback and context for remote compaction*/
 				//log_debug("Setting DB %s in replicated mode", t->db->db_desc->db_volume->volume_name);
-				bt_set_db_in_replicated_mode((struct db_handle *)t->db);
+				// XXX TODO XXX @geostyl FIXME, this functions are commented out, do we need them?
+				/*bt_set_db_in_replicated_mode((struct db_handle *)t->db);
 				set_init_index_transfer((struct db_descriptor *)t->db, &rco_init_index_transfer);
 				set_destroy_local_rdma_buffer((struct db_descriptor *)t->db,
 							      &rco_destroy_local_rdma_buffer);
@@ -1299,6 +1301,7 @@ void *krm_metadata_server(void *args)
 								   &rco_send_index_segment_to_replicas);
 				bt_set_flush_replicated_logs_callback((struct db_descriptor *)t->db,
 								      rco_flush_last_log_segment);
+				*/
 				rco_add_db_to_pool(my_desc->compaction_pool, t);
 			}
 			my_desc->state = KRM_WAITING_FOR_MSG;

@@ -81,7 +81,7 @@ struct rco_task {
 };
 
 static void *rco_compaction_worker(void *args);
-static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task);
+//static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task);
 
 static struct rco_db_map_entry *find_db_entry_in_db_map(uint64_t db_id)
 {
@@ -520,7 +520,7 @@ retry:
 	return 1;
 }
 
-int rco_send_index_to_group(struct bt_compaction_callback_args *c)
+/*int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 {
 	if (!globals_get_send_index()) {
 		log_info("ommiting");
@@ -570,7 +570,7 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 		log_fatal("Failed to init sem");
 		exit(EXIT_FAILURE);
 	}
-	/*fill connections*/
+	//fill connections
 	for (uint32_t i = 0; i < t->r_desc->region->num_of_backup; i++)
 		t->conn[i] = sc_get_compaction_conn(db_entry->pool->rco_server,
 						    t->r_desc->region->backups[i].kreon_ds_hostname);
@@ -581,6 +581,7 @@ int rco_send_index_to_group(struct bt_compaction_callback_args *c)
 	free(t);
 	return 1;
 }
+*/
 
 static void rco_send_index_to_replicas(struct rco_task *task)
 {
@@ -967,7 +968,7 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 	return pool;
 }
 
-static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task)
+/*static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task)
 {
 	int chosen_id;
 	pthread_mutex_lock(&pool->pool_lock);
@@ -991,7 +992,7 @@ static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compa
 	pthread_mutex_unlock(&pool->worker_queue[chosen_id].queue_lock);
 	return 1;
 }
-
+*/
 void rco_build_index(struct rco_build_index_task *task)
 {
 	struct rco_key {

@@ -368,7 +368,7 @@ struct rco_pool {
 #define RCO_POOL_SIZE 1
 struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size);
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
-int rco_send_index_to_group(struct bt_compaction_callback_args *c);
+//int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
 void di_set_cursor_buf(char *buf);
 
