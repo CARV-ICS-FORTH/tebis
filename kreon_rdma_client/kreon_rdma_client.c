@@ -166,8 +166,13 @@ static int krc_wait_for_message_reply(struct msg_header *req, struct connection_
 	return KREON_SUCCESS;
 }
 
-/** This function fills the fields of a request msg that relate to its reply
- *  request must know where its reply is at the recv circular buffer etc*/
+/**
+ * This function fills the fields of a request msg header, related to its reply
+ * request must know where its reply is at the recv circular buffer in order to be able to reply to that specific offset
+ * @param conn, rdma connection specific
+ * @param req, req msg header of the request to be fileld
+ * @param rep, the msg header of the reply
+ * */
 static void fill_request_msg(connection_rdma *conn, struct msg_header *req, struct msg_header *rep)
 {
 	/*inform the req about its buddy*/
@@ -219,10 +224,20 @@ static void send_no_op_operation(connection_rdma *conn)
 	client_free_rpc_pair(conn, no_op_reply);
 }
 
-/** Allocate a pair of buffers, one for the request and one for the reply. All messages are multiples of MESSAGE_SEGMENT_SIZE unit
- *  In case where server's recv circular buffer does no have enough space a NO_OP message is send, allocating
- *  the remaining space of the buffer. Client spins for a NO_OP_ACK.
- *  Function returns rep and req allocated in their corresponding circular buffers */
+//TODO create a struct with the parameters of this function
+/**
+ * Allocate a pair of buffers, one for the request and one for the reply. All messages are multiples of MESSAGE_SEGMENT_SIZE unit
+ * In case where server's recv circular buffer does no have enough space a NO_OP message is send, allocating
+ * the remaining space of the buffer and client spins for a NO_OP_ACK.
+ * Function returns rep and req allocated in their corresponding circular buffers
+ * @param conn, the rmda_connection specifics
+ * @param req, a reference to the request that must be allocated in the send circular buffer
+ * @param req_msg_type, the type of the request (eg.g PUT_REQ)
+ * @param req_size the size of the request
+ * @param rep, a reference to the reply that must be allocated in the recv circular buffer
+ * @param rep_msg_type the type of the reply (e.g. PUT_REPLY)
+ * @param rep_size, the size of the reply
+ * */
 static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
 			      int rep_msg_type, int rep_size)
 {
@@ -1056,9 +1071,15 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	}
 }
 
-/** This function fills the requests kv payload, that is key_size value_size key and value bufs
- *  These informations must be stored after the header of the request (req_header + sizeof(msg_header)
- *  kvs follow the [offt|lsn|key_size|value_size|tail|<key_size,key_buf,value_size,value_buf>|tail] format */
+/**
+ * This function fills the requests kv payload, which is the key_size, value_size, key and value bufs
+ * These informations must be stored after the header of the request (req_header + sizeof(msg_header))
+ * @param req_header, a pinter to the header of the request
+ * @param key_size, the size of the request's key
+ * @param value_Size, the size of the request's value
+ * @param key, the actual key data
+ * @param value, the actual value data
+ * kvs follow the [offt|lsn|key_size|value_size|tail|<key_size,key_buf,value_size,value_buf>|tail] format */
 static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t value_size, void *key, void *value)
 {
 	struct msg_put_kv *put_kv = (struct msg_put_kv *)((char *)req_header + sizeof(msg_header));
@@ -1085,11 +1106,14 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
 #endif
 }
 
-/** Function returning the message size of a put request*/
+/**
+ * Function returning the message size of a put request
+ * @param key_size is the size of the key to be inserted
+ * @param value_size is the size lf the value to be inserted
+ * the format of the put request is | off_t | lsn | key_size | value_size | tail | kv_payload | tail
+ * */
 uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
 {
-	/*put request format:
-	 * - <off_t, lsn, key_size, value_size, tail, kv_payload, tail>*/
 	uint32_t offt_size = sizeof(uint64_t);
 	uint32_t lsn_size = sizeof(uint32_t);
 	uint32_t tail_size = TU_TAIL_SIZE;
@@ -1097,6 +1121,7 @@ uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
 
 	return offt_size + lsn_size + 2 * sizeof(uint32_t) + tail_size + kv_payload_size + tail_size;
 }
+
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				      void *context, int is_update_if_exists)
 {
@@ -1182,7 +1207,12 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 	}
 	return false;
 }
-
+/**
+ * handle the reply of the request based on the request's type.
+ * Then zero the rendezvous location of the request & reply and free the rpc_pair from their circular buffers
+ * Also, free the request from the spinners private buffer
+ * @param req, the spinner's async request to be handled
+ * */
 static void reply_checker_handle_reply(struct krc_async_req *req)
 {
 	assert(req->request->session_id == req->reply->session_id);
@@ -1249,7 +1279,7 @@ static void *krc_reply_checker(void *args)
 
 	struct krc_async_req *curr_req = NULL;
 	while (!reply_checker_exit) {
-		/* find an empty place to put a request, if spinner does not find free space on a run
+		/* find an empty place to put a request, if spinner does not find free space in the buffer
 		 * he will wrap around */
 		for (int i = 0; i < UTILS_QUEUE_CAPACITY; ++i) {
 			/*possible req to be handled*/

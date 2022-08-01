@@ -1102,7 +1102,7 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
 /** Fills the replication fields of a put msg. Only put msgs need to be replicated.
  *  The space of these fields is preallocated from the client in order to have zero copy transfer
  *  from primaries to backups
- *  The replications fields are |lsg|log_offt|sizes_tail|payload_tail|*/
+ *  The replications fields are |lsn|log_offt|sizes_tail|payload_tail|*/
 /*XXX TODO XXX remove this variable and fill lsns from Parallax*/
 uint64_t current_lsn_ticket = 0;
 static void fill_replication_fields(struct msg_put_kv *put_msg)
