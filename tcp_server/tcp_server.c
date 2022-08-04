@@ -255,7 +255,6 @@ static void *thread_routine(void *arg)
 						continue;
 					}
 
-
 					/* error_handling() */
 
 					s_tcp_req treq = s_tcp_req_init();
@@ -266,7 +265,7 @@ static void *thread_routine(void *arg)
 					/* tebis_handle_request(); */
 
 					s_tcp_rep *rep = s_tcp_rep_init();
-					generic_data_t data = { .size = 10UL, .data = malloc(10UL)};
+					generic_data_t data = { .size = 10UL, .data = malloc(10UL) };
 
 					strcpy(data.data, "saloustros");
 
@@ -401,7 +400,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-	cleanup:
+cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);

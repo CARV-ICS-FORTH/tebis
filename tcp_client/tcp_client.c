@@ -72,7 +72,7 @@ typedef struct {
 	} ret_to_usr;
 
 	struct {
-		uint64_t size; // in bytes
+		uint64_t bytes;
 		void *mem;
 
 	} buf;
@@ -100,7 +100,7 @@ static int server_version_check(int ssock)
 {
 	uint8_t tbuf[5];
 
-	*tbuf = INIT_CONN_TYPE;
+	*tbuf = REQ_INIT_CONN;
 	*(tbuf + 1UL) = htobe32(TEBIS_TCP_VERSION);
 
 	send(ssock, tbuf, 5UL, 0);
@@ -136,6 +136,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 	ch->flags1 = MAGIC_INIT_NUM;
 	ch->flags2 = CLHF_SND_REQ;
+	// ch->buf.mem = (char *)(ch) + sizeof(client_handle);
 
 	// connect tothe server
 
@@ -172,8 +173,6 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 				close(ch->sock);
 				return -(EXIT_FAILURE);
 			}
-
-			printf("all good\n");
 
 			return EXIT_SUCCESS;
 		} else
@@ -278,7 +277,7 @@ c_tcp_rep c_tcp_rep_init(void)
 		return NULL;
 	}
 
-	trep->buf.size = DEF_BUF_SIZE;
+	trep->buf.bytes = DEF_BUF_SIZE;
 
 	return trep;
 }
@@ -345,14 +344,22 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 	uint64_t sindex; // sizes-index
 	uint64_t dindex; // data-index
 
-	sindex = 1UL + sizeof(treq->kvlist.nokvs); // put 'if( in put family )'
-	ch->buf.size = treq->kvlist.bytes + sindex + (treq->kvlist.nokvs * 2 * sizeof(uint64_t));
+	sindex = 1UL + sizeof(treq->kvlist.nokvs) + sizeof(treq->kvlist.bytes);
+	ch->buf.size = treq->kvlist.bytes + sindex;
+
+	printf("treq->type = %d\nbytes = %lu (list: %lu)\n", treq->type, ch->buf.size, treq->kvlist.bytes);
+
+	if (req_in_get_family(treq->type))
+		ch->buf.size += (treq->kvlist.nokvs * sizeof(uint64_t));
+	else /** PUT family **/
+		ch->buf.size += (treq->kvlist.nokvs * 2 * sizeof(uint64_t));
 
 	if (!(ch->buf.mem = calloc(1UL, ch->buf.size)))
 		return -(EXIT_FAILURE);
 
 	*((uint8_t *)(ch->buf.mem)) = treq->type;
 	*((uint64_t *)(ch->buf.mem + 1UL)) = htobe64(treq->kvlist.nokvs);
+	*((uint64_t *)(ch->buf.mem + 1UL + sizeof(treq->kvlist.nokvs))) = htobe64(ch->buf.size);
 
 	dindex = sindex;
 
@@ -388,6 +395,8 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 
 	treq->kvlist.head->next = NULL;
 	treq->kvlist.tail = treq->kvlist.head;
+
+	printf("send(%lu)\n", ch->buf.size);
 
 	if (send(ch->sock, ch->buf.mem, ch->buf.size, 0) < 0)
 		return -(EXIT_FAILURE);
@@ -450,7 +459,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 		index += sizeof(trep->ret_to_usr.payload->size);
 	}
 
-	if (tsz > trep->buf.size) // bytes not slots/cells
+	if (tsz > trep->buf.bytes) // bytes not slots/cells
 	{
 		free(trep->buf.mem);
 
@@ -459,7 +468,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 			return -(EXIT_FAILURE);
 		}
 
-		trep->buf.size = tsz;
+		trep->buf.bytes = tsz;
 	}
 
 	// copy network buffer in local buffer 'mem'
