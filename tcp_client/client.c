@@ -3,10 +3,95 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/random.h>
+
+typedef struct gbl_opts {
+
+	req_t rtype;
+
+	uint64_t noreqs;
+	uint64_t paysz;
+	uint64_t keysz;
+
+	int mode;
+} gbl_opts;
+
+#define req_in_get_family(rtype) ((rtype) <= REQ_EXISTS)
+
+void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restrict gopts)
+{
+	if ( argc < 2 )
+	{
+		printf("usage: client \e[3mreq-type noreqs payload-size key-size [mode]\e[0m\n");
+		exit(EXIT_FAILURE);
+	}
+
+	long tmp;
+
+	if ( !(tmp = strtol(argv[1], NULL, 10)) && errno == EINVAL )
+	{
+		printf("'\e[3mreq-type\e[0m' is not a valid number\n");
+		exit(EXIT_FAILURE);
+	}
+
+	gopts->rtype = tmp;
+
+	if ( !(tmp = strtol(argv[2], NULL, 10)) && errno == EINVAL )
+	{
+		printf("'\e[3mnoreqs\e[0m' is not a valid number\n");
+		exit(EXIT_FAILURE);
+	}
+
+	gopts->noreqs = tmp;
+
+	if ( !(tmp = strtol(argv[3], NULL, 10)) && errno == EINVAL )
+	{
+		printf("'\e[3mpayload-size\e[0m' is not a valid number\n");
+		exit(EXIT_FAILURE);
+	}
+
+	gopts->paysz = tmp;
+
+	if ( !(tmp = strtol(argv[4], NULL, 10)) && errno == EINVAL )
+	{
+		printf("'\e[3mkey-size\e[0m' is not a valid number\n");
+		exit(EXIT_FAILURE);
+	}
+
+	gopts->keysz = tmp;
+
+	if ( argc == 6 &&  !(tmp = strtol(argv[5], NULL, 10)) && errno == EINVAL )
+	{
+		// under construction...
+		printf("'\e[3mmode\e[0m' is not a valid number\n");
+		exit(EXIT_FAILURE);
+	}
+
+	gopts->mode = tmp;
+}
+
+int generate_random_gdata(generic_data_t *gdata, uint64_t size)
+{
+	if ( !(gdata->data = malloc(size)) )
+		return -(EXIT_FAILURE);
+
+	if ( getrandom(gdata->data, size, 0) < 0 )
+	{
+		perror("getrandom()");
+		return -(EXIT_FAILURE);
+	}
+
+	gdata->size = size;
+
+	return EXIT_SUCCESS;
+}
 
 int main(int argc, char **argv)
 {
+	gbl_opts gopts;
+
 	printf("this.process.pid = %d\n", getpid());
+	process_main_args(argc, argv, &gopts);
 
 	cHandle chandle;
 
@@ -18,7 +103,7 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	if (!(req = c_tcp_req_init(REQ_PUT))) {
+	if (!(req = c_tcp_req_init(gopts.rtype))) {
 		print_debug("tcp_req_init()");
 		exit(EXIT_FAILURE);
 	}
@@ -30,36 +115,26 @@ int main(int argc, char **argv)
 
 	kv_t kv;
 
-	kv.key.size = 10UL;
-	kv.key.data = malloc(10UL); // (0)*
+	generic_data_t key;
+	generic_data_t val;
 
-	strncpy(kv.key.data, "key123456.", 10UL);
+	for(uint64_t i = 0UL; i < gopts.noreqs; ++i)
+	{
+		generate_random_gdata(&key, gopts.keysz);
 
-	kv.value.size = 9UL;
-	kv.value.data = malloc(9UL); // (1)*
+		if ( !req_in_get_family(gopts.rtype) )
+			generate_random_gdata(&val, gopts.paysz);
 
-	bzero(kv.value.data, 9UL);
-	strncpy(kv.value.data, "somedata!", 9UL);
+		if (fill_req(&kv, req, &key, &val) < 0 )
+		{
+			print_debug("fill_req()");
+			exit(EXIT_FAILURE);
+		}
 
-	if (c_tcp_req_push_kv(req, &kv) < 0) {
-		print_debug("tcp_req_commit_data()");
-		exit(EXIT_FAILURE);
-	}
-
-	kv.key.size = 11UL;
-	kv.key.data = malloc(11UL); // previous pointer (0)* is lost
-
-	strncpy(kv.key.data, "key.98765..", 11UL);
-
-	kv.value.size = 15UL;
-	kv.value.data = malloc(15UL); // previous pointer (1)* is lost
-
-	bzero(kv.value.data, 15UL);
-	strncpy(kv.value.data, "somedata|aaabbb", 15UL);
-
-	if (c_tcp_req_push_kv(req, &kv) < 0) {
-		print_debug("c_tcp_req_commit_data()");
-		exit(EXIT_FAILURE);
+		if (c_tcp_req_push_kv(req, &kv) < 0) {
+			print_debug("tcp_req_commit_data()");
+			exit(EXIT_FAILURE);
+		}
 	}
 
 	if (c_tcp_send_req(chandle, req) < 0) {

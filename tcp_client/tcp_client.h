@@ -87,4 +87,6 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
  */
 int c_tcp_print_repbuf(generic_data_t *repbuf);
 
+int fill_req(kv_t *restrict kv, c_tcp_req restrict req, generic_data_t *restrict key, generic_data_t *restrict value);
+
 #endif /** TEBIS_TCP_CLIENT_H **/

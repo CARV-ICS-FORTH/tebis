@@ -27,9 +27,9 @@ typedef struct {
 
 typedef enum {
 
-/** buffer scheme: [1B type | 8B nokeys | size_t[] | payload[]] **/
+/** buffer scheme: [1B type | 8B nokeys | 8B tsize | size_t[] | payload[]] **/
 
-#define OPSNO 5U
+	#define OPSNO 5U
 
 	/** GET-request family **/
 
@@ -40,7 +40,9 @@ typedef enum {
 	/** PUT-request family **/
 
 	REQ_PUT,
-	REQ_PUT_IFEX
+	REQ_PUT_IFEX,
+
+	REQ_INIT_CONN = 0xFF
 
 } req_t;
 

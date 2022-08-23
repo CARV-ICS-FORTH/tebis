@@ -20,12 +20,13 @@
 
 #define TEBIS_TCP_PORT 25565 // Minecraft's port
 
+
 typedef struct {
 	uint16_t flags1;
 	uint16_t flags2;
 
-#define MAGIC_INIT_NUM (0xCAFE)
-#define CLHF_SND_REQ (1 << 0)
+	#define MAGIC_INIT_NUM (0xCAFE)
+	#define CLHF_SND_REQ (1 << 0)
 
 	int sock;
 
@@ -104,13 +105,16 @@ static int server_version_check(int ssock)
 	*(tbuf + 1UL) = htobe32(TEBIS_TCP_VERSION);
 
 	send(ssock, tbuf, 5UL, 0);
-
+	
 	int64_t ret = recv(ssock, tbuf, 4UL, 0);
 
-	if (ret < 0) {
+	if ( ret < 0 )
+	{
 		perror("server_version_check::recv()");
 		return -(EXIT_FAILURE);
-	} else if (!ret) {
+	}
+	else if ( !ret )
+	{
 		fprintf(stderr, "server has shutdown!\n");
 		return -(EXIT_FAILURE);
 	}
@@ -167,9 +171,11 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		}
 
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
+			
 			freeaddrinfo(res);
 
-			if (server_version_check(ch->sock) < 0) {
+			if ( server_version_check(ch->sock) < 0 )
+			{
 				close(ch->sock);
 				return -(EXIT_FAILURE);
 			}
@@ -204,7 +210,7 @@ int chandle_destroy(cHandle chandle)
 
 c_tcp_req c_tcp_req_init(req_t rt)
 {
-	if ((uint32_t)(rt) >= 6) {
+	if ((uint32_t)(rt) >= 6U) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -349,9 +355,9 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 
 	printf("treq->type = %d\nbytes = %lu (list: %lu)\n", treq->type, ch->buf.size, treq->kvlist.bytes);
 
-	if (req_in_get_family(treq->type))
+	if ( req_in_get_family(treq->type))
 		ch->buf.size += (treq->kvlist.nokvs * sizeof(uint64_t));
-	else /** PUT family **/
+	else  /** PUT family **/
 		ch->buf.size += (treq->kvlist.nokvs * 2 * sizeof(uint64_t));
 
 	if (!(ch->buf.mem = calloc(1UL, ch->buf.size)))
@@ -425,7 +431,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 
 	ssize_t ret;
 
-	if ((ret = recv(ch->sock, ch->buf.mem, 1024UL, 0)) < 0)
+	if ((ret = recv(ch->sock, ch->buf.mem, DEF_BUF_SIZE, 0)) < 0)
 		return -(EXIT_FAILURE);
 
 	tcp_rep *trep = rep;
@@ -508,6 +514,51 @@ int c_tcp_print_repbuf(generic_data_t *repbuf)
 		printf("  - data = %s\n\n", (char *)(repbuf->data));
 
 		++repbuf;
+	}
+
+	return EXIT_SUCCESS;
+}
+
+int fill_req(kv_t *restrict kv, c_tcp_req restrict req, generic_data_t *restrict key, generic_data_t *restrict val)
+{
+	if ( !kv || !req || !key )
+	{
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	/** END OF ERROR HANDLING **/
+
+	tcp_req * treq = req;
+	size_t tsz;
+
+	kv->key.size = key->size;
+
+	if ( req_in_get_family(treq->type) )
+	{
+		kv->value.size = 0UL;
+		tsz = key->size;
+	}
+	else
+	{
+		kv->value.size = val->size;
+		tsz = key->size + val->size;
+	}
+
+	void * tptr = malloc(tsz);
+
+	if ( !tptr )
+		return -(EXIT_FAILURE);
+
+	kv->key.data = tptr;
+	memcpy(kv->key.data, key->data, key->size);
+
+	if ( req_in_get_family(treq->type))
+		kv->value.data = NULL;
+	else
+	{
+		kv->value.data = tptr + key->size;
+		memcpy(kv->value.data, val->data, val->size);
 	}
 
 	return EXIT_SUCCESS;
