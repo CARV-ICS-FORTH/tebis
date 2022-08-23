@@ -2,11 +2,10 @@
 #include "tebis_tcp_errors.h"
 
 #include <stdlib.h>
-#include <unistd.h>
 #include <sys/random.h>
+#include <unistd.h>
 
 typedef struct gbl_opts {
-
 	req_t rtype;
 
 	uint64_t noreqs;
@@ -20,48 +19,42 @@ typedef struct gbl_opts {
 
 void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restrict gopts)
 {
-	if ( argc < 2 )
-	{
+	if (argc < 2) {
 		printf("usage: client \e[3mreq-type noreqs payload-size key-size [mode]\e[0m\n");
 		exit(EXIT_FAILURE);
 	}
 
 	long tmp;
 
-	if ( !(tmp = strtol(argv[1], NULL, 10)) && errno == EINVAL )
-	{
+	if (!(tmp = strtol(argv[1], NULL, 10)) && errno == EINVAL) {
 		printf("'\e[3mreq-type\e[0m' is not a valid number\n");
 		exit(EXIT_FAILURE);
 	}
 
 	gopts->rtype = tmp;
 
-	if ( !(tmp = strtol(argv[2], NULL, 10)) && errno == EINVAL )
-	{
+	if (!(tmp = strtol(argv[2], NULL, 10)) && errno == EINVAL) {
 		printf("'\e[3mnoreqs\e[0m' is not a valid number\n");
 		exit(EXIT_FAILURE);
 	}
 
 	gopts->noreqs = tmp;
 
-	if ( !(tmp = strtol(argv[3], NULL, 10)) && errno == EINVAL )
-	{
+	if (!(tmp = strtol(argv[3], NULL, 10)) && errno == EINVAL) {
 		printf("'\e[3mpayload-size\e[0m' is not a valid number\n");
 		exit(EXIT_FAILURE);
 	}
 
 	gopts->paysz = tmp;
 
-	if ( !(tmp = strtol(argv[4], NULL, 10)) && errno == EINVAL )
-	{
+	if (!(tmp = strtol(argv[4], NULL, 10)) && errno == EINVAL) {
 		printf("'\e[3mkey-size\e[0m' is not a valid number\n");
 		exit(EXIT_FAILURE);
 	}
 
 	gopts->keysz = tmp;
 
-	if ( argc == 6 &&  !(tmp = strtol(argv[5], NULL, 10)) && errno == EINVAL )
-	{
+	if (argc == 6 && !(tmp = strtol(argv[5], NULL, 10)) && errno == EINVAL) {
 		// under construction...
 		printf("'\e[3mmode\e[0m' is not a valid number\n");
 		exit(EXIT_FAILURE);
@@ -72,11 +65,10 @@ void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restri
 
 int generate_random_gdata(generic_data_t *gdata, uint64_t size)
 {
-	if ( !(gdata->data = malloc(size)) )
+	if (!(gdata->data = malloc(size)))
 		return -(EXIT_FAILURE);
 
-	if ( getrandom(gdata->data, size, 0) < 0 )
-	{
+	if (getrandom(gdata->data, size, 0) < 0) {
 		perror("getrandom()");
 		return -(EXIT_FAILURE);
 	}
@@ -118,15 +110,13 @@ int main(int argc, char **argv)
 	generic_data_t key;
 	generic_data_t val;
 
-	for(uint64_t i = 0UL; i < gopts.noreqs; ++i)
-	{
+	for (uint64_t i = 0UL; i < gopts.noreqs; ++i) {
 		generate_random_gdata(&key, gopts.keysz);
 
-		if ( !req_in_get_family(gopts.rtype) )
+		if (!req_in_get_family(gopts.rtype))
 			generate_random_gdata(&val, gopts.paysz);
 
-		if (fill_req(&kv, req, &key, &val) < 0 )
-		{
+		if (fill_req(&kv, req, &key, &val) < 0) {
 			print_debug("fill_req()");
 			exit(EXIT_FAILURE);
 		}

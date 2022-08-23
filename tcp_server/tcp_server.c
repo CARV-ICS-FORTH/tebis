@@ -82,7 +82,7 @@ typedef struct {
 
 #define req_in_get_family(req) ((req->type) <= REQ_EXISTS)
 #define is_req_init_conn_type(req) ((req->type) == REQ_INIT_CONN)
-#define is_req_invalid(req) ( (uint32_t)((req->type)) > REQ_PUT_IFEX )
+#define is_req_invalid(req) ((uint32_t)((req->type)) > REQ_PUT_IFEX)
 #define MAX_LISTEN_CLIENTS 512
 #define BUFHDR_SIZE 17UL
 
@@ -123,13 +123,11 @@ static int client_version_check(int clifd, worker_t *worker)
 	uint32_t version = be32toh(*((uint8_t *)(worker->buf.mem) + 1UL));
 
 	if (version != TEBIS_TCP_VERSION) {
-
 		errno = ECONNREFUSED;
 		return -(EXIT_FAILURE);
 	}
 
 	if (send(clifd, &version, sizeof(version), 0) < 0) {
-
 		perror("client_version_check::send()\n");
 
 		errno = ECONNABORTED;
@@ -203,7 +201,6 @@ static void *thread_routine(void *arg)
 	// push cleanup function (like at_exit())
 
 	for (;;) {
-
 		struct epoll_event events[EPOLL_MAX_EVENTS];
 		struct epoll_event epev;
 
@@ -243,9 +240,9 @@ static void *thread_routine(void *arg)
 
 					tmp = get_req_hdr(this, clifd, req);
 
-					if ( tmp < 0 )  /** errors **/
+					if (tmp < 0) /** errors **/
 					{
-						if ( tmp == CONN_CLOSED )
+						if (tmp == CONN_CLOSED)
 							printf("conenction was closed by peer\n");
 						else
 							perror("thread_routine::get_req_hdr()");
@@ -257,25 +254,25 @@ static void *thread_routine(void *arg)
 					}
 
 					if (is_req_init_conn_type(req)) {
-
-						if ( client_version_check(clifd, this) < 0 ){
+						if (client_version_check(clifd, this) < 0) {
 							perror("thread_routine::client_version_check()");
-							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL);  // kernel 2.6+
+							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
+								  NULL); // kernel 2.6+
 							close(clifd);
 						}
 
 						continue;
 					}
 
-					if (is_req_invalid(req))
-					{
+					if (is_req_invalid(req)) {
 						printf("\e[91minvalid request\e[0m\n");
 
 						/** TODO: send() error code + discard receive buffer */
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL);
 						close(clifd);
-						continue;;
+						continue;
+						;
 					}
 
 					tcp_recv_req(this, clifd, req);
@@ -286,17 +283,13 @@ static void *thread_routine(void *arg)
 
 					/* tebis_handle_request(); */
 
-					for (int i = 0; i < 2; ++i)
-					{
-						if (i)
-						{
+					for (int i = 0; i < 2; ++i) {
+						if (i) {
 							gdata.data = malloc(7UL);
 							gdata.size = 7UL;
 
 							strcpy(gdata.data, "giorgos");
-						}
-						else
-						{
+						} else {
 							gdata.data = malloc(10UL);
 							gdata.size = 10UL;
 
@@ -436,7 +429,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-	cleanup:
+cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);
@@ -553,8 +546,7 @@ static int tcp_recv_req(worker_t *restrict worker, int clifd, tcp_req *restrict 
 		req->kvarray.kv = tptr;
 	}
 
-	if ( recv(clifd, worker->buf.mem, req->bytes, 0) < 0 )
-	{
+	if (recv(clifd, worker->buf.mem, req->bytes, 0) < 0) {
 		perror("tcp_recv_req::read()");
 		epoll_ctl(worker->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 		close(clifd);
@@ -569,19 +561,18 @@ static int tcp_recv_req(worker_t *restrict worker, int clifd, tcp_req *restrict 
 		return -(EXIT_FAILURE);
 	}
 
-	uint64_t sindex;  // sizes index
-	uint64_t dindex;  // data index
+	uint64_t sindex; // sizes index
+	uint64_t dindex; // data index
 	uint64_t iter;
 
 	/** read sizes **/
 
-	if ( req_in_get_family(req) )
+	if (req_in_get_family(req))
 		dindex = req->nokvs * sizeof(uint64_t);
-	else  /** PUT family **/
+	else /** PUT family **/
 		dindex = req->nokvs * (sizeof(uint64_t) + sizeof(uint64_t));
 
-	for (sindex = iter = 0UL; iter < req->nokvs; ++iter)
-	{
+	for (sindex = iter = 0UL; iter < req->nokvs; ++iter) {
 		kv_t *tkv = req->kvarray.kv + iter;
 
 		tkv->key.size = be64toh(*((uint64_t *)(worker->buf.mem + sindex)));
@@ -596,7 +587,6 @@ static int tcp_recv_req(worker_t *restrict worker, int clifd, tcp_req *restrict 
 		dindex += tkv->key.size;
 
 		if (!req_in_get_family(req)) {
-
 			/** PUT family (put, put-if-ex) **/
 
 			tkv->value.size = be64toh(*((uint64_t *)(worker->buf.mem + sindex)));
@@ -620,17 +610,15 @@ static int get_req_hdr(worker_t *restrict worker, int clifd, tcp_req *restrict r
 	if ((ret = recv(clifd, worker->buf.mem, BUFHDR_SIZE, 0)) < 0)
 		return -(EXIT_FAILURE);
 
-	if ( !ret )
+	if (!ret)
 		return CONN_CLOSED;
 
 	req->type = *((uint8_t *)(worker->buf.mem));
 
-	if (req->type != REQ_INIT_CONN){
-
+	if (req->type != REQ_INIT_CONN) {
 		req->nokvs = be64toh(*((uint64_t *)(worker->buf.mem + 1UL)));
 		req->bytes = be64toh(*((uint64_t *)(worker->buf.mem + 9UL)));
-	}
-	else{
+	} else {
 		req->nokvs = 0UL;
 		req->bytes = 0UL;
 	}
@@ -680,7 +668,7 @@ void s_tcp_print_req(s_tcp_req req)
 	for (uint64_t i = 0UL, lim = treq->nokvs; i < lim; ++i) {
 		printf("  - key.size = %lu (0x%lx)\n", arr[i].key.size, *((uint64_t *)(arr[i].key.data)));
 
-		if ( !req_in_get_family(treq))
+		if (!req_in_get_family(treq))
 			printf("  - val.size = %lu (0x%lx)\n\n", arr[i].value.size, *((uint64_t *)(arr[i].value.data)));
 	}
 }

@@ -29,7 +29,7 @@ typedef enum {
 
 /** buffer scheme: [1B type | 8B nokeys | 8B tsize | size_t[] | payload[]] **/
 
-	#define OPSNO 5U
+#define OPSNO 5U
 
 	/** GET-request family **/
 

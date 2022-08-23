@@ -18,7 +18,7 @@ int main(int argc, char **argv)
 
 	pause();
 
-/* 	s_tcp_req *req;
+	/* 	s_tcp_req *req;
 
 	if (!(req = s_tcp_req_init())) {
 		print_debug("s_tcp_req_init()");
