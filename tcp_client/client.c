@@ -63,17 +63,12 @@ void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restri
 	gopts->mode = tmp;
 }
 
-int generate_random_gdata(generic_data_t *gdata, uint64_t size)
+int generate_random_gdata(void *ptr, uint64_t size)
 {
-	if (!(gdata->data = malloc(size)))
-		return -(EXIT_FAILURE);
-
-	if (getrandom(gdata->data, size, 0) < 0) {
+	if (getrandom(ptr, size, 0) < 0) {
 		perror("getrandom()");
-		return -(EXIT_FAILURE);
+		exit(EXIT_FAILURE);
 	}
-
-	gdata->size = size;
 
 	return EXIT_SUCCESS;
 }
@@ -87,60 +82,53 @@ int main(int argc, char **argv)
 
 	cHandle chandle;
 
-	c_tcp_req req;
-	c_tcp_rep rep;
-
 	if (chandle_init(&chandle, "localhost", "25565") < 0) {
 		print_debug("chandle_init()");
 		exit(EXIT_FAILURE);
 	}
 
-	if (!(req = c_tcp_req_init(gopts.rtype))) {
-		print_debug("tcp_req_init()");
-		exit(EXIT_FAILURE);
-	}
-
-	if (!(rep = c_tcp_rep_init())) {
-		print_debug("tcp_rep_init()");
-		exit(EXIT_FAILURE);
-	}
-
 	kv_t kv;
 
-	generic_data_t key;
-	generic_data_t val;
+	generic_data_t key = { .size = gopts.keysz };
+	generic_data_t val = { .size = gopts.paysz };
+
+	c_tcp_req_set_type(chandle, gopts.rtype);
 
 	for (uint64_t i = 0UL; i < gopts.noreqs; ++i) {
-		generate_random_gdata(&key, gopts.keysz);
+		key.data = malloc(gopts.keysz);
+		generate_random_gdata(key.data, gopts.keysz);
 
-		if (!req_in_get_family(gopts.rtype))
-			generate_random_gdata(&val, gopts.paysz);
-
-		if (fill_req(&kv, req, &key, &val) < 0) {
-			print_debug("fill_req()");
-			exit(EXIT_FAILURE);
+		if (!req_in_get_family(gopts.rtype)) {
+			val.data = malloc(gopts.paysz);
+			generate_random_gdata(val.data, gopts.paysz);
 		}
 
-		if (c_tcp_req_push_kv(req, &kv) < 0) {
-			print_debug("tcp_req_commit_data()");
+		if (c_tcp_req_push(chandle, &key, &val) < 0) {
+			print_debug("c_tcp_req_pust()");
 			exit(EXIT_FAILURE);
 		}
 	}
 
-	if (c_tcp_send_req(chandle, req) < 0) {
+	if (c_tcp_send_req(chandle) < 0) {
 		print_debug("c_tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	generic_data_t *repbuf;
+	struct tcp_rep *reparr;
 
-	if (c_tcp_recv_rep(chandle, rep, &repbuf) < 0) {
+	if (c_tcp_recv_rep(chandle) < 0)
 		print_debug("c_tcp_recv_rep()");
-		exit(EXIT_FAILURE);
-	}
 
-	c_tcp_print_repbuf(repbuf);
-	(void)getchar();
+	if (c_tcp_get_rep_array(chandle, &reparr) < 0)
+		print_debug("c_tcp_get_rep_array()");
+
+	if (c_tcp_print_replies(chandle) < 0)
+		print_debug("c_tcp_print_replies()");
+
+	free(key.data);
+	free(val.data);
+
+	c_tcp_print_replies(chandle);
 	printf("terminating main()...\n");
 
 	return EXIT_SUCCESS;

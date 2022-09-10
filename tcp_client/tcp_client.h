@@ -4,7 +4,13 @@
 #include "tebis_tcp_types.h"
 
 typedef void *c_tcp_req;
-typedef void *c_tcp_rep;
+
+/** TODO: embed 8-bit 'retc' inside payload->data pointer */
+
+struct tcp_rep {
+	int8_t retc; // return code
+	generic_data_t payload;
+};
 
 typedef void *cHandle;
 
@@ -21,36 +27,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
  */
 int chandle_destroy(cHandle chandle);
 
-/**
- * @brief
- *
- * @param rt
- * @return c_tcp_req
- */
-c_tcp_req c_tcp_req_init(req_t rt);
-
-/**
- * @brief
- *
- * @param req
- * @return int
- */
-int c_tcp_req_destroy(c_tcp_req req);
-
-/**
- * @brief
- *
- * @return c_tcp_rep
- */
-c_tcp_rep c_tcp_rep_init(void);
-
-/**
- * @brief
- *
- * @param rep
- * @return int
- */
-int c_tcp_rep_destroy(c_tcp_rep rep);
+int c_tcp_req_set_type(cHandle chandle, req_t rtype);
 
 /**
  * @brief
@@ -59,7 +36,7 @@ int c_tcp_rep_destroy(c_tcp_rep rep);
  * @param kv
  * @return int
  */
-int c_tcp_req_push_kv(c_tcp_req restrict req, kv_t *restrict kv);
+int c_tcp_req_push(cHandle chandle, generic_data_t *restrict key, generic_data_t *restrict value);
 
 /**
  * @brief
@@ -68,7 +45,7 @@ int c_tcp_req_push_kv(c_tcp_req restrict req, kv_t *restrict kv);
  * @param req
  * @return int
  */
-int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req);
+int c_tcp_send_req(cHandle chandle);
 
 /**
  * @brief
@@ -77,7 +54,9 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req);
  * @param rep
  * @return ssize_t
  */
-int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_data_t *restrict *restrict repbuf);
+int c_tcp_recv_rep(cHandle chandle);
+
+int c_tcp_get_rep_array(cHandle restrict chandle, struct tcp_rep *restrict *restrict rep);
 
 /**
  * @brief
@@ -85,8 +64,6 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
  * @param repbuf
  * @return int
  */
-int c_tcp_print_repbuf(generic_data_t *repbuf);
-
-int fill_req(kv_t *restrict kv, c_tcp_req restrict req, generic_data_t *restrict key, generic_data_t *restrict value);
+int c_tcp_print_replies(cHandle chandle);
 
 #endif /** TEBIS_TCP_CLIENT_H **/

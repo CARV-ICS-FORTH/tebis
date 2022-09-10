@@ -1,8 +1,4 @@
-/** TODO: free list ---> tcp_req_destroy() */
-/** TODO: replace list with array-list ---> tcp_req_push_kv() */
-/** TODO: validate version with server ---> chandle_init() */
-/** TODO: check if req/rep struct is initialized, using MAGIC num */
-/** TODO: make a retcode parser function */
+/** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling */
 
 #include "tcp_client.h"
 #include "tebis_tcp_errors.h"
@@ -15,34 +11,35 @@
 #include <string.h>
 #include <unistd.h>
 
-// #include <sys/mman.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 
 #define TEBIS_TCP_PORT 25565 // Minecraft's port
-
-typedef struct {
-	uint16_t flags1;
-	uint16_t flags2;
-
-#define MAGIC_INIT_NUM (0xCAFE)
-#define CLHF_SND_REQ (1 << 0)
-
-	int sock;
-
-	struct {
-		uint64_t size;
-		char *mem;
-
-	} buf;
-
-} client_handle;
+#define REPBUF_HDR_SIZE 16UL
+#define DEF_REP_SLOTS 4UL
 
 struct kvlist_node {
 	kv_t kv;
 	struct kvlist_node *next;
 };
 
-typedef struct {
+struct buffer {
+	uint64_t bytes;
+	void *mem;
+};
+
+struct internal_tcp_rep {
+	uint64_t nokvs; // number of kv's
+
+	uint64_t slots;
+	struct tcp_rep *replies;
+
+	struct buffer rep_data;
+	struct buffer net_buf;
+};
+
+struct internal_tcp_req {
 	req_t type;
 
 	struct {
@@ -54,45 +51,33 @@ typedef struct {
 
 	} kvlist;
 
-	uint32_t flags;
-	uint64_t pad[2]; // future use: options
-
-} tcp_req;
-
-typedef struct {
-	int8_t retc;
-
-	uint64_t nokvs;
-
-	struct { // only data visible to user
-
-		uint64_t size;
-		generic_data_t *payload;
-
-	} ret_to_usr;
-
 	struct {
 		uint64_t bytes;
 		void *mem;
-
 	} buf;
 
-} tcp_rep;
+	uint32_t flags;
+};
+
+struct client_handle {
+	uint16_t flags1;
+	uint16_t flags2;
+
+#define MAGIC_INIT_NUM (0xCAFE)
+#define CLHF_SND_REQ (1 << 0)
+
+	int sock;
+
+	struct internal_tcp_rep reply;
+	struct internal_tcp_req request;
+};
 
 /*******************************************************************/
 
-#include <stdio.h>
+#include <stdio.h> // debug
 
-#define check_result(ret) check_result_func(ret, __LINE__) // debug-only, not release
 #define req_in_get_family(rtype) (rtype <= REQ_EXISTS)
-
-void check_result_func(int64_t ret, int line)
-{
-	if (ret < 0LL) {
-		fprintf(stderr, "[%d] %s: %s (%d)\n", line, "failure occured", strerror(errno), errno);
-		exit(EXIT_FAILURE);
-	}
-}
+#define is_req_invalid(req) ((uint32_t)((req->type)) >= OPSNO)
 
 /*****************************************************************************/
 
@@ -103,19 +88,76 @@ static int server_version_check(int ssock)
 	*tbuf = REQ_INIT_CONN;
 	*(tbuf + 1UL) = htobe32(TEBIS_TCP_VERSION);
 
-	send(ssock, tbuf, 5UL, 0);
+	if (send(ssock, tbuf, 5UL, 0) < 0) {
+		dprint("send()");
+		return -(EXIT_FAILURE);
+	}
 
 	int64_t ret = recv(ssock, tbuf, 4UL, 0);
 
 	if (ret < 0) {
-		perror("server_version_check::recv()");
+		dprint("recv()");
 		return -(EXIT_FAILURE);
 	} else if (!ret) {
-		fprintf(stderr, "server has shutdown!\n");
+		fprintf(stderr, "server has been shut down!\n");
 		return -(EXIT_FAILURE);
 	}
 
 	printf("TEBIS_SERVER_VERSION: 0x%x\n", *((uint32_t *)(tbuf)));
+
+	return EXIT_SUCCESS;
+}
+
+static int chandle_init_reply(cHandle chandle)
+{
+	struct client_handle *ch = chandle;
+	void *mem;
+
+	if ((mem = mmap(NULL, DEF_BUF_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) ==
+	    MAP_FAILED) {
+		dprint("mmap()");
+		return -(EXIT_FAILURE);
+	}
+
+	ch->reply.net_buf.mem = mem;
+	ch->reply.net_buf.bytes = DEF_BUF_SIZE;
+
+	if (!(mem = calloc(DEF_REP_SLOTS, sizeof(*ch->reply.replies)))) {
+		munmap(ch->reply.net_buf.mem, DEF_BUF_SIZE);
+		dprint("calloc()");
+
+		return -(EXIT_FAILURE);
+	}
+
+	ch->reply.replies = mem;
+	ch->reply.slots = DEF_REP_SLOTS;
+	ch->reply.nokvs = 0UL;
+	ch->reply.rep_data.bytes = 0UL;
+	ch->reply.rep_data.mem = NULL;
+
+	return EXIT_SUCCESS;
+}
+
+static int chandle_init_request(cHandle chandle)
+{
+	struct client_handle *ch = chandle;
+
+	if (!(ch->request.kvlist.head = calloc(1UL, sizeof(struct kvlist_node)))) // dummy node
+	{
+		dprint("calloc()");
+		return -(EXIT_FAILURE);
+	}
+
+	ch->request.kvlist.nokvs = 0UL;
+	ch->request.kvlist.bytes = 0UL;
+	ch->request.kvlist.tail = ch->request.kvlist.head; // dummy node
+
+	if (!(ch->request.buf.mem = malloc(DEF_BUF_SIZE))) {
+		dprint("malloc()");
+		return -(EXIT_FAILURE);
+	}
+
+	ch->request.buf.bytes = DEF_BUF_SIZE;
 
 	return EXIT_SUCCESS;
 }
@@ -127,18 +169,27 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		return -(EXIT_FAILURE);
 	}
 
-	if (!(*chandle = malloc(sizeof(client_handle))))
+	if (!(*chandle = malloc(sizeof(struct client_handle)))) {
+		dprint("malloc()");
 		return -(EXIT_FAILURE);
+	}
 
 	/** END OF ERROR HANDLING **/
 
-	client_handle *ch = *chandle;
+	struct client_handle *ch = *chandle;
 
-	ch->flags1 = MAGIC_INIT_NUM;
+	ch->flags1 = 0U;
 	ch->flags2 = CLHF_SND_REQ;
-	// ch->buf.mem = (char *)(ch) + sizeof(client_handle);
 
-	// connect tothe server
+	if (chandle_init_reply(*chandle) < 0) {
+		dprint("chandle_init_reply()");
+		return -(EXIT_FAILURE);
+	}
+
+	if (chandle_init_request(*chandle) < 0) {
+		dprint("chandle_init_request()");
+		return -(EXIT_FAILURE);
+	}
 
 	int retc;
 
@@ -163,7 +214,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	for (rp = res; rp; rp = rp->ai_next) {
 		if ((ch->sock = socket(rp->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {
 			print_debug("socket()");
-			return -(EXIT_FAILURE); // return or try next one?
+			continue;
 		}
 
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
@@ -171,9 +222,10 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 			if (server_version_check(ch->sock) < 0) {
 				close(ch->sock);
-				return -(EXIT_FAILURE);
+				continue;
 			}
 
+			ch->flags1 = MAGIC_INIT_NUM;
 			return EXIT_SUCCESS;
 		} else
 			close(ch->sock);
@@ -181,143 +233,77 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 	freeaddrinfo(res);
 
+	errno = ECONNREFUSED;
 	return -(EXIT_FAILURE); // set errno ?
 }
 
-int chandle_destroy(cHandle chandle)
+int c_tcp_req_set_type(cHandle chandle, req_t rtype)
 {
 	if (!chandle) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
+	struct client_handle *ch = chandle;
+
+	if ((ch->flags1 != MAGIC_INIT_NUM) || is_req_invalid((&ch->request))) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
 	/** END OF ERROR HANDLING **/
 
-	client_handle *ch = chandle;
-
-	close(ch->sock);
-	free(ch->buf.mem);
-	free(ch);
+	ch->request.type = rtype;
 
 	return EXIT_SUCCESS;
 }
 
-c_tcp_req c_tcp_req_init(req_t rt)
+int c_tcp_req_push(cHandle chandle, generic_data_t *restrict key, generic_data_t *restrict value)
 {
-	if ((uint32_t)(rt) >= 6U) {
-		errno = EINVAL;
-		return NULL;
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	tcp_req *treq;
-
-	if (!(treq = calloc(1UL, sizeof(*treq))))
-		return NULL;
-
-	if (!(treq->kvlist.head = calloc(1UL, sizeof(*(treq->kvlist.head))))) // dummy node
-	{
-		free(treq);
-		return NULL;
-	}
-
-	treq->type = rt;
-	treq->kvlist.nokvs = 0UL;
-	treq->kvlist.tail = treq->kvlist.head; // dummy node
-
-	return treq;
-}
-
-int c_tcp_req_destroy(c_tcp_req req)
-{
-	if (!req) {
+	if (!chandle || !key || !value) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	/** END OF ERROR HANDLING **/
 
-	tcp_req *treq = req;
+	struct client_handle *ch = chandle;
+	struct internal_tcp_req *ireq = &(ch->request);
 
-	/** TODO: free list */
+	ch->request.flags = 1;
 
-	free(treq->kvlist.head);
-	free(treq);
+	/** TODO: replace list with list-of-ararys */
+
+	struct kvlist_node *kvn;
+
+	if (!(kvn = malloc(sizeof(*kvn))))
+		return -(EXIT_FAILURE);
+
+	kvn->kv.key = *key;
+	kvn->next = NULL;
+
+	ireq->kvlist.tail->next = kvn;
+	ireq->kvlist.tail = kvn;
+
+	++ireq->kvlist.nokvs;
+	ireq->kvlist.bytes += key->size;
+
+	if (!req_in_get_family(ireq->type)) { // PUT family
+		kvn->kv.value = *value;
+		ireq->kvlist.bytes += value->size;
+	}
 
 	return EXIT_SUCCESS;
 }
 
-int c_tcp_rep_destroy(c_tcp_rep rep)
+int c_tcp_send_req(cHandle chandle)
 {
-	if (!rep) {
+	if (!chandle) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
-	/** END OF ERROR HANDLING **/
-
-	tcp_rep *trep = rep;
-
-	free(trep->buf.mem);
-	free(trep->ret_to_usr.payload);
-
-	return EXIT_SUCCESS;
-}
-
-c_tcp_rep c_tcp_rep_init(void)
-{
-	tcp_rep *trep;
-
-	if (!(trep = malloc(sizeof(*trep))))
-		return NULL;
-
-	if (!(trep->buf.mem = malloc(DEF_BUF_SIZE))) {
-		free(trep);
-		return NULL;
-	}
-
-	trep->buf.bytes = DEF_BUF_SIZE;
-
-	return trep;
-}
-
-int c_tcp_req_push_kv(c_tcp_req restrict req, kv_t *restrict kv)
-{
-	tcp_req *treq = req;
-
-	if (!req || !kv) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	/** TODO: replace list with array-list */
-
-	if (!(treq->kvlist.tail->next = calloc(1UL, sizeof(*(treq->kvlist.tail->next)))))
-		return -(EXIT_FAILURE);
-
-	treq->kvlist.tail->next->kv = *kv;
-	treq->kvlist.tail = treq->kvlist.tail->next;
-
-	++treq->kvlist.nokvs;
-	treq->kvlist.bytes += kv->key.size;
-
-	if (!req_in_get_family(treq->type)) // belongs in PUT request family
-		treq->kvlist.bytes += kv->value.size;
-
-	return EXIT_SUCCESS;
-}
-
-int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
-{
-	if (!chandle || !req) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	client_handle *ch = chandle;
+	struct client_handle *ch = chandle;
 
 	if (ch->flags1 != MAGIC_INIT_NUM) // chandle is not initialized!
 	{
@@ -331,9 +317,9 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 		return -(EXIT_FAILURE);
 	}
 
-	tcp_req *treq = req;
+	struct internal_tcp_req *ireq = &(ch->request);
 
-	if (treq->kvlist.head == treq->kvlist.tail) // not a single kv is pushed
+	if (ireq->kvlist.head == ireq->kvlist.tail) // not a single kv is pushed
 	{
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
@@ -343,49 +329,55 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 
 	uint64_t sindex; // sizes-index
 	uint64_t dindex; // data-index
+	uint64_t tsz; // total-size
 
-	sindex = 1UL + sizeof(treq->kvlist.nokvs) + sizeof(treq->kvlist.bytes);
-	ch->buf.size = treq->kvlist.bytes + sindex;
-
-	printf("treq->type = %d\nbytes = %lu (list: %lu)\n", treq->type, ch->buf.size, treq->kvlist.bytes);
-
-	if (req_in_get_family(treq->type))
-		ch->buf.size += (treq->kvlist.nokvs * sizeof(uint64_t));
-	else /** PUT family **/
-		ch->buf.size += (treq->kvlist.nokvs * 2 * sizeof(uint64_t));
-
-	if (!(ch->buf.mem = calloc(1UL, ch->buf.size)))
-		return -(EXIT_FAILURE);
-
-	*((uint8_t *)(ch->buf.mem)) = treq->type;
-	*((uint64_t *)(ch->buf.mem + 1UL)) = htobe64(treq->kvlist.nokvs);
-	*((uint64_t *)(ch->buf.mem + 1UL + sizeof(treq->kvlist.nokvs))) = htobe64(ch->buf.size);
-
+	sindex = 1UL + sizeof(uint64_t) + sizeof(uint64_t);
+	tsz = ireq->kvlist.bytes + sindex;
 	dindex = sindex;
 
-	if (req_in_get_family(treq->type))
-		dindex += (treq->kvlist.nokvs * sizeof(treq->kvlist.head->kv.key.size));
-	else /* PUT family */
-		dindex += (treq->kvlist.nokvs *
-			   (sizeof(treq->kvlist.head->kv.key.size) + sizeof(treq->kvlist.head->kv.value.size)));
+	printf("ireq->type = %d\nbytes = %lu (list: %lu)\n", ireq->type, tsz, ireq->kvlist.bytes);
 
-	for (struct kvlist_node *prev, *kvn = treq->kvlist.head->next; kvn;) {
+	if (req_in_get_family(ireq->type))
+		tsz += (ireq->kvlist.nokvs * sizeof(uint64_t));
+	else /** PUT family **/
+		tsz += (ireq->kvlist.nokvs * 2 * sizeof(uint64_t));
+
+	if (tsz > ch->request.buf.bytes) {
+		free(ch->request.buf.mem);
+
+		if (!(ch->request.buf.mem = malloc(tsz)))
+			return -(EXIT_FAILURE);
+
+		ch->request.buf.bytes = tsz;
+	}
+
+	*((uint8_t *)(ch->request.buf.mem)) = ireq->type;
+	*((uint64_t *)(ch->request.buf.mem + 1UL)) = htobe64(ireq->kvlist.nokvs);
+	*((uint64_t *)(ch->request.buf.mem + 1UL + sizeof(uint64_t))) = htobe64(tsz);
+
+	if (req_in_get_family(ireq->type))
+		dindex += (ireq->kvlist.nokvs * sizeof(uint64_t));
+	else /* PUT family */
+		dindex += (ireq->kvlist.nokvs * (sizeof(uint64_t) + sizeof(uint64_t)));
+
+	for (struct kvlist_node *prev, *kvn = ireq->kvlist.head->next; kvn;) {
 		prev = kvn;
 
 		/** GET family (get, del, exists) **/
 
-		*((uint64_t *)(ch->buf.mem + sindex)) = htobe64(kvn->kv.key.size);
+		*((uint64_t *)(ch->request.buf.mem + sindex)) = htobe64(kvn->kv.key.size);
 		sindex += sizeof(kvn->kv.key.size);
-		memcpy(ch->buf.mem + dindex, kvn->kv.key.data, kvn->kv.key.size);
+
+		memcpy(ch->request.buf.mem + dindex, kvn->kv.key.data, kvn->kv.key.size);
 		dindex += kvn->kv.key.size;
 
-		if (!req_in_get_family(treq->type)) // branch predictor <3
+		if (!req_in_get_family(ireq->type)) // branch predictor saves the day? (test!!!)
 		{
 			/** PUT family (put, put-if-ex) **/
 
-			*((uint64_t *)(ch->buf.mem + sindex)) = htobe64(kvn->kv.value.size);
+			*((uint64_t *)(ch->request.buf.mem + sindex)) = htobe64(kvn->kv.value.size);
 			sindex += sizeof(kvn->kv.value.size);
-			memcpy(ch->buf.mem + dindex, kvn->kv.value.data, kvn->kv.value.size);
+			memcpy(ch->request.buf.mem + dindex, kvn->kv.value.data, kvn->kv.value.size);
 			dindex += kvn->kv.value.size;
 		}
 
@@ -393,12 +385,12 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 		free(prev);
 	}
 
-	treq->kvlist.head->next = NULL;
-	treq->kvlist.tail = treq->kvlist.head;
+	ireq->kvlist.head->next = NULL;
+	ireq->kvlist.tail = ireq->kvlist.head;
 
-	printf("send(%lu)\n", ch->buf.size);
+	printf("send(%lu)\n", tsz);
 
-	if (send(ch->sock, ch->buf.mem, ch->buf.size, 0) < 0)
+	if (send(ch->sock, ch->request.buf.mem, tsz, 0) < 0)
 		return -(EXIT_FAILURE);
 
 	ch->flags2 &= ~(CLHF_SND_REQ);
@@ -406,17 +398,18 @@ int c_tcp_send_req(cHandle restrict chandle, const c_tcp_req restrict req)
 	return EXIT_SUCCESS;
 }
 
-int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_data_t *restrict *restrict repbuf)
+int c_tcp_recv_rep(cHandle chandle)
 {
-	if (!chandle || !rep) {
+	if (!chandle) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
-	client_handle *ch = chandle;
+	struct client_handle *ch = chandle;
 
-	if (ch->flags2 & CLHF_SND_REQ) // clients waits to send a 'request' (not a 'reply')
-	{
+	/* clients waits to send() a 'request' (not to reacv() a 'reply') */
+
+	if ((ch->flags1 != MAGIC_INIT_NUM) || (ch->flags2 & CLHF_SND_REQ)) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -425,129 +418,177 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep, generic_dat
 
 	ssize_t ret;
 
-	if ((ret = recv(ch->sock, ch->buf.mem, DEF_BUF_SIZE, 0)) < 0)
+	if ((ret = recv(ch->sock, ch->reply.net_buf.mem, REPBUF_HDR_SIZE, 0)) < 0) {
+		dprint("recv(0)");
 		return -(EXIT_FAILURE);
-
-	tcp_rep *trep = rep;
-	uint64_t index = 0UL;
-
-	trep->retc = *((int8_t *)(ch->buf.mem));
-	++index;
-
-	trep->nokvs = be64toh(*((uint64_t *)(ch->buf.mem + index)));
-	index += sizeof(trep->nokvs);
-
-	if (!(trep->ret_to_usr.payload = calloc(trep->nokvs + 1UL, sizeof(*(trep->ret_to_usr.payload)))))
-		return -(EXIT_FAILURE);
-
-	trep->ret_to_usr.size = trep->nokvs;
-	trep->ret_to_usr.payload[trep->nokvs].data = NULL; // last elem = NULL
-	trep->ret_to_usr.payload[trep->nokvs].size = 0UL;
-
-	uint64_t lim = trep->nokvs;
-	uint64_t tsz = 0UL;
-	uint64_t c = 0UL;
-
-	/** read size_t[] (of data) array **/
-
-	for (uint64_t t; c < lim; ++c) // replace with do {} while();
-	{
-		t = be64toh(*((uint64_t *)(ch->buf.mem + index)));
-
-		tsz += t;
-		trep->ret_to_usr.payload[c].size = t;
-		index += sizeof(trep->ret_to_usr.payload->size);
 	}
 
-	if (tsz > trep->buf.bytes) // bytes not slots/cells
-	{
-		free(trep->buf.mem);
+	if (!ret || ret != REPBUF_HDR_SIZE) {
+		/* connection terminated (!ret) */
 
-		if (!(trep->buf.mem = malloc(tsz))) {
-			free(trep->ret_to_usr.payload);
+		dprint("recv(1)");
+		return -(EXIT_FAILURE);
+	}
+
+	struct internal_tcp_rep *irep = &ch->reply;
+	uint64_t bytes_to_read;
+
+	irep->nokvs = be64toh(*((uint64_t *)(ch->reply.net_buf.mem)));
+	bytes_to_read = be64toh(*((uint64_t *)(ch->reply.net_buf.mem + sizeof(uint64_t)))); // total-payload-size
+
+	if (irep->nokvs > irep->slots) {
+		free(irep->replies);
+
+		if (!(irep->replies = calloc(irep->nokvs, sizeof(*ch->reply.replies)))) {
+			dprint("calloc()");
 			return -(EXIT_FAILURE);
 		}
 
-		trep->buf.bytes = tsz;
+		irep->slots = irep->nokvs;
+		irep->replies[0].payload.data = irep->rep_data.mem;
 	}
 
-	// copy network buffer in local buffer 'mem'
+	if (bytes_to_read > irep->rep_data.bytes) {
+		// bytes_to_read = payload-size
 
-	memcpy(trep->buf.mem, ch->buf.mem + index, tsz);
+		free(irep->rep_data.mem);
 
-	trep->ret_to_usr.payload[0].data = trep->buf.mem;
-	index = trep->ret_to_usr.payload[0].size;
+		if (!(irep->rep_data.mem = malloc(bytes_to_read))) {
+			dprint("malloc()");
+			return -(EXIT_FAILURE);
+		}
 
-	for (c = 1UL; c < lim; ++c) {
-		trep->ret_to_usr.payload[c].data = trep->buf.mem + index;
-		index += trep->ret_to_usr.payload[c].size;
+		irep->rep_data.bytes = bytes_to_read;
 	}
 
-	trep->ret_to_usr.payload[c].data = NULL;
-	trep->ret_to_usr.payload[c].size = 0UL;
-	*repbuf = trep->ret_to_usr.payload;
+	// !this recv() isn't the optimal solution... think another one (reads a few bytes)!
 
-	ch->flags2 |= CLHF_SND_REQ;
-
-	return trep->retc;
-}
-
-int c_tcp_print_repbuf(generic_data_t *repbuf)
-{
-	if (!repbuf) {
-		errno = EINVAL;
+	if ((ret = recv(ch->sock, ch->reply.net_buf.mem, irep->nokvs, 0)) < 0) {
+		dprint("recv(2)");
 		return -(EXIT_FAILURE);
 	}
 
-	/** END OF ERROR HANDLING **/
+	if (!ret || ret != irep->nokvs) {
+		/* connection terminated (!ret) */
 
-	printf("repbuf:\n");
-
-	while (repbuf->data) {
-		printf("  - size = %lu\n", repbuf->size);
-		printf("  - data = %s\n\n", (char *)(repbuf->data));
-
-		++repbuf;
+		dprint("recv(3)");
+		return -(EXIT_FAILURE);
 	}
+
+	uint64_t lim;
+	uint64_t c;
+
+	for (lim = irep->nokvs, c = 0UL; c < lim; ++c) {
+		uint64_t index = 0UL;
+
+		irep->replies[c].retc = *((int8_t *)(ch->reply.net_buf.mem + index));
+		++index;
+
+		if (irep->replies[c].retc == REQ_COMPLETED)
+			bytes_to_read += sizeof(uint64_t);
+	}
+
+	if (bytes_to_read > irep->net_buf.bytes) {
+		munmap(irep->net_buf.mem, irep->net_buf.bytes);
+
+		uint64_t mmsize = (bytes_to_read | 0xfffUL) + 1UL; // PAGESIZE granularity
+
+		printf("tsz = 0x%lx \\ %lu\n", bytes_to_read, bytes_to_read);
+		printf("mmsize-page-granulate = 0x%lx \\ %lu\n", mmsize, mmsize);
+
+		if ((irep->net_buf.mem = mmap(NULL, mmsize + (16UL * __x86_PAGESIZE), PROT_READ | PROT_WRITE,
+					      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED) {
+			dprint("mmap()");
+			return -(EXIT_FAILURE);
+		}
+
+		irep->net_buf.bytes = mmsize;
+	}
+
+	if ((ret = recv(ch->sock, ch->reply.net_buf.mem, bytes_to_read, 0)) < 0) {
+		dprint("recv(0)");
+		return -(EXIT_FAILURE);
+	}
+
+	if (!ret || (ret != bytes_to_read)) {
+		/* connection terminated (!ret) */
+
+		dprint("recv(1)");
+		return -(EXIT_FAILURE);
+	}
+
+	uint64_t dindex = irep->nokvs * sizeof(uint64_t); // data-index
+	uint64_t tindex = 0UL; // temporary-index
+	uint64_t sindex = 0UL; // sizes-index
+	uint64_t tsize = 0UL; // temporary-size
+
+	for (c = 0UL; c < lim; ++c) // replace with do {} while();
+	{
+		/** TODO: avoid multiple cache misses by reading sequentially (?) */
+
+		tsize = irep->replies[c].payload.size = be64toh(*((uint64_t *)(ch->reply.net_buf.mem + sindex)));
+		sindex += sizeof(uint64_t);
+
+		irep->replies[c].payload.data = irep->rep_data.mem + tindex;
+		memcpy(irep->replies[c].payload.data, ch->reply.net_buf.mem + dindex, tsize);
+		dindex += tsize;
+		tindex += tsize;
+	}
+
+	/* last excess element (null) is the 'terminating element' */
+
+	irep->replies[c].payload.data = NULL;
+	irep->replies[c].payload.size = 0UL;
+
+	ch->flags2 |= CLHF_SND_REQ;
 
 	return EXIT_SUCCESS;
 }
 
-int fill_req(kv_t *restrict kv, c_tcp_req restrict req, generic_data_t *restrict key, generic_data_t *restrict val)
+int c_tcp_get_rep_array(cHandle restrict chandle, struct tcp_rep *restrict *restrict rep)
 {
-	if (!kv || !req || !key) {
+	if (!chandle || !rep) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	struct client_handle *ch = chandle;
+
+	if (ch->flags1 != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	/** END OF ERROR HANDLING **/
 
-	tcp_req *treq = req;
-	size_t tsz;
+	*rep = ch->reply.replies;
 
-	kv->key.size = key->size;
+	return EXIT_SUCCESS;
+}
 
-	if (req_in_get_family(treq->type)) {
-		kv->value.size = 0UL;
-		tsz = key->size;
-	} else {
-		kv->value.size = val->size;
-		tsz = key->size + val->size;
+int c_tcp_print_replies(cHandle chandle)
+{
+	if (!chandle) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
 	}
 
-	void *tptr = malloc(tsz);
+	struct client_handle *ch = chandle;
 
-	if (!tptr)
+	if (ch->flags1 != MAGIC_INIT_NUM) {
+		errno = EINVAL;
 		return -(EXIT_FAILURE);
+	}
 
-	kv->key.data = tptr;
-	memcpy(kv->key.data, key->data, key->size);
+	/** END OF ERROR HANDLING **/
 
-	if (req_in_get_family(treq->type))
-		kv->value.data = NULL;
-	else {
-		kv->value.data = tptr + key->size;
-		memcpy(kv->value.data, val->data, val->size);
+	struct tcp_rep *repbuf = ch->reply.replies;
+
+	while (repbuf->payload.data) {
+		printf("- size = %lu\n", repbuf->payload.size);
+		printf("- data = %s\n\n", (char *)(repbuf->payload.data));
+
+		++repbuf;
 	}
 
 	return EXIT_SUCCESS;

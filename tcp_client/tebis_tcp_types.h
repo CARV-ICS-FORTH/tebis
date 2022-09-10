@@ -11,6 +11,9 @@
 #define DEF_BUF_SIZE (32UL * __x86_PAGESIZE) // 128KB
 #define DEF_KV_SLOTS 16
 
+#define REQ_COMPLETED 0
+#define CONN_CLOSED -2
+
 typedef struct {
 	size_t size;
 	void *data;

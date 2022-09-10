@@ -10,6 +10,7 @@
 #include <string.h>
 
 #define print_debug(msg) fprintf(stderr, "[%d] %s: %s (%d)\n", __LINE__, msg, strerror(errno), errno)
+#define dprint(msg) fprintf(stderr, "\e[93m%s\e[0m::\e[91m%d\e[0m ---> %s\n", __FUNCTION__, __LINE__, msg)
 
 #define TTE_WAIT_REP -2
 #define TTE_WAIT_REQ -3

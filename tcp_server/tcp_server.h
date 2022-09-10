@@ -57,7 +57,7 @@ int s_tcp_req_destroy(s_tcp_req req);
  * @param gdata
  * @return int
  */
-int tcp_rep_push_data(s_tcp_rep restrict rep, generic_data_t *restrict gdata);
+int tcp_rep_push_data(s_tcp_rep restrict rep, int8_t retc, generic_data_t *restrict gdata);
 
 void s_tcp_print_req(s_tcp_req req);
 
