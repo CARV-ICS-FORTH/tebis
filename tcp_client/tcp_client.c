@@ -13,7 +13,7 @@
 
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/uio.h>
+#include <sys/types.h>
 
 #define TEBIS_TCP_PORT 25565 // Minecraft's port
 #define REPBUF_HDR_SIZE 16UL
@@ -32,8 +32,10 @@ struct buffer {
 struct internal_tcp_rep {
 	uint64_t nokvs; // number of kv's
 
-	uint64_t slots;
-	struct tcp_rep *replies;
+	struct {
+		uint64_t slots;
+		struct tcp_rep *array;
+	} replies;
 
 	struct buffer rep_data;
 	struct buffer net_buf;
@@ -51,10 +53,7 @@ struct internal_tcp_req {
 
 	} kvlist;
 
-	struct {
-		uint64_t bytes;
-		void *mem;
-	} buf;
+	struct buffer buf;
 
 	uint32_t flags;
 };
@@ -111,26 +110,36 @@ static int server_version_check(int ssock)
 static int chandle_init_reply(cHandle chandle)
 {
 	struct client_handle *ch = chandle;
-	void *mem;
 
-	if ((mem = mmap(NULL, DEF_BUF_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) ==
-	    MAP_FAILED) {
+	size_t rcvbufsz = 0UL; // recv buffer size
+	socklen_t optsz = sizeof(uint64_t); // option size
+
+	if (getsockopt(ch->sock, SOL_SOCKET, SO_RCVBUF, &rcvbufsz, &optsz) < 0) {
+		dprint("getsockopt()");
+		return -(EXIT_FAILURE);
+	}
+
+	void *mem;
+	rcvbufsz = (rcvbufsz | 0xfffUL) + 1UL;
+	printf("rcvbufsz = %lu\n", rcvbufsz);
+
+	if ((mem = mmap(NULL, rcvbufsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED) {
 		dprint("mmap()");
 		return -(EXIT_FAILURE);
 	}
 
 	ch->reply.net_buf.mem = mem;
-	ch->reply.net_buf.bytes = DEF_BUF_SIZE;
+	ch->reply.net_buf.bytes = rcvbufsz;
 
-	if (!(mem = calloc(DEF_REP_SLOTS, sizeof(*ch->reply.replies)))) {
-		munmap(ch->reply.net_buf.mem, DEF_BUF_SIZE);
+	if (!(mem = calloc(DEF_REP_SLOTS, sizeof(*ch->reply.replies.array)))) {
+		munmap(ch->reply.net_buf.mem, ch->reply.net_buf.bytes);
 		dprint("calloc()");
 
 		return -(EXIT_FAILURE);
 	}
 
-	ch->reply.replies = mem;
-	ch->reply.slots = DEF_REP_SLOTS;
+	ch->reply.replies.array = mem;
+	ch->reply.replies.slots = DEF_REP_SLOTS;
 	ch->reply.nokvs = 0UL;
 	ch->reply.rep_data.bytes = 0UL;
 	ch->reply.rep_data.mem = NULL;
@@ -181,16 +190,6 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	ch->flags1 = 0U;
 	ch->flags2 = CLHF_SND_REQ;
 
-	if (chandle_init_reply(*chandle) < 0) {
-		dprint("chandle_init_reply()");
-		return -(EXIT_FAILURE);
-	}
-
-	if (chandle_init_request(*chandle) < 0) {
-		dprint("chandle_init_request()");
-		return -(EXIT_FAILURE);
-	}
-
 	int retc;
 
 	struct addrinfo hints;
@@ -225,6 +224,16 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 				continue;
 			}
 
+			if (chandle_init_reply(*chandle) < 0) {
+				dprint("chandle_init_reply()");
+				return -(EXIT_FAILURE);
+			}
+
+			if (chandle_init_request(*chandle) < 0) {
+				dprint("chandle_init_request()");
+				return -(EXIT_FAILURE);
+			}
+
 			ch->flags1 = MAGIC_INIT_NUM;
 			return EXIT_SUCCESS;
 		} else
@@ -235,6 +244,30 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 	errno = ECONNREFUSED;
 	return -(EXIT_FAILURE); // set errno ?
+}
+
+int chandle_destroy(cHandle chandle)
+{
+	if (!chandle) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	struct client_handle *ch = chandle;
+
+	if ((ch->flags1 != MAGIC_INIT_NUM) || is_req_invalid((&ch->request))) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	/** END OF ERROR HANDLING **/
+
+	munmap(ch->reply.net_buf.mem, ch->reply.net_buf.bytes);
+	free(ch->reply.replies.array);
+	free(ch->request.buf.mem);
+	close(ch->sock);
+
+	return EXIT_SUCCESS;
 }
 
 int c_tcp_req_set_type(cHandle chandle, req_t rtype)
@@ -335,7 +368,7 @@ int c_tcp_send_req(cHandle chandle)
 	tsz = ireq->kvlist.bytes + sindex;
 	dindex = sindex;
 
-	printf("ireq->type = %d\nbytes = %lu (list: %lu)\n", ireq->type, tsz, ireq->kvlist.bytes);
+	// printf("ireq->type = %d\nbytes = %lu (list: %lu)\n", ireq->type, tsz, ireq->kvlist.bytes);
 
 	if (req_in_get_family(ireq->type))
 		tsz += (ireq->kvlist.nokvs * sizeof(uint64_t));
@@ -387,8 +420,10 @@ int c_tcp_send_req(cHandle chandle)
 
 	ireq->kvlist.head->next = NULL;
 	ireq->kvlist.tail = ireq->kvlist.head;
+	ireq->kvlist.nokvs = 0UL;
+	ireq->kvlist.bytes = 0UL;
 
-	printf("send(%lu)\n", tsz);
+	// printf("send(%lu)\n", tsz);
 
 	if (send(ch->sock, ch->request.buf.mem, tsz, 0) < 0)
 		return -(EXIT_FAILURE);
@@ -436,21 +471,7 @@ int c_tcp_recv_rep(cHandle chandle)
 	irep->nokvs = be64toh(*((uint64_t *)(ch->reply.net_buf.mem)));
 	bytes_to_read = be64toh(*((uint64_t *)(ch->reply.net_buf.mem + sizeof(uint64_t)))); // total-payload-size
 
-	if (irep->nokvs > irep->slots) {
-		free(irep->replies);
-
-		if (!(irep->replies = calloc(irep->nokvs, sizeof(*ch->reply.replies)))) {
-			dprint("calloc()");
-			return -(EXIT_FAILURE);
-		}
-
-		irep->slots = irep->nokvs;
-		irep->replies[0].payload.data = irep->rep_data.mem;
-	}
-
 	if (bytes_to_read > irep->rep_data.bytes) {
-		// bytes_to_read = payload-size
-
 		free(irep->rep_data.mem);
 
 		if (!(irep->rep_data.mem = malloc(bytes_to_read))) {
@@ -461,49 +482,23 @@ int c_tcp_recv_rep(cHandle chandle)
 		irep->rep_data.bytes = bytes_to_read;
 	}
 
-	// !this recv() isn't the optimal solution... think another one (reads a few bytes)!
+	// printf("[irep->nokvs, irep->slots] = [%lu, %lu]\n", irep->nokvs, irep->replies.slots);
 
-	if ((ret = recv(ch->sock, ch->reply.net_buf.mem, irep->nokvs, 0)) < 0) {
-		dprint("recv(2)");
-		return -(EXIT_FAILURE);
-	}
+	if (irep->nokvs > irep->replies.slots) {
+		free(irep->replies.array);
 
-	if (!ret || ret != irep->nokvs) {
-		/* connection terminated (!ret) */
-
-		dprint("recv(3)");
-		return -(EXIT_FAILURE);
-	}
-
-	uint64_t lim;
-	uint64_t c;
-
-	for (lim = irep->nokvs, c = 0UL; c < lim; ++c) {
-		uint64_t index = 0UL;
-
-		irep->replies[c].retc = *((int8_t *)(ch->reply.net_buf.mem + index));
-		++index;
-
-		if (irep->replies[c].retc == REQ_COMPLETED)
-			bytes_to_read += sizeof(uint64_t);
-	}
-
-	if (bytes_to_read > irep->net_buf.bytes) {
-		munmap(irep->net_buf.mem, irep->net_buf.bytes);
-
-		uint64_t mmsize = (bytes_to_read | 0xfffUL) + 1UL; // PAGESIZE granularity
-
-		printf("tsz = 0x%lx \\ %lu\n", bytes_to_read, bytes_to_read);
-		printf("mmsize-page-granulate = 0x%lx \\ %lu\n", mmsize, mmsize);
-
-		if ((irep->net_buf.mem = mmap(NULL, mmsize + (16UL * __x86_PAGESIZE), PROT_READ | PROT_WRITE,
-					      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED) {
-			dprint("mmap()");
+		if (!(irep->replies.array = calloc(irep->nokvs + 1UL, sizeof(*ch->reply.replies.array)))) {
+			dprint("calloc()");
 			return -(EXIT_FAILURE);
 		}
 
-		irep->net_buf.bytes = mmsize;
+		irep->replies.slots = irep->nokvs;
+		irep->replies.array[0].payload.data = irep->rep_data.mem;
 	}
+
+	bytes_to_read += irep->nokvs * sizeof(uint64_t);
+
+	// loop here
 
 	if ((ret = recv(ch->sock, ch->reply.net_buf.mem, bytes_to_read, 0)) < 0) {
 		dprint("recv(0)");
@@ -517,28 +512,31 @@ int c_tcp_recv_rep(cHandle chandle)
 		return -(EXIT_FAILURE);
 	}
 
+	uint64_t sindex = 0UL; // sizes-index
 	uint64_t dindex = irep->nokvs * sizeof(uint64_t); // data-index
 	uint64_t tindex = 0UL; // temporary-index
-	uint64_t sindex = 0UL; // sizes-index
 	uint64_t tsize = 0UL; // temporary-size
 
-	for (c = 0UL; c < lim; ++c) // replace with do {} while();
+	for (uint64_t c = 0UL; c < irep->nokvs; ++c) // replace with do {} while();
 	{
 		/** TODO: avoid multiple cache misses by reading sequentially (?) */
 
-		tsize = irep->replies[c].payload.size = be64toh(*((uint64_t *)(ch->reply.net_buf.mem + sindex)));
+		tsize = irep->replies.array[c].payload.size = be64toh(*((uint64_t *)(ch->reply.net_buf.mem + sindex)));
 		sindex += sizeof(uint64_t);
 
-		irep->replies[c].payload.data = irep->rep_data.mem + tindex;
-		memcpy(irep->replies[c].payload.data, ch->reply.net_buf.mem + dindex, tsize);
-		dindex += tsize;
-		tindex += tsize;
+		if (tsize) {
+			irep->replies.array[c].payload.data = irep->rep_data.mem + tindex;
+			memcpy(irep->replies.array[c].payload.data, ch->reply.net_buf.mem + dindex, tsize);
+			dindex += tsize;
+			tindex += tsize;
+		} else
+			irep->replies.array[c].payload.data = NULL;
 	}
 
-	/* last excess element (null) is the 'terminating element' */
+	/* last excess element is the 'terminating element' */
 
-	irep->replies[c].payload.data = NULL;
-	irep->replies[c].payload.size = 0UL;
+	irep->replies.array[irep->nokvs].payload.data = NULL;
+	irep->replies.array[irep->nokvs].payload.size = 0UL;
 
 	ch->flags2 |= CLHF_SND_REQ;
 
@@ -561,7 +559,7 @@ int c_tcp_get_rep_array(cHandle restrict chandle, struct tcp_rep *restrict *rest
 
 	/** END OF ERROR HANDLING **/
 
-	*rep = ch->reply.replies;
+	*rep = ch->reply.replies.array;
 
 	return EXIT_SUCCESS;
 }
@@ -582,13 +580,13 @@ int c_tcp_print_replies(cHandle chandle)
 
 	/** END OF ERROR HANDLING **/
 
-	struct tcp_rep *repbuf = ch->reply.replies;
+	struct tcp_rep *replyarr = ch->reply.replies.array;
 
-	while (repbuf->payload.data) {
-		printf("- size = %lu\n", repbuf->payload.size);
-		printf("- data = %s\n\n", (char *)(repbuf->payload.data));
+	while (replyarr->payload.data) {
+		printf("- size = %lu\n", replyarr->payload.size);
+		printf("- data = %s\n\n", (char *)(replyarr->payload.data));
 
-		++repbuf;
+		++replyarr;
 	}
 
 	return EXIT_SUCCESS;
