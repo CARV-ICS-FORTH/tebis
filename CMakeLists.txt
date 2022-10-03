@@ -136,7 +136,7 @@ find_path(
 
 find_library(
   Zookeeper_LIBRARY
-  NAMES libzookeeper_mt.a
+  NAMES libzookeeper_mt.a libzookeeper_mt.so
   PATHS ${Zookeeper_LIB_PATHS})
 
 if(NOT Zookeeper_INCLUDE_DIR OR NOT Zookeeper_LIBRARY)
