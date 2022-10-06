@@ -25,6 +25,7 @@
 #define KRM_SERVERS_PATH "/servers"
 #define KRM_SLASH "/"
 #define KRM_LEADER_PATH "/leader"
+#define KRM_REGION_LOG "/region_log"
 #define KRM_MAILBOX_PATH "/mailbox"
 #define KRM_MAIL_TITLE "/msg"
 #define KRM_ALIVE_SERVERS_PATH "/alive_dataservers"
@@ -44,6 +45,18 @@
 //#define RU_MAX_INDEX_SEGMENTS 4
 typedef struct level_write_appender *level_write_appender_t;
 typedef struct send_index_rewriter *send_index_rewriter_t;
+#define MAX_REPLICA_GROUP_SIZE (RU_MAX_NUM_REPLICAS + 1)
+#define MAX_SERVER_NAME (128)
+
+typedef enum {
+	FAULTY_ROLE = 0,
+	PRIMARY,
+	PRIMARY_NEWBIE,
+	PRIMARY_DEAD,
+	BACKUP,
+	BACKUP_NEWBIE,
+	BACKUP_DEAD
+} server_role_t;
 
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
 
@@ -328,12 +341,12 @@ struct krm_leader_ds_map {
 
 struct krm_server_desc {
 	struct krm_server_name name;
-	char mail_path[KRM_HOSTNAME_SIZE];
 	sem_t wake_up;
 	pthread_mutex_t msg_list_lock;
 	struct tebis_klist *msg_list;
 	zhandle_t *zh;
 	struct rco_pool *compaction_pool;
+	char *mail_path;
 	uint8_t IP[IP_SIZE];
 	uint8_t RDMA_IP[IP_SIZE];
 	enum krm_server_role role;
@@ -355,9 +368,10 @@ struct krm_msg {
 	enum krm_msg_type type;
 	enum krm_error_code error_code;
 	uint64_t epoch;
+	uint64_t transaction_id;
 };
 
-void *krm_metadata_server(void *args);
+void *run_region_server(void *args);
 struct krm_region_desc *krm_get_region(struct krm_server_desc const *server_desc, char *key, uint32_t key_size);
 //struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
 //						   uint32_t region_id_size);
