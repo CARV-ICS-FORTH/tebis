@@ -1960,7 +1960,7 @@ static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_ta
 		stats_update(task->server_id, task->thread_id);
 }
 
-sem_t exit_main;
+sem_t exit_main = { 0 };
 static void sigint_handler(int signo)
 {
 	(void)signo;
@@ -1989,7 +1989,7 @@ int main(int argc, char *argv[])
 #endif
 
 	int num_of_numa_servers = 1;
-	int next_argv;
+
 	if (argc != 8) {
 		log_fatal(
 			"Error args are %d! usage: ./kreon_server <device name>"
@@ -2001,24 +2001,19 @@ int main(int argc, char *argv[])
 	}
 	// argv[0] program name don't care
 	// dev name
-	next_argv = 1;
-	char *device_name = argv[next_argv];
+	int next_argv = 1;
+	char *device_name = argv[next_argv++];
 	globals_set_dev(device_name);
-	++next_argv;
 	// zookeeper
-	globals_set_zk_host(argv[next_argv]);
-	++next_argv;
+	globals_set_zk_host(argv[next_argv++]);
 	// RDMA subnet
-	globals_set_RDMA_IP_filter(argv[next_argv]);
-	++next_argv;
+	globals_set_RDMA_IP_filter(argv[next_argv++]);
 	//L0 size
-	uint32_t L0_size = strtoul(argv[next_argv], NULL, 10);
+	uint32_t L0_size = strtoul(argv[next_argv++], NULL, 10);
 	globals_set_l0_size(L0_size);
-	++next_argv;
 	//growth factor
-	uint32_t growth_factor = strtoul(argv[next_argv], NULL, 10);
+	uint32_t growth_factor = strtoul(argv[next_argv++], NULL, 10);
 	globals_set_growth_factor(growth_factor);
-	++next_argv;
 
 	if (strcmp(argv[next_argv], "send_index") == 0)
 		globals_set_send_index(1);
@@ -2035,38 +2030,34 @@ int main(int argc, char *argv[])
 	root_server->num_of_numa_servers = num_of_numa_servers;
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
-	int rdma_port;
-	int spinning_thread_id;
-	int workers_id[MAX_CORES_PER_NUMA];
-	int num_workers;
-	char *token;
+
 	char *strtok_saveptr = NULL;
 	char *rest = argv[next_argv];
 	// RDMA port of server
-	token = strtok_r(rest, ",", &strtok_saveptr);
-	if (token == NULL) {
+	char *rdma_port_token = strtok_r(rest, ",", &strtok_saveptr);
+	if (rdma_port_token == NULL) {
 		log_fatal("RDMA port missing in server configuration");
 		_exit(EXIT_FAILURE);
 	}
-	char *ptr;
-	rdma_port = strtol(token, &ptr, 10);
-	log_info("Server %d rdma port: %d", server_idx, rdma_port);
+	char *ptr = NULL;
+	int rdma_port = strtol(rdma_port_token, &ptr, 10);
+	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
 	// Spinning thread of server
-	token = strtok_r(NULL, ",", &strtok_saveptr);
+	char *token = strtok_r(NULL, ",", &strtok_saveptr);
 	if (token == NULL) {
 		log_fatal("Spinning thread id missing in server configuration");
 		_exit(EXIT_FAILURE);
 	}
-	spinning_thread_id = strtol(token, &ptr, 10);
+	int spinning_thread_id = strtol(token, &ptr, 10);
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
 	// now the worker ids
-	num_workers = 0;
-	token = strtok_r(NULL, ",", &strtok_saveptr);
-	while (token != NULL) {
+	int num_workers = 0;
+	int workers_id[MAX_CORES_PER_NUMA] = { 0 };
+
+	for (token = strtok_r(NULL, ",", &strtok_saveptr); token != NULL; token = strtok_r(NULL, ",", &strtok_saveptr))
 		workers_id[num_workers++] = strtol(token, &ptr, 10);
-		token = strtok_r(NULL, ",", &strtok_saveptr);
-	}
+
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);
 		_exit(EXIT_FAILURE);
@@ -2080,7 +2071,7 @@ int main(int argc, char *argv[])
 
 	/*But first let's build each numa server's RDMA channel*/
 	/*RDMA channel staff*/
-	server->channel = (struct channel_rdma *)malloc(sizeof(struct channel_rdma));
+	server->channel = (struct channel_rdma *)calloc(1, sizeof(struct channel_rdma));
 	if (server->channel == NULL) {
 		log_fatal("malloc failed could do not get memory for channel");
 		_exit(EXIT_FAILURE);
@@ -2146,9 +2137,8 @@ int main(int argc, char *argv[])
 		perror("Reason: \n");
 		_exit(EXIT_FAILURE);
 	}
-	// Now pin it in the numa node! Important step so allocations used by
-	// spinner and workers to be
-	// in the same numa node
+
+	// Now pin it in the numa node! Important step so allocations used by spinner and workers to be in the same numa node
 
 	cpu_set_t numa_node_affinity;
 	CPU_ZERO(&numa_node_affinity);
@@ -2186,29 +2176,28 @@ int main(int argc, char *argv[])
 
 	server->meta_server.root_server_id = server_idx;
 
-	log_info("Initializing Tebis master server");
+	log_info("Startring Master (candidate) server");
 	if (pthread_create(&server->meta_server_cnxt, NULL, run_master, &rdma_port)) {
 		log_fatal("Failed to start metadata_server");
 		_exit(EXIT_FAILURE);
 	}
-#if 1
-	log_info("Initializing kreonR metadata server");
-	if (pthread_create(&server->meta_server_cnxt, NULL, krm_metadata_server, &server->meta_server)) {
+#if 0
+	log_info("Starting Region Server");
+	if (pthread_create(&server->meta_server_cnxt, NULL, run_region_server, &server->meta_server)) {
 		log_fatal("Failed to start metadata_server");
 		_exit(EXIT_FAILURE);
 	}
 #endif
 
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
-	// A long long
 	sem_init(&exit_main, 0, 0);
 
-	log_debug("Kreon server(S) ready");
+	log_debug("Server(S) ready");
 	if (signal(SIGINT, sigint_handler) == SIG_ERR) {
 		log_fatal("can't catch SIGINT");
 		_exit(EXIT_FAILURE);
 	}
 	sem_wait(&exit_main);
-	log_info("kreonR server exiting");
+	log_warn("kreonR server exiting");
 	return 0;
 }
