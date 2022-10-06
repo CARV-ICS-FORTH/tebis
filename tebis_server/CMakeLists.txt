@@ -30,6 +30,7 @@ add_executable(
   send_index/send_index_rewriter.c
   ../common/common.c
   rdma_buffer_iterator/rdma_buffer_iterator.c
+  region_log.c
   region_server.c
   remote_compaction.c
   deserialize_index.c
