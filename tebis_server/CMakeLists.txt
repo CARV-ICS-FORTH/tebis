@@ -19,8 +19,6 @@ target_link_libraries(tebis_client ${Zookeeper_LIBRARY})
 add_executable(
   tebis_server
   server.c
-  region_log.c
-  master.c
   metadata_server.c
   build_index/build_index.c
   send_index/send_index.c
@@ -30,7 +28,10 @@ add_executable(
   send_index/send_index_rewriter.c
   ../common/common.c
   rdma_buffer_iterator/rdma_buffer_iterator.c
-  region_log.c
+  master/master.c
+  master/region_log.c
+  master/region.c
+  master/mregion_server.c
   region_server.c
   remote_compaction.c
   deserialize_index.c

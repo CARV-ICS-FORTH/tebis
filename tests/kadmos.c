@@ -11,6 +11,8 @@
  * the system must N Region Server which host all the available regions of the
  * system.
  */
+#include "../tebis_server/metadata.h"
+#include "../tebis_server/zk_utils.h"
 #include <fcntl.h>
 #include <log.h>
 #include <stdio.h>
@@ -37,6 +39,25 @@ typedef struct {
 	int num_of_servers;
 	tebis_host_t *hosts;
 } tebis_host_group_t;
+
+static void kadmos_zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
+{
+	(void)zkh;
+	/**
+   * zookeeper_init might not have returned, so we use zkh instead.
+  */
+	int *connected = context;
+	log_debug("MAIN watcher type %d state %d path %s", type, state, path);
+	if (type == ZOO_SESSION_EVENT) {
+		if (state == ZOO_CONNECTED_STATE) {
+			*connected = 1;
+
+		} else if (state == ZOO_CONNECTING_STATE) {
+		}
+		return;
+	}
+	log_warn("Unhandled event");
+}
 
 static tebis_host_group_t *create_empty_group(int capacity)
 {
@@ -70,7 +91,8 @@ static void remove_tebis_host_from_group(tebis_host_group_t *group, int id)
 static tebis_host_group_t **generate_groups(long int replication_size, long int num_of_servers_per_group)
 {
 	if (replication_size < 1) {
-		log_fatal("Replication size must be > 1 otherwise what is the point of the test?");
+		log_fatal("Replication size %ld must be > 1 otherwise what is the point of the test?",
+			  replication_size);
 		_exit(EXIT_FAILURE);
 	}
 
@@ -93,7 +115,7 @@ static tebis_host_group_t **generate_groups(long int replication_size, long int 
 		for (int j = 0; j < num_of_servers_per_group; ++j) {
 			char host_buffer[MAX_HOSTNAME_SIZE] = { 0 };
 			strcpy(host_buffer, hostname[i]);
-			if (sprintf(&host_buffer[strlen(hostname[i])], ":%d:0", j) < 0) {
+			if (sprintf(&host_buffer[strlen(hostname[i])], ":%d", j) < 0) {
 				log_fatal("Sprintf failed");
 				_exit(EXIT_FAILURE);
 			}
@@ -144,7 +166,7 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 	}
 	for (int i = 0; i < region_configuration->replication_size; ++i) {
 		int ret = sprintf(&region_configuration->region_buffer[strlen(region_configuration->region_buffer)],
-				  " %s ",
+				  " %s,0 ",
 				  region_configuration->groups[i]
 					  ->hosts[rand() % region_configuration->groups[i]->num_of_servers]
 					  .hostname);
@@ -154,13 +176,19 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 		}
 	}
 }
-
+#define MASTER "sith6.cluster.ics.forth.gr:8080"
+#define ZOOKEEPER_HOST "sith6.cluster.ics.forth.gr:2181"
+#define ZOOKEEPER_TIMEOUT 15000
 static void create_hosts_file(tebis_host_group_t **groups, long int num_of_groups, char *host_file_path)
 {
 	FILE *hosts_file = fopen(host_file_path, "we+");
 	if (NULL == hosts_file) {
 		log_fatal("Opening hosts file with reason");
 		perror("Reason:");
+		_exit(EXIT_FAILURE);
+	}
+	if (fprintf(hosts_file, "%s\n", MASTER) < 0) {
+		log_fatal("Writing to hosts file failed");
 		_exit(EXIT_FAILURE);
 	}
 	for (int i = 0; i < num_of_groups; ++i) {
@@ -253,6 +281,52 @@ static void create_region_file(char *regions_file_path, long int replication_siz
 	}
 }
 
+void register_all_servers_as_alive(zhandle_t *zhandle, char *host_file_path)
+{
+#define HOSTNAME_BUFFER_SIZE 256
+	FILE *hosts_file = fopen(host_file_path, "re");
+	if (NULL == hosts_file) {
+		log_fatal("Failed to open file %s", host_file_path);
+		_exit(EXIT_FAILURE);
+	}
+
+	char hostname[HOSTNAME_BUFFER_SIZE] = { 0 };
+	while (fgets(hostname, HOSTNAME_BUFFER_SIZE, hosts_file)) {
+		hostname[strlen(hostname) - 1] = '\0';
+		// log_debug("Host is %s", hostname);
+		char *zk_path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH, KRM_SLASH, hostname);
+		char created_path[HOSTNAME_BUFFER_SIZE] = { 0 };
+		int ret_code = zoo_create(zhandle, zk_path, NULL, -1, &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT,
+					  created_path, HOSTNAME_BUFFER_SIZE);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to create zookeeper node %s of size %lu code is %s", zk_path, strlen(zk_path),
+				  zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		free(zk_path);
+		char hostname_with_epoch[HOSTNAME_BUFFER_SIZE] = { 0 };
+		if (snprintf(hostname_with_epoch, HOSTNAME_BUFFER_SIZE, "%s,0", hostname) < 0) {
+			log_fatal("Failed to create hostname with epoch");
+			_exit(EXIT_FAILURE);
+		}
+		zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, hostname_with_epoch);
+		memset(created_path, 0x00, HOSTNAME_BUFFER_SIZE);
+		ret_code = zoo_create(zhandle, zk_path, NULL, -1, &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, created_path,
+				      HOSTNAME_BUFFER_SIZE);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to create zookeeper node %s of size %lu code is %s", zk_path, strlen(zk_path),
+				  zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		free(zk_path);
+	}
+
+	if (fclose(hosts_file) < 0) {
+		log_fatal("Failed to close host file: %s", host_file_path);
+		_exit(EXIT_FAILURE);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	bool is_load = false;
@@ -277,19 +351,18 @@ int main(int argc, char **argv)
 	}
 
 	if (0 == strcmp(argv[1], "run")) {
-		if (argc != 5) {
-			log_fatal(
-				"Wrong arguments Usage: ./kadmos load <replication size> <number of servers per group> <zookeeeper_host:zookeeper_port>");
+		if (argc != 3) {
+			log_fatal("Wrong arguments Usage: ./kadmos run <directory with host/regions file>");
 			_exit(EXIT_FAILURE);
 		}
 	}
 
-	int arg_id = 1;
-	long int replication_size = strtol(argv[arg_id++], NULL, DECIMAL);
-	long int num_of_servers_per_group = strtol(argv[arg_id++], NULL, DECIMAL);
-	tebis_host_group_t **groups = generate_groups(replication_size, num_of_servers_per_group);
+	int arg_id = 2;
 
 	if (is_load) {
+		long int replication_size = strtol(argv[arg_id++], NULL, DECIMAL);
+		long int num_of_servers_per_group = strtol(argv[arg_id++], NULL, DECIMAL);
+		tebis_host_group_t **groups = generate_groups(replication_size, num_of_servers_per_group);
 		long int num_of_regions = strtol(argv[arg_id++], NULL, DECIMAL);
 		char *hosts_file_path = calloc(1, strlen(argv[arg_id]) + strlen("hosts_file") + 1);
 		strcpy(hosts_file_path, argv[arg_id]);
@@ -305,5 +378,18 @@ int main(int argc, char **argv)
 		regions_file_path = NULL;
 		return 0;
 	}
+
+	volatile int connected = 0;
+	zhandle_t *handle =
+		zookeeper_init(ZOOKEEPER_HOST, kadmos_zk_watcher, ZOOKEEPER_TIMEOUT, 0, (void *)&connected, 0);
+	for (; 0 == connected;)
+		;
+
+	char *hosts_file_path = calloc(1, strlen(argv[arg_id]) + strlen("hosts_file") + 1);
+	strcpy(hosts_file_path, argv[arg_id]);
+	strcpy(&hosts_file_path[strlen(argv[arg_id])], "hosts_file");
+	assert(handle);
+	register_all_servers_as_alive(handle, hosts_file_path);
+	sleep(5000);
 	return 0;
 }

@@ -1,13 +1,16 @@
 #include "region_log.h"
+#include "../metadata.h"
+#include "region.h"
 #include "zookeeper.h"
 #include <log.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-void append_to_region_log(region_log_t *region_log, region_operation_t region_operation)
+
+void start_region_reconfiguration(region_log_t *region_log, region_t *region)
 {
 	(void)region_log;
-	(void)region_operation;
+	(void)region;
 }
 
 void trim_region_log(region_log_t *region_log, int64_t max_lsn)

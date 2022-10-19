@@ -48,17 +48,19 @@ typedef struct send_index_rewriter *send_index_rewriter_t;
 #define MAX_REPLICA_GROUP_SIZE (RU_MAX_NUM_REPLICAS + 1)
 #define MAX_SERVER_NAME (128)
 
-typedef enum {
+enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
+
+enum server_role {
 	FAULTY_ROLE = 0,
 	PRIMARY,
 	PRIMARY_NEWBIE,
+	PRIMARY_INFANT,
 	PRIMARY_DEAD,
 	BACKUP,
 	BACKUP_NEWBIE,
+	BACKUP_INFANT,
 	BACKUP_DEAD
-} server_role_t;
-
-enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
+};
 
 enum krm_server_state {
 	KRM_BOOTING = 1,
@@ -307,9 +309,7 @@ struct krm_region_desc {
 
 struct krm_ds_regions {
 	struct krm_region_desc *r_desc[KRM_MAX_DS_REGIONS];
-	uint64_t lamport_counter_1;
-	uint64_t lamport_counter_2;
-	uint32_t num_ds_regions;
+	int num_ds_regions;
 };
 
 struct krm_leader_regions {
@@ -372,7 +372,7 @@ struct krm_msg {
 };
 
 void *run_region_server(void *args);
-struct krm_region_desc *krm_get_region(struct krm_server_desc const *server_desc, char *key, uint32_t key_size);
+struct krm_region_desc *krm_get_region(struct krm_ds_regions *region_table, char *key, uint32_t key_size);
 //struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
 //						   uint32_t region_id_size);
 int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);

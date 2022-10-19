@@ -32,8 +32,8 @@ set_source_files_properties(kadmos.c PROPERTIES COMPILE_FLAGS "-O3")
 
 # target_link_libraries(test_circular_buffer log ${Zookeeper_LIBRARY})
 
-add_executable(kadmos kadmos.c)
-target_link_libraries(kadmos log)
+add_executable(kadmos kadmos.c ../tebis_server/zk_utils.c)
+target_link_libraries(kadmos log ${Zookeeper_LIBRARY})
 
 # Targets with dependencies to Zookeeper should be added in this if block
 # if(Zookeeper_LIBRARY) add_executable(test_krc_api test_krc_api.c)

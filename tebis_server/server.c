@@ -1360,7 +1360,7 @@ static uint8_t key_exists(struct krm_work_task *task)
 	return 1;
 }
 
-static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_put_req(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == PUT_REQUEST || task->msg->msg_type == PUT_IF_EXISTS_REQUEST);
 	/* retrieve region handle for the corresponding key, find_region
@@ -1376,7 +1376,7 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		}
 		/*calculate kv_payload size*/
 		task->msg_payload_size = put_msg_get_payload_size(task->msg);
-		task->r_desc = krm_get_region(mydesc, key, key_length);
+		task->r_desc = krm_get_region(region_server_desc->ds_regions, key, key_length);
 		if (task->r_desc == NULL) {
 			log_fatal("Region not found for key size key %u:%s", key_length, key);
 			_exit(EXIT_FAILURE);
@@ -1390,12 +1390,12 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		}
 	}
 
-	if (!init_replica_connections(mydesc, task))
+	if (!init_replica_connections(region_server_desc, task))
 		return;
 
 	if (!krm_enter_parallax(task->r_desc, task))
 		return;
-	insert_kv_pair(mydesc, task);
+	insert_kv_pair(region_server_desc, task);
 	if (task->kreon_operation_status == TASK_COMPLETE) {
 		krm_leave_parallax(task->r_desc);
 
@@ -1417,11 +1417,12 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	}
 }
 
-static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_get_req(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == GET_REQUEST);
 	struct msg_data_get_request request_data = get_request_get_msg_data(task->msg);
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, request_data.key, request_data.key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, request_data.key, request_data.key_size);
 
 	if (r_desc == NULL) {
 		log_fatal("Region not found for key %s", request_data.key);
@@ -1499,18 +1500,18 @@ exit:;
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_multi_get_req(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
-	(void)mydesc;
+	(void)region_server_desc;
 	(void)task;
 	log_debug("Close scans since we dont use them for now (the tebis-parallax no replication porting");
 	assert(0);
 	_exit(EXIT_FAILURE);
 }
 
-static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_delete_req(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
-	(void)mydesc;
+	(void)region_server_desc;
 	(void)task;
 	log_debug("Closing delete ops since we dont use them for now (tebis-parallax) replication");
 	assert(0);
@@ -1567,11 +1568,13 @@ static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t pr
 
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	(void)region_server_desc;
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
 	// log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, flush_req->region_key, flush_req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
 		_exit(EXIT_FAILURE);
@@ -1619,13 +1622,14 @@ static struct ru_replica_rdma_buffer initialize_rdma_buffer(uint32_t size, struc
 	return rdma_buf;
 }
 
-static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_get_rdma_buffer_req(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == GET_RDMA_BUFFER_REQ);
 	struct s2s_msg_get_rdma_buffer_req *get_log =
 		(struct s2s_msg_get_rdma_buffer_req *)((char *)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_log->region_key, get_log->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, get_log->region_key, get_log->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("No region found for min key %s", get_log->region_key);
 		_exit(EXIT_FAILURE);
@@ -1662,16 +1666,18 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_replica_index_get_buffer_req(struct krm_server_desc const *region_server_desc,
+						 struct krm_work_task *task)
 {
-	assert(mydesc && task);
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
 	assert(globals_get_send_index());
 
 	struct s2s_msg_replica_index_get_buffer_req *req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, req->region_key, req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
@@ -1717,16 +1723,18 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_replica_index_flush_req(struct krm_server_desc const *region_server_desc,
+					    struct krm_work_task *task)
 {
-	assert(mydesc && task);
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
 	assert(globals_get_send_index());
 
 	struct s2s_msg_replica_index_flush_req *req =
 		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, req->region_key, req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
@@ -1815,14 +1823,15 @@ void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *t
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_flush_L0_op(struct krm_server_desc const *region_server_desc, struct krm_work_task *task)
 {
-	assert(mydesc && task);
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == FLUSH_L0_REQUEST);
 	assert(globals_get_send_index());
 	struct s2s_msg_flush_L0_req *flush_req =
 		(struct s2s_msg_flush_L0_req *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, flush_req->region_key, flush_req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
 		_exit(EXIT_FAILURE);
@@ -1853,16 +1862,18 @@ static void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_send_index_close_compaction(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_send_index_close_compaction(struct krm_server_desc const *region_server_desc,
+						struct krm_work_task *task)
 {
-	assert(mydesc && task);
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == CLOSE_COMPACTION_REQUEST);
 	assert(globals_get_send_index());
 
 	// get the region descriptor
 	struct s2s_msg_close_compaction_request *req =
 		(struct s2s_msg_close_compaction_request *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, req->region_key, req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
 		_exit(EXIT_FAILURE);
@@ -1889,16 +1900,18 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_replica_index_swap_levels(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_replica_index_swap_levels(struct krm_server_desc const *region_server_desc,
+					      struct krm_work_task *task)
 {
-	assert(mydesc && task);
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_SWAP_LEVELS_REQUEST);
 	assert(globals_get_send_index());
 
 	// get the region descriptor
 	struct s2s_msg_swap_levels_request *req =
 		(struct s2s_msg_swap_levels_request *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	struct krm_region_desc *r_desc =
+		krm_get_region(region_server_desc->ds_regions, req->region_key, req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
 		_exit(EXIT_FAILURE);
@@ -2188,7 +2201,6 @@ int main(int argc, char *argv[])
 		_exit(EXIT_FAILURE);
 	}
 #endif
-
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	sem_init(&exit_main, 0, 0);
 

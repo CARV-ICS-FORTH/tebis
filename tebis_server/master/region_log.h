@@ -1,4 +1,5 @@
-#include "metadata.h"
+#include "../metadata.h"
+#include "mregion_server.h"
 #include <zookeeper/zookeeper.h>
 #define PATH_SIZE (128)
 
@@ -10,7 +11,7 @@ typedef struct {
 
 typedef struct {
 	char replica_group_info[MAX_REPLICA_GROUP_SIZE][MAX_SERVER_NAME];
-	server_role_t role[MAX_REPLICA_GROUP_SIZE];
+	enum server_role role[MAX_REPLICA_GROUP_SIZE];
 } reconfiguration_t;
 
 typedef struct {

@@ -60,7 +60,7 @@ char *zku_op2String(int rc)
 	}
 }
 
-int64_t zku_key_cmp(int key_size_1, char *key_1, int key_size_2, char *key_2)
+int zku_key_cmp(int key_size_1, char *key_1, int key_size_2, char *key_2)
 {
 	int ret;
 	char key_1_is_infinity = 0;
@@ -85,10 +85,8 @@ int64_t zku_key_cmp(int key_size_1, char *key_1, int key_size_2, char *key_2)
 
 	if (ret > 0)
 		return 1;
-	else if (ret < 0)
+	if (ret < 0)
 		return -1;
-	else {
-		/*prefix is the same larger wins*/
-		return key_size_1 - key_size_2;
-	}
+	/*prefix is the same larger wins*/
+	return key_size_1 - key_size_2;
 }
