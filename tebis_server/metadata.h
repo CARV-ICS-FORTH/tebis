@@ -26,7 +26,9 @@
 #define KRM_SLASH "/"
 #define KRM_LEADER_PATH "/leader"
 #define KRM_REGION_LOG "/region_log"
+#define KRM_REGION_LOG_PREFIX "/ts"
 #define KRM_MAILBOX_PATH "/mailbox"
+#define KRM_MAX_ZK_PATH_SIZE 128UL
 #define KRM_MAIL_TITLE "/msg"
 #define KRM_ALIVE_SERVERS_PATH "/alive_dataservers"
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"

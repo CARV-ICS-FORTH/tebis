@@ -8,8 +8,10 @@ from kazoo.security import OPEN_ACL_UNSAFE
 import json
 
 ROOT_PATH = "/kreonR"
+REGION_LOG_PATH = ROOT_PATH + "/region_log"
 SERVERS_PATH = ROOT_PATH + "/servers"
 MAILBOX_PATH = ROOT_PATH + "/mailbox"
+LEADER_MAILBOX_PATH = MAILBOX_PATH + "/leader"
 REGIONS_PATH = ROOT_PATH + "/regions"
 LEADER_PATH = ROOT_PATH + "/leader"
 ALIVE_LEADER_PATH = ROOT_PATH + "/alive_leader"
@@ -65,8 +67,10 @@ def main():
     # kreonR
     # |- servers mailbox regions leader alive_leader alive_dataservers
     zk.create(ROOT_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(REGION_LOG_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(SERVERS_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(LEADER_MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(REGIONS_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(LEADER_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(ELECTIONS_PATH, acl=OPEN_ACL_UNSAFE)
@@ -103,7 +107,7 @@ def main():
             elif len(cols) == 2:
                 assert cols[1].lower() == "leader"
                 leader = cols[0]
-            zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
+            #zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
             # build/kreon_server/create_server_node zk_host cols[0]
             server_path = SERVERS_PATH + "/" + cols[0]
             hostname, port = cols[0].split(":")

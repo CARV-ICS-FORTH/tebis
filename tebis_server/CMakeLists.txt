@@ -32,6 +32,7 @@ add_executable(
   master/region_log.c
   master/region.c
   master/mregion_server.c
+  master/command.c
   region_server.c
   remote_compaction.c
   deserialize_index.c

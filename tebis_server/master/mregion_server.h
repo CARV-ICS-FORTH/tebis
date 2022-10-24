@@ -11,18 +11,18 @@ typedef struct region_info *region_info_t;
 typedef struct region_server *region_server_t;
 typedef struct region_server_iterator *region_server_iterator_t;
 
-region_server_t create_region_server(struct krm_server_name server_name, enum region_server_status status);
-void add_region_in_server(region_server_t region_server, region_t region, enum server_role role);
-void destroy_region_server(region_server_t region_server);
+region_server_t RS_create_region_server(struct krm_server_name server_name, enum region_server_status status);
+void RS_add_region_in_server(region_server_t region_server, region_t region, enum server_role role);
+void RS_destroy_region_server(region_server_t region_server);
 
-uint64_t get_server_clock(region_server_t region_server);
-struct krm_server_name *get_region_server_krm_hostname(region_server_t region_server);
-void set_region_server_status(region_server_t region_server, enum region_server_status status);
+uint64_t RS_get_server_clock(region_server_t region_server);
+struct krm_server_name *RS_get_region_server_krm_hostname(region_server_t region_server);
+void RS_set_region_server_status(region_server_t region_server, enum region_server_status status);
 
-region_server_iterator_t create_region_server_iterator(region_server_t);
-region_info_t get_next_region_info(region_server_iterator_t iterator);
-region_t get_region(region_info_t region_info);
-enum server_role get_role(region_info_t region_info);
-void close_region_server_iterator(region_server_iterator_t iterator);
+region_server_iterator_t RS_create_region_server_iterator(region_server_t);
+region_info_t RS_get_next_region_info(region_server_iterator_t iterator);
+region_t RS_get_region(region_info_t region_info);
+enum server_role RS_get_role(region_info_t region_info);
+void RS_close_region_server_iterator(region_server_iterator_t iterator);
 
 #endif

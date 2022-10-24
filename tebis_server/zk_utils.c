@@ -35,6 +35,7 @@ char *zku_concat_strings(int num, ...)
 			idx += strlen(tmp_string);
 			if (idx >= total_length) {
 				log_fatal("idx = %d total_length %d", idx, total_length);
+				assert(0);
 				exit(EXIT_FAILURE);
 			}
 		}

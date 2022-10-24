@@ -11,10 +11,12 @@
  * the system must N Region Server which host all the available regions of the
  * system.
  */
+#include "../tebis_server/master/command.h"
 #include "../tebis_server/metadata.h"
 #include "../tebis_server/zk_utils.h"
 #include <fcntl.h>
 #include <log.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,15 +32,83 @@ enum host_id { HOST0 = 0, HOST1, HOST2, HOST3, HOST4, HOST_SIZE };
 #include <log.h>
 #include <stdlib.h>
 
-typedef struct {
+struct tebis_host {
 	char hostname[MAX_HOSTNAME_SIZE];
-} tebis_host_t;
+};
 
-typedef struct {
+struct tebis_host_group {
 	int capacity;
 	int num_of_servers;
-	tebis_host_t *hosts;
-} tebis_host_group_t;
+	struct tebis_host *hosts;
+};
+
+struct kadmos_manager {
+	pthread_mutex_t manager_lock;
+};
+
+static void reply_to_master(zhandle_t *zk_handle, MC_command_t command)
+{
+	log_debug("Request from master:");
+	MC_print_command(command);
+	MC_command_code_t cmd_code = MC_get_command_code(command);
+	if (OPEN_REGION_START != cmd_code) {
+		log_fatal("Wrong command");
+		_exit(EXIT_FAILURE);
+	}
+	MC_command_t cmd = MC_create_command(OPEN_REGION_COMMIT, MC_get_region_id(command), MC_get_role(command),
+					     MC_get_command_id(command));
+	char *master_mail_path =
+		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_LEADER_PATH, KRM_MAIL_TITLE);
+	log_debug("Replying to master:");
+	MC_print_command(command);
+	int ret_code = zoo_create(zk_handle, master_mail_path, (const char *)cmd, MC_get_command_size(),
+				  &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT | ZOO_SEQUENCE, NULL, -1);
+	if (ZOK != ret_code) {
+		log_fatal("Failed to respond to server:%s reason: %s", master_mail_path, zerror(ret_code));
+		_exit(EXIT_FAILURE);
+	}
+}
+
+static void kadmos_mailbox_watcher(zhandle_t *zk_handle, int type, int state, const char *path, void *context)
+{
+	(void)type;
+	(void)state;
+	struct kadmos_manager *manager = (struct kadmos_manager *)context;
+	pthread_mutex_lock(&manager->manager_lock);
+	struct String_vector mails = { 0 };
+	int ret_code = zoo_wget_children(zk_handle, path, kadmos_mailbox_watcher, manager, &mails);
+	if (ZOK != ret_code) {
+		log_fatal("failed to fetch emails for path:%s error code %s", path, zerror(ret_code));
+		_exit(EXIT_FAILURE);
+	}
+	log_debug("Mails from folder:%s number:%d", path, mails.count);
+
+	for (int i = 0; i < mails.count; ++i) {
+		char *mail = zku_concat_strings(3, path, KRM_SLASH, mails.data[i]);
+		char *cmd_buffer = calloc(1UL, MC_get_command_size());
+		int cmd_buffer_len = MC_get_command_size();
+		struct Stat stat = { 0 };
+		int ret_code = zoo_get(zk_handle, mail, 0, cmd_buffer, &cmd_buffer_len, &stat);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to fetch email:%s reason %s", mail, zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		MC_command_t command = (MC_command_t)cmd_buffer;
+
+		reply_to_master(zk_handle, command);
+		ret_code = zoo_delete(zk_handle, mail, -1);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to delete email %s reason %s", path, zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		free(cmd_buffer);
+		cmd_buffer = NULL;
+		free(mail);
+		mail = NULL;
+	}
+
+	pthread_mutex_unlock(&manager->manager_lock);
+}
 
 static void kadmos_zk_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
@@ -59,19 +129,19 @@ static void kadmos_zk_watcher(zhandle_t *zkh, int type, int state, const char *p
 	log_warn("Unhandled event");
 }
 
-static tebis_host_group_t *create_empty_group(int capacity)
+static struct tebis_host_group *create_empty_group(int capacity)
 {
-	tebis_host_group_t *group = calloc(1, sizeof(tebis_host_group_t));
-	group->hosts = calloc(capacity, sizeof(tebis_host_t));
+	struct tebis_host_group *group = calloc(1, sizeof(struct tebis_host_group));
+	group->hosts = calloc(capacity, sizeof(struct tebis_host));
 	group->capacity = capacity;
 	return group;
 }
 
-static void add_tebis_host_to_group(tebis_host_group_t *group, char *host)
+static void add_host_in_group(struct tebis_host_group *group, char *host)
 {
 	if (group->num_of_servers >= group->capacity) {
 		group->capacity *= 2;
-		group->hosts = realloc(group->hosts, group->capacity * sizeof(tebis_host_t));
+		group->hosts = realloc(group->hosts, group->capacity * sizeof(struct tebis_host));
 		if (!group->hosts) {
 			log_fatal("Resizing failed");
 			_exit(EXIT_FAILURE);
@@ -81,14 +151,14 @@ static void add_tebis_host_to_group(tebis_host_group_t *group, char *host)
 }
 
 #if 0
-static void remove_tebis_host_from_group(tebis_host_group_t *group, int id)
+static void remove_tebis_host_from_group(struct tebis_host_group *group, int id)
 {
 	(void)group;
 	(void)id;
 }
 #endif
 
-static tebis_host_group_t **generate_groups(long int replication_size, long int num_of_servers_per_group)
+static struct tebis_host_group **generate_groups(long int replication_size, long int num_of_servers_per_group)
 {
 	if (replication_size < 1) {
 		log_fatal("Replication size %ld must be > 1 otherwise what is the point of the test?",
@@ -108,19 +178,19 @@ static tebis_host_group_t **generate_groups(long int replication_size, long int 
 		_exit(EXIT_FAILURE);
 	}
 
-	tebis_host_group_t **groups = calloc(replication_size, sizeof(tebis_host_group_t *));
+	struct tebis_host_group **groups = calloc(replication_size, sizeof(struct tebis_host_group *));
 
 	for (int i = 0; i < replication_size; ++i) {
 		groups[i] = create_empty_group(INITIAL_CAPACITY);
 		for (int j = 0; j < num_of_servers_per_group; ++j) {
 			char host_buffer[MAX_HOSTNAME_SIZE] = { 0 };
 			strcpy(host_buffer, hostname[i]);
-			if (sprintf(&host_buffer[strlen(hostname[i])], ":%d", j) < 0) {
+			if (sprintf(&host_buffer[strlen(hostname[i])], ":%d,0", j) < 0) {
 				log_fatal("Sprintf failed");
 				_exit(EXIT_FAILURE);
 			}
 			// log_debug("Adding host %s to group no %d", host_buffer, i);
-			add_tebis_host_to_group(groups[i], host_buffer);
+			add_host_in_group(groups[i], host_buffer);
 		}
 	}
 	return groups;
@@ -134,7 +204,7 @@ typedef struct {
 	char *region_buffer;
 	char *region_min_key;
 	char *region_max_key;
-	tebis_host_group_t **groups;
+	struct tebis_host_group **groups;
 	int region_id;
 	int region_buffer_size;
 	int region_min_key_size;
@@ -166,7 +236,7 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 	}
 	for (int i = 0; i < region_configuration->replication_size; ++i) {
 		int ret = sprintf(&region_configuration->region_buffer[strlen(region_configuration->region_buffer)],
-				  " %s,0 ",
+				  " %s ",
 				  region_configuration->groups[i]
 					  ->hosts[rand() % region_configuration->groups[i]->num_of_servers]
 					  .hostname);
@@ -176,10 +246,10 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 		}
 	}
 }
-#define MASTER "sith6.cluster.ics.forth.gr:8080"
-#define ZOOKEEPER_HOST "sith6.cluster.ics.forth.gr:2181"
+#define MASTER "sith2.cluster.ics.forth.gr:8080,0"
+#define ZOOKEEPER_HOST "sith2.cluster.ics.forth.gr:2181"
 #define ZOOKEEPER_TIMEOUT 15000
-static void create_hosts_file(tebis_host_group_t **groups, long int num_of_groups, char *host_file_path)
+static void create_hosts_file(struct tebis_host_group **groups, long int num_of_groups, char *host_file_path)
 {
 	FILE *hosts_file = fopen(host_file_path, "we+");
 	if (NULL == hosts_file) {
@@ -221,7 +291,7 @@ static void append_region_to_file(FILE *region_file, region_configuration_t *reg
 	}
 }
 
-static void create_region_file(char *regions_file_path, long int replication_size, tebis_host_group_t **groups,
+static void create_region_file(char *regions_file_path, long int replication_size, struct tebis_host_group **groups,
 			       long int num_of_regions)
 {
 	FILE *region_file = fopen(regions_file_path, "we+");
@@ -281,9 +351,9 @@ static void create_region_file(char *regions_file_path, long int replication_siz
 	}
 }
 
-void register_all_servers_as_alive(zhandle_t *zhandle, char *host_file_path)
-{
 #define HOSTNAME_BUFFER_SIZE 256
+static void register_all_servers_as_alive(zhandle_t *zhandle, char *host_file_path, struct kadmos_manager *manager)
+{
 	FILE *hosts_file = fopen(host_file_path, "re");
 	if (NULL == hosts_file) {
 		log_fatal("Failed to open file %s", host_file_path);
@@ -293,24 +363,27 @@ void register_all_servers_as_alive(zhandle_t *zhandle, char *host_file_path)
 	char hostname[HOSTNAME_BUFFER_SIZE] = { 0 };
 	while (fgets(hostname, HOSTNAME_BUFFER_SIZE, hosts_file)) {
 		hostname[strlen(hostname) - 1] = '\0';
-		// log_debug("Host is %s", hostname);
-		char *zk_path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH, KRM_SLASH, hostname);
+		log_debug("Host is %s", hostname);
 		char created_path[HOSTNAME_BUFFER_SIZE] = { 0 };
-		int ret_code = zoo_create(zhandle, zk_path, NULL, -1, &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT,
-					  created_path, HOSTNAME_BUFFER_SIZE);
-		if (ZOK != ret_code) {
-			log_fatal("Failed to create zookeeper node %s of size %lu code is %s", zk_path, strlen(zk_path),
-				  zerror(ret_code));
-			_exit(EXIT_FAILURE);
-		}
-		free(zk_path);
 		char hostname_with_epoch[HOSTNAME_BUFFER_SIZE] = { 0 };
-		if (snprintf(hostname_with_epoch, HOSTNAME_BUFFER_SIZE, "%s,0", hostname) < 0) {
+		if (snprintf(hostname_with_epoch, HOSTNAME_BUFFER_SIZE, "%s", hostname) < 0) {
 			log_fatal("Failed to create hostname with epoch");
 			_exit(EXIT_FAILURE);
 		}
-		zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, hostname_with_epoch);
-		memset(created_path, 0x00, HOSTNAME_BUFFER_SIZE);
+
+		char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, hostname_with_epoch);
+		int ret_code = zoo_create(zhandle, zk_path, NULL, -1, &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, NULL, -1);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to create mailbox: %s of server: %s reason: %s", zk_path, hostname,
+				  zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		kadmos_mailbox_watcher(zhandle, -1, -1, zk_path, manager);
+		free(zk_path);
+		zk_path = NULL;
+
+		zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH, KRM_SLASH, hostname);
+
 		ret_code = zoo_create(zhandle, zk_path, NULL, -1, &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT, created_path,
 				      HOSTNAME_BUFFER_SIZE);
 		if (ZOK != ret_code) {
@@ -319,6 +392,7 @@ void register_all_servers_as_alive(zhandle_t *zhandle, char *host_file_path)
 			_exit(EXIT_FAILURE);
 		}
 		free(zk_path);
+		zk_path = NULL;
 	}
 
 	if (fclose(hosts_file) < 0) {
@@ -362,7 +436,7 @@ int main(int argc, char **argv)
 	if (is_load) {
 		long int replication_size = strtol(argv[arg_id++], NULL, DECIMAL);
 		long int num_of_servers_per_group = strtol(argv[arg_id++], NULL, DECIMAL);
-		tebis_host_group_t **groups = generate_groups(replication_size, num_of_servers_per_group);
+		struct tebis_host_group **groups = generate_groups(replication_size, num_of_servers_per_group);
 		long int num_of_regions = strtol(argv[arg_id++], NULL, DECIMAL);
 		char *hosts_file_path = calloc(1, strlen(argv[arg_id]) + strlen("hosts_file") + 1);
 		strcpy(hosts_file_path, argv[arg_id]);
@@ -389,7 +463,10 @@ int main(int argc, char **argv)
 	strcpy(hosts_file_path, argv[arg_id]);
 	strcpy(&hosts_file_path[strlen(argv[arg_id])], "hosts_file");
 	assert(handle);
-	register_all_servers_as_alive(handle, hosts_file_path);
+
+	struct kadmos_manager manager = { .manager_lock = PTHREAD_MUTEX_INITIALIZER };
+
+	register_all_servers_as_alive(handle, hosts_file_path, &manager);
 	sleep(5000);
 	return 0;
 }
