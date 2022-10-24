@@ -37,7 +37,7 @@ region_t REG_create_region(const char *min_key, const char *max_key, const char 
 {
 	region_t region = calloc(1UL, sizeof(*region));
 
-	if (!strcmp(region->min_key, "-oo")) {
+	if (0 == strcmp(region->min_key, "-oo")) {
 		memset(region->min_key, 0, KRM_MAX_KEY_SIZE);
 		region->min_key_size = 1;
 	} else {
@@ -45,8 +45,7 @@ region_t REG_create_region(const char *min_key, const char *max_key, const char 
 		region->min_key_size = strlen(min_key);
 	}
 	memcpy(region->max_key, max_key, strlen(max_key));
-	memcpy(region->id, region_id, strlen(region->id));
-
+	memcpy(region->id, region_id, strlen(region_id));
 	region->max_key_size = strlen(max_key);
 	region->status = status;
 	return region;

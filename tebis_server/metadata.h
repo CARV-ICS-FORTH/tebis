@@ -36,9 +36,6 @@
 //new master staff
 #define KRM_ELECTIONS_PATH "/elections"
 #define KRM_LEADER_CLOCK "/clock"
-#define KRM_TRANSACTIONS "/transactions"
-#define KRM_TRANSACTION_GUUID "/trans-"
-#define KRM_TRANS_RESULT "/tx_result"
 
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12

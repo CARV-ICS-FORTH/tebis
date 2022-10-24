@@ -118,11 +118,13 @@ static void close_region_server_table_iterator(struct region_server_table_iterat
 struct master_s {
 	char master_hostname[KRM_HOSTNAME_SIZE];
 	char proposal[PROPOSAL_VALUE_LEN];
+	char *mailbox_path;
 	pthread_mutex_t master_lock;
 	pthread_mutex_t fresh_boot_lock;
 	master_watcher_t master_watcher;
 	sem_t barrier;
 	int64_t leadership_clock;
+	int64_t command_counter;
 	zhandle_t *zhandle;
 	region_log_t region_log;
 	struct region_table_s *region_table;
@@ -188,17 +190,15 @@ static void MASTER_mailbox_watcher(zhandle_t *zkh, int type, int state, const ch
 	(void)context;
 	struct master_s *master = (struct master_s *)context;
 	MUTEX_LOCK(&master->master_lock);
-	char *root_mail_path =
-		zku_concat_strings(5, KRM_ROOT_PATH, KRM_SLASH, KRM_MAILBOX_PATH, KRM_SLASH, KRM_LEADER_PATH);
 	struct String_vector mails = { 0 };
-	int ret_code = zoo_wget_children(master->zhandle, root_mail_path, MASTER_mailbox_watcher, master, &mails);
+	int ret_code = zoo_wget_children(master->zhandle, path, MASTER_mailbox_watcher, master, &mails);
 	if (ZOK != ret_code) {
-		log_fatal("failed to read alive_servers %s error code %s", root_mail_path, zerror(ret_code));
+		log_fatal("failed to read alive_servers %s error code: %s ", path, zerror(ret_code));
 		_exit(EXIT_FAILURE);
 	}
 
 	for (int i = 0; i < mails.count; ++i) {
-		char *mail_path = zku_concat_strings(2, root_mail_path, mails.data[i]);
+		char *mail_path = zku_concat_strings(3, path, KRM_SLASH, mails.data[i]);
 		char *cmd_buf = calloc(1UL, MC_get_command_size());
 		int cmd_buf_len = MC_get_command_size();
 		struct Stat stat = { 0 };
@@ -216,8 +216,6 @@ static void MASTER_mailbox_watcher(zhandle_t *zkh, int type, int state, const ch
 		free(mail_path);
 		mail_path = NULL;
 	}
-	free(root_mail_path);
-	root_mail_path = NULL;
 	MUTEX_UNLOCK(&master->master_lock);
 }
 
@@ -951,15 +949,13 @@ static void MASTER_build_region_table(struct master_s *master)
 			_exit(EXIT_FAILURE);
 		}
 		struct region_table_s *region_entry = calloc(1UL, sizeof(*region_entry));
-
-		region_entry->region = REG_create_region(cJSON_GetStringValue(id), cJSON_GetStringValue(min_key),
-							 cJSON_GetStringValue(max_key),
+		log_debug("Region id is %s", cJSON_GetStringValue(id));
+		region_entry->region = REG_create_region(cJSON_GetStringValue(min_key), cJSON_GetStringValue(max_key),
+							 cJSON_GetStringValue(id),
 							 (enum krm_region_status)cJSON_GetNumberValue(status));
 
 		region_entry->region_key = djb2_hash((unsigned char *)REG_get_region_id(region_entry->region),
 						     strlen(REG_get_region_id(region_entry->region)));
-		// log_debug("Adding region no %d out of %d with id %s min key %s and max key %s", i, region_names.count,
-		// 	  region->id, region->min_key, region->max_key);
 		REG_set_region_primary(region_entry->region, cJSON_GetStringValue(primary));
 		REG_set_region_primary_role(region_entry->region,
 					    master->leadership_clock > 1 ? PRIMARY : PRIMARY_INFANT);
@@ -1096,7 +1092,8 @@ static void MASTER_send_open_region_command_to_primary(struct master_s *master, 
 static uint64_t MASTER_create_uuid(struct master_s *master)
 {
 	char uuid[KRM_HOSTNAME_SIZE] = { 0 };
-	if (snprintf(uuid, KRM_HOSTNAME_SIZE, "%s:%ld", master->master_hostname, master->leadership_clock) < 0) {
+	if (snprintf(uuid, KRM_HOSTNAME_SIZE, "%s:%ld%ld", master->master_hostname, master->leadership_clock,
+		     ++master->command_counter) < 0) {
 		log_fatal("Failed to create uuid");
 		_exit(EXIT_FAILURE);
 	}
@@ -1149,6 +1146,10 @@ static void MASTER_boot_master(struct master_s *master, int port)
 	MASTER_build_region_table(master);
 	if (1 == master->leadership_clock)
 		MASTER_assign_regions(master);
+	master->command_counter = 0;
+	master->mailbox_path = zku_concat_strings(3, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_LEADER_PATH);
+	MASTER_mailbox_watcher(master->zhandle, -1, -1, master->mailbox_path, master);
+	log_debug("Registered mailbox watcher: %s", master->mailbox_path);
 
 	MASTER_full_regions_check(master);
 	master->master_started = true;
