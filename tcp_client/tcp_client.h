@@ -4,14 +4,7 @@
 #include "tebis_tcp_types.h"
 
 typedef void *c_tcp_req;
-
-/** TODO: embed 8-bit 'retc' inside payload->data pointer */
-
-struct tcp_rep {
-	int8_t retc; // return code
-	generic_data_t payload;
-};
-
+typedef void *c_tcp_rep;
 typedef void *cHandle;
 
 /**
@@ -27,16 +20,13 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
  */
 int chandle_destroy(cHandle chandle);
 
-int c_tcp_req_set_type(cHandle chandle, req_t rtype);
+c_tcp_req c_tcp_req_new(req_t rtype, size_t keysz, size_t paysz);
+int c_tcp_req_update(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz);
+int c_tcp_req_destroy(c_tcp_req req);
+void *c_tcp_req_expose_key(c_tcp_req req);
+void *c_tcp_req_expose_payload(c_tcp_req req);
 
-/**
- * @brief
- *
- * @param req
- * @param kv
- * @return int
- */
-int c_tcp_req_push(cHandle chandle, generic_data_t *restrict key, generic_data_t *restrict value);
+c_tcp_rep c_tcp_rep_new(size_t size);
 
 /**
  * @brief
@@ -45,7 +35,7 @@ int c_tcp_req_push(cHandle chandle, generic_data_t *restrict key, generic_data_t
  * @param req
  * @return int
  */
-int c_tcp_send_req(cHandle chandle);
+int c_tcp_send_req(cHandle chandle, c_tcp_req req);
 
 /**
  * @brief
@@ -54,9 +44,7 @@ int c_tcp_send_req(cHandle chandle);
  * @param rep
  * @return ssize_t
  */
-int c_tcp_recv_rep(cHandle chandle);
-
-int c_tcp_get_rep_array(cHandle restrict chandle, struct tcp_rep *restrict *restrict rep);
+int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep);
 
 /**
  * @brief
@@ -64,6 +52,6 @@ int c_tcp_get_rep_array(cHandle restrict chandle, struct tcp_rep *restrict *rest
  * @param repbuf
  * @return int
  */
-int c_tcp_print_replies(cHandle chandle);
+int c_tcp_print_reply(c_tcp_rep rep);
 
 #endif /** TEBIS_TCP_CLIENT_H **/

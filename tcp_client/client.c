@@ -15,11 +15,11 @@ typedef struct gbl_opts {
 	int mode;
 } gbl_opts;
 
-#define req_in_get_family(rtype) ((rtype) <= REQ_EXISTS)
+extern int debug_print_req(c_tcp_req req);
 
 void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restrict gopts)
 {
-	if (argc < 2) {
+	if (argc < 4) {
 		printf("usage: client \e[3mreq-type noreqs payload-size key-size [mode]\e[0m\n");
 		exit(EXIT_FAILURE);
 	}
@@ -89,47 +89,45 @@ int main(int argc, char **argv)
 
 	kv_t kv;
 
-	generic_data_t key = { .size = gopts.keysz };
-	generic_data_t val = { .size = gopts.paysz };
+	c_tcp_req req;
+	c_tcp_rep rep;
 
-	c_tcp_req_set_type(chandle, gopts.rtype);
-
-	for (uint64_t i = 0UL; i < gopts.noreqs; ++i) {
-		key.data = malloc(gopts.keysz);
-		generate_random_gdata(key.data, gopts.keysz);
-
-		if (!req_in_get_family(gopts.rtype)) {
-			val.data = malloc(gopts.paysz);
-			generate_random_gdata(val.data, gopts.paysz);
-		}
-
-		if (c_tcp_req_push(chandle, &key, &val) < 0) {
-			print_debug("c_tcp_req_pust()");
-			exit(EXIT_FAILURE);
-		}
+	if (!(req = c_tcp_req_new(REQ_GET, gopts.keysz, gopts.paysz))) {
+		perror("c_tcp_req_new() failed");
+		exit(EXIT_FAILURE);
 	}
 
-	if (c_tcp_send_req(chandle) < 0) {
+	char *__key = c_tcp_req_expose_key(req);
+	char *__pay = c_tcp_req_expose_payload(req);
+
+	if (!__pay)
+		perror("__pay -->");
+
+	generate_random_gdata(__key, gopts.keysz);
+
+	if (debug_print_req(req) < 0)
+		print_debug("debug_print_req()");
+
+	if (c_tcp_send_req(chandle, req) < 0) {
+		print_debug("c_tcp_send_req");
+		exit(EXIT_FAILURE);
+	}
+
+	if (!(rep = c_tcp_rep_new(8192UL))) {
+		print_debug("c_tcp_rep_new");
+		exit(EXIT_FAILURE);
+	}
+
+	if (c_tcp_recv_rep(chandle, rep) < 0) {
 		print_debug("c_tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	struct tcp_rep *reparr;
-
-	if (c_tcp_recv_rep(chandle) < 0)
-		print_debug("c_tcp_recv_rep()");
-
-	if (c_tcp_get_rep_array(chandle, &reparr) < 0)
-		print_debug("c_tcp_get_rep_array()");
-
-	if (c_tcp_print_replies(chandle) < 0)
+	if (c_tcp_print_reply(rep) < 0)
 		print_debug("c_tcp_print_replies()");
 
-	free(key.data);
-	free(val.data);
-
-	c_tcp_print_replies(chandle);
-	printf("terminating main()...\n");
+	chandle_destroy(chandle);
+	printf("terminating...\n");
 
 	return EXIT_SUCCESS;
 }
