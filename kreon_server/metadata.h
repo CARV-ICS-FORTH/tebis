@@ -178,7 +178,7 @@ struct ru_replica_rdma_buffer {
 
 struct ru_replica_state {
 	/*for the index staff*/
-	struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
+	//struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	/*rdma buffer keeping small and medium kv categories*/
@@ -253,7 +253,7 @@ struct krm_region_desc {
 	/*for replica_role deserializing the index*/
 	pthread_rwlock_t replica_log_map_lock;
 	struct krm_segment_entry *replica_log_map;
-	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
+	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
@@ -374,11 +374,10 @@ void di_set_cursor_buf(char *buf);
 
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id);
 int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
-int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
-				       uint8_t level_id, struct node_header *root);
-
-void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
-				       uint64_t primary_seg_offt, uint8_t level_id);
+//int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
+//				       uint8_t level_id, struct node_header *root);
+//void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
+//				       uint64_t primary_seg_offt, uint8_t level_id);
 
 struct rco_build_index_task {
 	struct krm_region_desc *r_desc;

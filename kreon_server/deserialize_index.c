@@ -210,7 +210,6 @@ static void di_free_index_buffer(struct krm_region_desc *r_desc, uint32_t level_
 	free(r_desc->index_buffer[level_id][height]);
 	r_desc->index_buffer[level_id][height] = NULL;
 }
-*/
 void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id)
 {
@@ -218,10 +217,9 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 	(void)r_desc;
 	(void)primary_seg_offt;
 	(void)level_id;
-	/*TODO we should not care about this in Tebis-Parallax no replication porting*/
+	//TODO we should not care about this in Tebis-Parallax no replication porting
 	assert(0);
 	_exit(EXIT_FAILURE);
-	/*
 	//First try to decode the segment, leaves can be done on the fly
 	uint32_t *type = (uint32_t *)((uint64_t)memory_segment + sizeof(struct segment_header));
 	switch (*type) {
@@ -381,5 +379,5 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 		assert(0);
 		exit(EXIT_FAILURE);
 	}
-	*/
 }
+*/

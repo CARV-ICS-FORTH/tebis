@@ -1086,6 +1086,8 @@ static void krm_leave_kreon(struct krm_region_desc *r_desc)
 static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
 			       struct krm_work_task *task)
 {
+	(void)task;
+#if 0
 	//where primary has stored its segment
 	flush_request->is_partial = UINT32_MAX; /*unused..*/
 	flush_request->log_buffer_id = task->seg_id_to_flush; /*unused*/

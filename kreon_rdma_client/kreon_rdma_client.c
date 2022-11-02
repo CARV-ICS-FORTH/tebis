@@ -19,7 +19,6 @@
 #include "../kreon_server/messages.h"
 #include "../utilities/spin_loop.h"
 #include <log.h>
-#include <scanner/scanner.h>
 #define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;
@@ -53,7 +52,7 @@ struct krc_scanner {
 	struct cu_region_desc *curr_region;
 };
 
-static char neg_infinity[1] = { 0 };
+//static char neg_infinity[1] = { 0 };
 static char *pos_infinity = "+oo";
 
 /*extern ZooLogLevel logLevel;*/
@@ -257,6 +256,7 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 	pthread_mutex_unlock(&conn->buffer_lock);
 }
 
+#if 0
 static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 {
 	uint32_t size;
@@ -281,6 +281,7 @@ static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 	return -1;
 }
 
+
 static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 {
 	if (key->key_size < prefix->key_size)
@@ -290,7 +291,7 @@ static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 	else
 		return 0;
 }
-
+#endif
 krc_ret_code krc_init(char *zookeeper_host)
 {
 	if (!krc_lib_init) {
@@ -301,9 +302,18 @@ krc_ret_code krc_init(char *zookeeper_host)
 	}
 	return KRC_SUCCESS;
 }
+
 static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_size, void *value,
 				     int is_update_if_exists)
 {
+	(void) key_size;
+	(void) key;
+	(void) val_size;
+	(void) value;
+	(void) is_update_if_exists;
+	log_fatal("Not supported yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header;
 	msg_put_key *put_key;
 	msg_put_value *put_value;
@@ -372,6 +382,7 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return KRC_SUCCESS;
+#endif
 }
 
 krc_ret_code krc_put_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value)
@@ -735,6 +746,14 @@ void krc_scan_fetch_keys_only(krc_scannerp sp)
 
 uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **value, size_t *valueSize)
 {
+	(void) key;
+	(void) sp;
+	(void) keySize;
+	(void) value;
+	(void) valueSize;
+	log_fatal("Not implemented yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	struct krc_scanner *sc = (struct krc_scanner *)sp;
 	msg_header *req_header;
 	msg_multi_get_req *m_get;
@@ -926,6 +945,7 @@ exit:
 		*value = NULL;
 	}
 	return sc->is_valid;
+#endif
 }
 
 void krc_scan_set_start(krc_scannerp sp, uint32_t start_key_size, void *start_key, krc_seek_mode seek_mode)

@@ -766,8 +766,10 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
+#if 0
 			for (int i = 0; i < MAX_LEVELS; i++)
 				r_desc->replica_index_map[i] = NULL;
+#endif
 			/*open the db*/
 			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
 			r_desc->db = open_db(globals_get_dev());
@@ -789,7 +791,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			rco_add_db_to_pool(server->compaction_pool, t);
 
 			reply.type = (msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_ACK_OPEN_PRIMARY :
-										       KRM_ACK_OPEN_BACKUP;
+										 KRM_ACK_OPEN_BACKUP;
 			reply.error_code = KRM_SUCCESS;
 			strcpy(reply.sender, server->name.kreon_ds_hostname);
 			reply.region = msg->region;
@@ -1284,8 +1286,10 @@ void *krm_metadata_server(void *args)
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
+#if 0
 				for (int i = 0; i < MAX_LEVELS; i++)
 					r_desc->replica_index_map[i] = NULL;
+#endif
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
 				/*find system ref*/
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,

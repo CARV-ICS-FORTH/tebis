@@ -201,8 +201,13 @@ exit:
 	return ret;
 }
 
+#if 0
 static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 {
+	(void)rpc;
+	log_fatal("We do not implement send index for now");
+	_exit(EXIT_FAILURE);
+
 	field_spin_for_value(&rpc->reply->receive, TU_RDMA_REGULAR_MSG);
 	// Wait for payload arrival
 	struct msg_header *reply = rpc->reply;
@@ -218,10 +223,20 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 	sc_free_rpc_pair(rpc);
 	memset(rpc, 0x00, sizeof(struct sc_msg_pair));
 }
+#endif
 
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
 				       uint8_t level_id, struct node_header *root)
 {
+	(void)db_id;
+	(void)dev_offt;
+	(void)seg;
+	(void)size;
+	(void)level_id;
+	(void)root;
+	log_fatal("We do not implement send index for now");
+	_exit(EXIT_FAILURE);
+#if 0
 	if (!globals_get_send_index())
 		return 0;
 
@@ -345,10 +360,15 @@ int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct
 exit:
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
+#endif
 }
 
 int rco_flush_last_log_segment(void *handle)
 {
+	(void)handle;
+	log_fatal("We do not implement send index yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	if (!globals_get_send_index()) {
 		log_info("Ommiting flush last log segment");
 		return 1;
@@ -518,6 +538,7 @@ retry:
 	}
 	free(p);
 	return 1;
+#endif
 }
 
 /*int rco_send_index_to_group(struct bt_compaction_callback_args *c)
@@ -585,6 +606,10 @@ retry:
 
 static void rco_send_index_to_replicas(struct rco_task *task)
 {
+	(void)task;
+	log_fatal("We do not implement send index for now");
+	_exit(EXIT_FAILURE);
+#if 0
 	while (1) {
 		switch (task->state) {
 		case RIS_INIT_ENV: {
@@ -923,6 +948,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 		} break;
 		}
 	}
+#endif
 }
 
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
@@ -995,6 +1021,10 @@ struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
 */
 void rco_build_index(struct rco_build_index_task *task)
 {
+	(void)task;
+	log_fatal("We do not implement build index yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	struct rco_key {
 		uint32_t size;
 		char key[];
@@ -1009,7 +1039,6 @@ void rco_build_index(struct rco_build_index_task *task)
 	struct rco_key *key = NULL;
 	struct rco_value *value = NULL;
 	struct segment_header *curr_segment = task->segment;
-	//struct db_descriptor *db_desc = task->r_desc->db->db_desc;
 	uint64_t log_offt = task->log_start;
 	key = (struct rco_key *)((uint64_t)curr_segment + sizeof(struct segment_header));
 
@@ -1061,6 +1090,7 @@ void rco_build_index(struct rco_build_index_task *task)
 			break;
 	}
 	//log_info("Done parsing segment");
+#endif
 }
 
 static void *rco_compaction_worker(void *args)
