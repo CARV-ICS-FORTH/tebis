@@ -226,14 +226,13 @@ static void rco_wait_flush_reply(struct sc_msg_pair *rpc)
 #endif
 
 int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
-				       uint8_t level_id, struct node_header *root)
+				       uint8_t level_id)
 {
 	(void)db_id;
 	(void)dev_offt;
 	(void)seg;
 	(void)size;
 	(void)level_id;
-	(void)root;
 	log_fatal("We do not implement send index for now");
 	_exit(EXIT_FAILURE);
 #if 0

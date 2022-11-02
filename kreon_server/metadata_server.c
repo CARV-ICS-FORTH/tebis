@@ -9,9 +9,9 @@
 #include <assert.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
+#include <include/parallax/parallax.h>
 #include <libgen.h>
 #include <log.h>
-#include <parallax.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -22,14 +22,16 @@ uint64_t ds_hash_key;
 
 par_handle open_db(const char *path)
 {
-	par_db_options db_options;
-	db_options.volume_name = (char *)path;
-	db_options.volume_start = 0;
-	db_options.volume_size = 0;
-	db_options.create_flag = PAR_CREATE_DB;
-	db_options.db_name = "tebis_storage_engine";
-
-	par_handle handle = par_open(&db_options);
+	par_db_options db_options = { .volume_name = (char *)path,
+				      .create_flag = PAR_CREATE_DB,
+				      .db_name = "tebis_storage_engine",
+				      .options = par_get_default_options() };
+	const char *error_message = NULL;
+	par_handle handle = par_open(&db_options, &error_message);
+	if (error_message) {
+		log_fatal("Error uppon opening the DB, error %s", error_message);
+		_exit(EXIT_FAILURE);
+	}
 	return handle;
 }
 
@@ -602,7 +604,7 @@ void dataserver_health_watcher(zhandle_t *zh, int type, int state, const char *p
 			assert(rc == ZOK);
 			enum krm_msg_type msg_type = (current->lr_state.role == KRM_PRIMARY) ?
 							     KRM_OPEN_REGION_AS_PRIMARY :
-								   KRM_OPEN_REGION_AS_BACKUP;
+							     KRM_OPEN_REGION_AS_BACKUP;
 			// Send open command to new assignee
 			krm_resend_open_command(my_desc, current_region, next_assignee->server_id.kreon_ds_hostname,
 						msg_type);
@@ -736,7 +738,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			log_warn("Epochs mismatch I am at epoch %lu msg refers to epoch %lu", server->name.epoch,
 				 msg->epoch);
 			reply.type = (msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_NACK_OPEN_PRIMARY :
-										       KRM_NACK_OPEN_BACKUP;
+										 KRM_NACK_OPEN_BACKUP;
 			reply.error_code = KRM_BAD_EPOCH;
 			strcpy(reply.sender, server->name.kreon_ds_hostname);
 			reply.region = msg->region;

@@ -114,7 +114,7 @@ struct msg_put_kv {
 	uint32_t key_size;
 	uint32_t value_size;
 	uint8_t sizes_tail;
-	char kv_payload[]; /*XXX TODO XXX holds kv pairs as <key_size,key,value_size,value>*/
+	char kv_payload[]; /*payload | payload tail*/
 };
 
 typedef struct msg_put_rep {

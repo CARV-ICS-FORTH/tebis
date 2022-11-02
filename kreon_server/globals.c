@@ -4,7 +4,7 @@
 #include "../utilities/macros.h"
 #include "conf.h"
 #include <fcntl.h>
-#include <include/parallax.h>
+#include <include/parallax/parallax.h>
 #include <linux/fs.h>
 #include <linux/hdreg.h>
 #include <log.h>
@@ -228,7 +228,11 @@ void globals_init_volume(void)
 			_exit(EXIT_FAILURE);
 		}
 		log_info("underyling volume is a block device %s of size %ld bytes", global_vars.dev, size);
-		par_format(global_vars.dev, 128);
+		char *error_message = par_format(global_vars.dev, 128);
+		if (error_message) {
+			log_fatal("Error uppon formating, error %s", error_message);
+			_exit(EXIT_FAILURE);
+		}
 	} else {
 		log_info("Retrieving file: %s size...", global_vars.dev);
 		size = lseek64(fd, 0, SEEK_END);
@@ -239,7 +243,11 @@ void globals_init_volume(void)
 		}
 		log_info("Volume is a file %s of size %ld bytes", global_vars.dev, size);
 		close(fd);
-		par_format(global_vars.dev, 128);
+		char *error_message = par_format(global_vars.dev, 128);
+		if (error_message) {
+			log_fatal("Error uppon formating, error %s", error_message);
+			_exit(EXIT_FAILURE);
+		}
 	}
 
 	global_vars.volume_size = size;

@@ -14,7 +14,8 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "conf.h"
-#include <include/parallax.h>
+#include "parallax/structures.h"
+#include <include/parallax/parallax.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,11 +167,9 @@ static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, ui
 
 /*the tail of the kv_payload is a uint8_t at the end of the buffer.
 	 *kv payloads follow |key_size|key|value_size|value| format */
-void set_tail_for_kv_payload(char *kv_payload, uint8_t value)
+void set_tail_for_kv_payload(char *kv_payload, uint32_t key_size, uint32_t value_size, uint8_t value)
 {
-	uint32_t key_size = *(uint32_t *)kv_payload;
-	uint32_t value_size = *(uint32_t *)(kv_payload + key_size + sizeof(uint32_t));
-	char *tail = kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size;
+	char *tail = kv_payload + key_size + value_size;
 	*(uint8_t *)tail = value;
 }
 
@@ -1086,6 +1085,8 @@ static void krm_leave_kreon(struct krm_region_desc *r_desc)
 static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
 			       struct krm_work_task *task)
 {
+	(void)r_desc;
+	(void)flush_request;
 	(void)task;
 #if 0
 	//where primary has stored its segment
@@ -1099,21 +1100,20 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
 	flush_request->log_padding = task->ins_req.metadata.log_padding; /*unused*/
 	flush_request->region_key_size = r_desc->region->min_key_size;
 	strcpy(flush_request->region_key, r_desc->region->min_key);
+#endif
 }
 
 /** Fills the replication fields of a put msg. Only put msgs need to be replicated.
  *  The space of these fields is preallocated from the client in order to have zero copy transfer
  *  from primaries to backups
  *  The replications fields are |lsn|log_offt|sizes_tail|payload_tail|*/
-/*XXX TODO XXX remove this variable and fill lsns from Parallax*/
-uint64_t current_lsn_ticket = 0;
-static void fill_replication_fields(struct msg_put_kv *put_msg)
+static void fill_replication_fields(struct msg_put_kv *put_msg, struct par_put_metadata metadata)
 {
 	assert(put_msg);
-	put_msg->log_offt = UINT64_MAX;
-	put_msg->lsn = __sync_fetch_and_add(&current_lsn_ticket, 1);
+	put_msg->log_offt = metadata.offset_in_log;
+	put_msg->lsn = metadata.lsn;
 	put_msg->sizes_tail = TU_RDMA_REPLICATION_MSG;
-	set_tail_for_kv_payload(put_msg->kv_payload, TU_RDMA_REPLICATION_MSG);
+	set_tail_for_kv_payload(put_msg->kv_payload, put_msg->key_size, put_msg->value_size, TU_RDMA_REPLICATION_MSG);
 }
 
 static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
@@ -1129,24 +1129,12 @@ static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, stru
 	return 0;
 }
 
-static void calc_kv_category(struct krm_work_task *task)
-{
-	uint32_t value_size = task->kv->value_size;
-	uint32_t key_size = task->kv->key_size;
-	double kv_ratio = ((double)key_size) / value_size;
-
-	if (kv_ratio >= 0.0 && kv_ratio < 0.02)
-		task->kv_category = BIG;
-	else if (kv_ratio >= 0.02 && kv_ratio <= 0.2)
-		task->kv_category = MEDIUM;
-	else
-		task->kv_category = SMALL;
-}
-
 uint64_t lsn_to_be_replicated = 0;
 void insert_kv_to_store(struct krm_work_task *task)
 {
 #if CREATE_TRACE_FILE
+	log_fatal("Fix creation of trace file with the new format");
+	_exit(EXIT_FAILURE);
 	uint32_t key_size = *(uint32_t *)task->kv->kv_payload;
 	char *key = task->kv->kv_payload + sizeof(uint32_t);
 	uint32_t value_size = *(uint32_t *)(task->kv->kv_payload + sizeof(uint32_t) + key_size);
@@ -1155,15 +1143,21 @@ void insert_kv_to_store(struct krm_work_task *task)
 #endif
 
 	/*insert kv to data store*/
-	if (par_put_serialized(task->r_desc->db, task->kv->kv_payload) == PAR_FAILURE) {
+	const char *error_message = NULL;
+	struct par_put_metadata metadata =
+		par_put_serialized(task->r_desc->db, (char *)&task->kv->key_size, &error_message);
+	if (error_message) {
 		krm_leave_kreon(task->r_desc);
 		return;
 	}
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
 		/*this needs the Parallax support*/
-		fill_replication_fields(task->kv);
-		calc_kv_category(task);
+		fill_replication_fields(task->kv, metadata);
+		task->kv_category = SMALLORMEDIUM;
+		if (metadata.key_value_category == BIG_INLOG)
+			task->kv_category = BIG;
+
 		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
 	} else
 		task->kreon_operation_status = TASK_COMPLETE;
@@ -1392,9 +1386,9 @@ static uint8_t key_exists(struct krm_work_task *task)
 {
 	assert(task);
 	par_handle par_hd = (par_handle)task->r_desc->db;
-	struct par_key pkey;
-	pkey.data = task->kv->kv_payload + sizeof(uint32_t);
-	pkey.size = *(uint32_t *)task->kv->kv_payload;
+	struct par_key pkey = { 0 };
+	pkey.size = task->kv->key_size;
+	pkey.data = task->kv->kv_payload;
 	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
 		return 0;
 
@@ -1410,17 +1404,17 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	if (task->kv == NULL) {
 		task->kv = (struct msg_put_kv *)((char *)task->msg + sizeof(struct msg_header));
 		uint32_t key_length = task->kv->key_size;
-		char *key = task->kv->kv_payload + sizeof(uint32_t);
+		char *key = task->kv->kv_payload;
 		if (key_length == 0) {
 			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 		/*calculate kv_payload size*/
-		task->kv_size = task->kv->key_size + sizeof(uint32_t); /*key part*/
-		task->kv_size = task->kv_size + task->kv->value_size + sizeof(uint32_t); /*value part*/
-		/*offt + lsn + sizes_tail + key_size + value_size payload_tail*/
-		task->kv_size = task->kv_size + sizeof(uint64_t) + sizeof(uint32_t) + 2 * sizeof(uint32_t) +
-				2 * sizeof(uint8_t);
+		task->kv_size = task->kv->key_size + sizeof(task->kv->key_size); /*key part*/
+		task->kv_size = task->kv_size + task->kv->value_size + sizeof(task->kv->value_size); /*value part*/
+		/*offt + lsn + sizes_tail + payload_tail*/
+		task->kv_size = task->kv_size + sizeof(task->kv->log_offt) + sizeof(task->kv->lsn) +
+				2 * sizeof(task->kv->sizes_tail);
 
 		task->r_desc = krm_get_region(mydesc, key, key_length);
 		if (task->r_desc == NULL) {
@@ -1489,10 +1483,11 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_key lookup_key = { .size = get_req->key_size, .data = get_req->key };
 	struct par_value lookup_value = { .val_buffer = NULL };
-	par_ret_code get_code = par_get(par_hd, &lookup_key, &lookup_value);
+	const char *error_message = NULL;
+	par_get(par_hd, &lookup_key, &lookup_value, &error_message);
 	krm_leave_kreon(r_desc);
 
-	if (get_code == PAR_KEY_NOT_FOUND) {
+	if (error_message) {
 		log_warn("key not found key %s : length %u", get_req->key, get_req->key_size);
 
 		get_rep->key_found = 0;

@@ -306,11 +306,11 @@ krc_ret_code krc_init(char *zookeeper_host)
 static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_size, void *value,
 				     int is_update_if_exists)
 {
-	(void) key_size;
-	(void) key;
-	(void) val_size;
-	(void) value;
-	(void) is_update_if_exists;
+	(void)key_size;
+	(void)key;
+	(void)val_size;
+	(void)value;
+	(void)is_update_if_exists;
 	log_fatal("Not supported yet");
 	_exit(EXIT_FAILURE);
 #if 0
@@ -746,11 +746,11 @@ void krc_scan_fetch_keys_only(krc_scannerp sp)
 
 uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **value, size_t *valueSize)
 {
-	(void) key;
-	(void) sp;
-	(void) keySize;
-	(void) value;
-	(void) valueSize;
+	(void)key;
+	(void)sp;
+	(void)keySize;
+	(void)value;
+	(void)valueSize;
 	log_fatal("Not implemented yet");
 	_exit(EXIT_FAILURE);
 #if 0
@@ -1110,14 +1110,14 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
 	put_kv->sizes_tail = 0;
 	/*fill the kv_payload the Parallax way*/
 	char *kv_payload = put_kv->kv_payload;
-	*(uint32_t *)kv_payload = key_size; /*key_size*/
-	memcpy(kv_payload + sizeof(uint32_t), key, key_size); /*key*/
-	*(uint32_t *)(kv_payload + sizeof(uint32_t) + key_size) = value_size; /*value_size*/
-	memcpy(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t), value, value_size); /*value*/
+	memcpy(kv_payload, key, key_size); /*key*/
+	memcpy(kv_payload + key_size, value, value_size); /*value*/
 	/*tail for payload*/
-	*(uint8_t *)(kv_payload + sizeof(uint32_t) + key_size + sizeof(uint32_t) + value_size) = 0;
+	*(uint8_t *)(kv_payload + key_size + value_size) = 0;
 
 #if CREATE_TRACE_FILE
+	log_fatal("reimplement trace files with new format");
+	_exit(EXIT_FAILURE);
 	uint32_t kv_key_size = *(uint32_t *)kv_payload;
 	char *kv_key = kv_payload + sizeof(uint32_t);
 	uint32_t kv_value_size = *(uint32_t *)(kv_payload + sizeof(uint32_t) + key_size);
@@ -1134,12 +1134,14 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
  * */
 uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
 {
-	uint32_t offt_size = sizeof(uint64_t);
-	uint32_t lsn_size = sizeof(uint32_t);
+	struct msg_put_kv put_msg = { 0 };
+	uint32_t offt_size = sizeof(put_msg.log_offt);
+	uint32_t lsn_size = sizeof(put_msg.lsn);
 	uint32_t tail_size = TU_TAIL_SIZE;
-	uint32_t kv_payload_size = key_size + value_size + 2 * sizeof(uint32_t);
+	uint32_t kv_payload_size = key_size + value_size;
 
-	return offt_size + lsn_size + 2 * sizeof(uint32_t) + tail_size + kv_payload_size + tail_size;
+	return offt_size + lsn_size + sizeof(put_msg.key_size) + sizeof(put_msg.value_size) + tail_size +
+	       kv_payload_size + tail_size;
 }
 
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
@@ -1148,12 +1150,6 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
 	msg_put_rep *put_rep = NULL;
-	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
-		log_fatal("KV size too large currently for Kreon, current max value size supported = %lu bytes",
-			  SEGMENT_SIZE - sizeof(segment_header));
-		log_fatal("Contact gesalous@ics.forth.gr");
-		_exit(EXIT_FAILURE);
-	}
 
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	uint64_t seed = djb2_hash((unsigned char *)key, key_size);

@@ -5,8 +5,8 @@
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/list.h"
 #include "uthash.h"
-#include <btree/btree.h>
-#include <include/parallax.h>
+#include <btree/conf.h>
+#include <include/parallax/parallax.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
@@ -86,7 +86,7 @@ enum krm_work_task_status {
 	TASK_NO_OP
 };
 
-enum tb_kv_category { SMALL = 0, MEDIUM, BIG };
+enum tb_kv_category { SMALLORMEDIUM = 0, BIG };
 
 enum tb_rdma_buf_category { L0_RECOVERY_RDMA_BUF, BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
@@ -102,7 +102,6 @@ enum krm_work_task_type { KRM_CLIENT_TASK, KRM_SERVER_TASK };
 
 struct krm_work_task {
 	/*from client*/
-	bt_insert_req ins_req;
 	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
 	volatile uint64_t *replicated_bytes;
 	uint32_t last_replica_to_ack;
