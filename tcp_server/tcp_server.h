@@ -1,8 +1,8 @@
 #ifndef TEBIS_TCP_SERVER_H
 #define TEBIS_TCP_SERVER_H
 
-#include "tebis_tcp_errors.h"
 #include "tebis_tcp_types.h"
+#include "tebis_tcp_errors.h"
 
 #include <sys/socket.h>
 
@@ -28,6 +28,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
  * @return int
  */
 int shandle_destroy(sHandle shandle);
+
 
 void s_tcp_print_req(s_tcp_req req);
 

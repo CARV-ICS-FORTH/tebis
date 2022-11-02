@@ -17,9 +17,9 @@
 
 typedef enum {
 
-	TT_ERR_CONN_DROP = 2,
-#define TT_ERR_CONN_DROP -(TT_ERR_CONN_DROP)
-	TT_ERR_
+    TT_ERR_CONN_DROP = 2,
+    #define TT_ERR_CONN_DROP -(TT_ERR_CONN_DROP)
+    TT_ERR_
 } tterr_t;
 
 #endif /** TEBIS_TCP_ERRORS_H **/

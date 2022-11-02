@@ -15,6 +15,7 @@ typedef struct gbl_opts {
 	int mode;
 } gbl_opts;
 
+
 extern int debug_print_req(c_tcp_req req);
 
 void process_main_args(int argc, char *restrict *restrict argv, gbl_opts *restrict gopts)
@@ -87,12 +88,11 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	kv_t kv;
-
 	c_tcp_req req;
 	c_tcp_rep rep;
 
-	if (!(req = c_tcp_req_new(REQ_GET, gopts.keysz, gopts.paysz))) {
+	if ( !(req = c_tcp_req_new(REQ_GET, gopts.keysz, gopts.paysz)) )
+	{
 		perror("c_tcp_req_new() failed");
 		exit(EXIT_FAILURE);
 	}
@@ -100,7 +100,7 @@ int main(int argc, char **argv)
 	char *__key = c_tcp_req_expose_key(req);
 	char *__pay = c_tcp_req_expose_payload(req);
 
-	if (!__pay)
+	if ( !__pay )
 		perror("__pay -->");
 
 	generate_random_gdata(__key, gopts.keysz);
@@ -108,22 +108,25 @@ int main(int argc, char **argv)
 	if (debug_print_req(req) < 0)
 		print_debug("debug_print_req()");
 
-	if (c_tcp_send_req(chandle, req) < 0) {
+	if (c_tcp_send_req(chandle, req) < 0 )
+	{
 		print_debug("c_tcp_send_req");
 		exit(EXIT_FAILURE);
 	}
 
-	if (!(rep = c_tcp_rep_new(8192UL))) {
+	if ( !(rep = c_tcp_rep_new(8192UL)) )
+	{
 		print_debug("c_tcp_rep_new");
 		exit(EXIT_FAILURE);
 	}
 
-	if (c_tcp_recv_rep(chandle, rep) < 0) {
+	if (c_tcp_recv_rep(chandle, rep) < 0)
+	{
 		print_debug("c_tcp_recv_rep()");
 		exit(EXIT_FAILURE);
 	}
 
-	if (c_tcp_print_reply(rep) < 0)
+	if (c_tcp_print_rep(rep) < 0)
 		print_debug("c_tcp_print_replies()");
 
 	chandle_destroy(chandle);

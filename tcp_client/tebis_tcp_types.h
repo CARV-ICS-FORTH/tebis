@@ -21,6 +21,7 @@
 #define is_req_invalid(req) ((uint32_t)((req.type)) >= OPSNO)
 
 struct buffer {
+
 	uint64_t bytes;
 	char *mem;
 };
@@ -42,6 +43,7 @@ typedef struct {
 typedef enum {
 
 /** buffer scheme: [1B type | 8B keysz | 8B paysz | payload[key|data]] **/
+
 
 #define OPSNO 6U
 

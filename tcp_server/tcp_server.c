@@ -48,6 +48,7 @@ typedef struct {
 } tcp_req;
 
 typedef struct {
+
 	int32_t retc;
 	uint64_t paysz;
 
@@ -247,7 +248,8 @@ static void *thread_routine(void *arg)
 						continue;
 					}
 
-					if (tcp_recv_req(this, clifd, &req) < 0) {
+					if ( tcp_recv_req(this, clifd, &req) < 0 )
+					{
 						dprint("tcp_recv_req() failed!");
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
@@ -392,7 +394,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-cleanup:
+	cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);
@@ -421,7 +423,8 @@ int shandle_destroy(sHandle shandle)
 
 s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz)
 {
-	if (!this) {
+	if ( !this )
+	{
 		errno = EINVAL;
 		return NULL;
 	}
@@ -429,12 +432,13 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz)
 	tcp_rep *trep;
 	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
 
-	if (this->buf.bytes < tsize) {
+	if ( this->buf.bytes < tsize )
+	{
 		errno = ENOMEM;
 		return NULL;
 	}
 
-	if (retcode == TT_REQ_SUCC)
+	if ( retcode == TT_REQ_SUCC )
 		tsize += paysz + __x86_PAGESIZE; // extra page for future use!
 	else
 		paysz = 0UL; // failure-reply has 0-length payload
@@ -453,7 +457,8 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz)
 
 static void *s_tcp_rep_expose_payload(s_tcp_rep rep)
 {
-	if (!rep) {
+	if ( !rep )
+	{
 		errno = EINVAL;
 		return NULL;
 	}
@@ -463,7 +468,8 @@ static void *s_tcp_rep_expose_payload(s_tcp_rep rep)
 
 static int tcp_recv_req(worker_t *restrict this, int clifd, tcp_req *restrict req)
 {
-	if (!this || clifd < 0 || !req) {
+	if (!this || clifd < 0 || !req)
+	{
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -477,7 +483,7 @@ static int tcp_recv_req(worker_t *restrict this, int clifd, tcp_req *restrict re
 
 	/** TODO: respond with an error message, insted of just close(clifd) */
 
-	if ((bytes_read = recv(clifd, this->buf.mem, req_total_size, 0)) < 0) {
+	if ( (bytes_read = recv(clifd, this->buf.mem, req_total_size, 0)) < 0) {
 		perror("tcp_recv_req::read()");
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 		close(clifd);
@@ -487,7 +493,8 @@ static int tcp_recv_req(worker_t *restrict this, int clifd, tcp_req *restrict re
 
 	char *tmp = malloc(req_total_size);
 
-	if (!tmp) {
+	if ( !tmp )
+	{
 		perror("tcp_recv_req::epoll_ctl(MOD)");
 		close(clifd);
 
@@ -519,7 +526,8 @@ static int get_req_hdr(worker_t *restrict worker, int clifd, tcp_req *restrict r
 	if ((ret = recv(clifd, worker->buf.mem, TT_REQHDR_SIZE, 0)) < 0)
 		return -(EXIT_FAILURE);
 
-	if (!ret) {
+	if (!ret)
+	{
 		errno = ECONNABORTED;
 		return TT_ERR_CONN_DROP;
 	}
