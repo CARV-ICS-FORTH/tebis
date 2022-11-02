@@ -1103,7 +1103,6 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t value_size, void *key, void *value)
 {
 	struct msg_put_kv *put_kv = (struct msg_put_kv *)((char *)req_header + sizeof(msg_header));
-	put_kv->log_offt = 0;
 	put_kv->lsn = 0;
 	put_kv->key_size = key_size;
 	put_kv->value_size = value_size;
@@ -1135,13 +1134,12 @@ static void fill_kv_payload(msg_header *req_header, uint32_t key_size, uint32_t 
 uint32_t calculate_put_msg_size(uint32_t key_size, uint32_t value_size)
 {
 	struct msg_put_kv put_msg = { 0 };
-	uint32_t offt_size = sizeof(put_msg.log_offt);
 	uint32_t lsn_size = sizeof(put_msg.lsn);
 	uint32_t tail_size = TU_TAIL_SIZE;
 	uint32_t kv_payload_size = key_size + value_size;
 
-	return offt_size + lsn_size + sizeof(put_msg.key_size) + sizeof(put_msg.value_size) + tail_size +
-	       kv_payload_size + tail_size;
+	return lsn_size + sizeof(put_msg.key_size) + sizeof(put_msg.value_size) + tail_size + kv_payload_size +
+	       tail_size;
 }
 
 static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,

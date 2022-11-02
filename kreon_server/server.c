@@ -1110,7 +1110,6 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
 static void fill_replication_fields(struct msg_put_kv *put_msg, struct par_put_metadata metadata)
 {
 	assert(put_msg);
-	put_msg->log_offt = metadata.offset_in_log;
 	put_msg->lsn = metadata.lsn;
 	put_msg->sizes_tail = TU_RDMA_REPLICATION_MSG;
 	set_tail_for_kv_payload(put_msg->kv_payload, put_msg->key_size, put_msg->value_size, TU_RDMA_REPLICATION_MSG);
@@ -1413,8 +1412,7 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		task->kv_size = task->kv->key_size + sizeof(task->kv->key_size); /*key part*/
 		task->kv_size = task->kv_size + task->kv->value_size + sizeof(task->kv->value_size); /*value part*/
 		/*offt + lsn + sizes_tail + payload_tail*/
-		task->kv_size = task->kv_size + sizeof(task->kv->log_offt) + sizeof(task->kv->lsn) +
-				2 * sizeof(task->kv->sizes_tail);
+		task->kv_size = task->kv_size + sizeof(task->kv->lsn) + 2 * sizeof(task->kv->sizes_tail);
 
 		task->r_desc = krm_get_region(mydesc, key, key_length);
 		if (task->r_desc == NULL) {

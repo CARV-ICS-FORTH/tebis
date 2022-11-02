@@ -109,7 +109,6 @@ typedef struct msg_put_value {
 } msg_put_value;
 
 struct msg_put_kv {
-	uint64_t log_offt;
 	uint32_t lsn;
 	uint32_t key_size;
 	uint32_t value_size;
