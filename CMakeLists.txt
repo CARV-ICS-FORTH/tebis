@@ -68,7 +68,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   parallax
   GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-  GIT_TAG tebis-parallax)
+  GIT_TAG tebis_kv_format)
 
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
