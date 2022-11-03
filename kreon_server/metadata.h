@@ -105,14 +105,14 @@ struct krm_work_task {
 	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
 	volatile uint64_t *replicated_bytes;
 	uint32_t last_replica_to_ack;
-	uint64_t kv_size;
+	uint64_t msg_payload_size;
 	/*possible messages to other server generated from this task*/
 	struct sc_msg_pair communication_buf;
 	struct channel_rdma *channel;
 	struct connection_rdma *conn;
 	msg_header *msg;
 	struct krm_region_desc *r_desc;
-	struct msg_put_kv *kv;
+	struct kv_splice *kv;
 	enum tb_kv_category kv_category; /*XXX TODO make these a struct XXX*/
 	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;

@@ -13,6 +13,7 @@
 // limitations under the License.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include "btree/kv_pairs.h"
 #include "conf.h"
 #include "parallax/structures.h"
 #include <include/parallax/parallax.h>
@@ -35,6 +36,7 @@
 #include <sys/types.h>
 
 #include "../kreon_rdma/rdma.h"
+#include "../kreon_rdma_client/msg_factory.h"
 #include "../utilities/queue.h"
 #include "../utilities/spin_loop.h"
 #include "djb2.h"
@@ -1107,26 +1109,39 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
  *  The space of these fields is preallocated from the client in order to have zero copy transfer
  *  from primaries to backups
  *  The replications fields are |lsn|log_offt|sizes_tail|payload_tail|*/
-static void fill_replication_fields(struct msg_put_kv *put_msg, struct par_put_metadata metadata)
+static void fill_replication_fields(struct kv_splice *put_msg, struct par_put_metadata metadata)
 {
+	(void)put_msg;
+	(void)metadata;
+	log_fatal("Replication under construction");
+	_exit(EXIT_FAILURE);
+#if 0
 	assert(put_msg);
 	put_msg->lsn = metadata.lsn;
 	put_msg->sizes_tail = TU_RDMA_REPLICATION_MSG;
 	set_tail_for_kv_payload(put_msg->kv_payload, put_msg->key_size, put_msg->value_size, TU_RDMA_REPLICATION_MSG);
+#endif
 }
 
+#if 0
 static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
 {
+	(void)r_buf;
+	(void)task;
+	log_fatal("replication under construction");
+	_exit(EXIT_FAILURE);
+
 	/*if (task->kv_category == BIG)
 		log_debug("current end of big buf %lu end %lu", r_buf->segment.curr_end, r_buf->segment.end);
 	else
 		log_debug("current end of small buf %lu end %lu", r_buf->segment.curr_end, r_buf->segment.end);
 	*/
 	if (r_buf->segment.curr_end >= r_buf->segment.start &&
-	    r_buf->segment.curr_end + task->kv_size < r_buf->segment.end)
+	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
 		return 1;
 	return 0;
 }
+#endif
 
 uint64_t lsn_to_be_replicated = 0;
 void insert_kv_to_store(struct krm_work_task *task)
@@ -1143,14 +1158,15 @@ void insert_kv_to_store(struct krm_work_task *task)
 
 	/*insert kv to data store*/
 	const char *error_message = NULL;
-	struct par_put_metadata metadata =
-		par_put_serialized(task->r_desc->db, (char *)&task->kv->key_size, &error_message);
+	struct par_put_metadata metadata = par_put_serialized(task->r_desc->db, (char *)task->kv, &error_message);
 	if (error_message) {
 		krm_leave_kreon(task->r_desc);
 		return;
 	}
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
+		log_fatal("Replication under construction");
+		_exit(EXIT_FAILURE);
 		/*this needs the Parallax support*/
 		fill_replication_fields(task->kv, metadata);
 		task->kv_category = SMALLORMEDIUM;
@@ -1256,18 +1272,17 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 		task->msg_ctx[i].args = task;
 		task->msg_ctx[i].on_completion_callback = wait_for_replication_completion_callback;
 		while (1) {
-			int ret = rdma_post_write(r_conn->rdma_cm_id, &task->msg_ctx[i], task->kv, task->kv_size,
-						  task->conn->rdma_memory_regions->remote_memory_region,
-						  IBV_SEND_SIGNALED,
-						  (uint64_t)r_buf->segment.mr[i].addr + remote_offset,
-						  r_buf->segment.mr[i].rkey);
+			int ret = rdma_post_write(
+				r_conn->rdma_cm_id, &task->msg_ctx[i], task->kv, task->msg_payload_size,
+				task->conn->rdma_memory_regions->remote_memory_region, IBV_SEND_SIGNALED,
+				(uint64_t)r_buf->segment.mr[i].addr + remote_offset, r_buf->segment.mr[i].rkey);
 
 			if (ret == 0)
 				break;
 		}
 	}
 
-	r_buf->segment.curr_end += task->kv_size;
+	r_buf->segment.curr_end += task->msg_payload_size;
 	__sync_fetch_and_add(&lsn_to_be_replicated, 1);
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 }
@@ -1286,7 +1301,7 @@ void wait_for_replication_completion(struct krm_work_task *task)
 		}
 	}
 	/*count bytes replicated for this segment*/
-	__sync_fetch_and_add(task->replicated_bytes, task->kv_size);
+	__sync_fetch_and_add(task->replicated_bytes, task->msg_payload_size);
 	//log_debug("replicated bytes %lu", *task->replicated_bytes[i]);
 	//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
 	//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
@@ -1299,6 +1314,10 @@ void wait_for_replication_completion(struct krm_work_task *task)
 
 static void wait_for_replication_turn(struct krm_work_task *task)
 {
+	(void)task;
+	log_fatal("Replication under construction");
+	_exit(EXIT_FAILURE);
+#if 0
 	if (task->kv->lsn != lsn_to_be_replicated)
 		return; /*its not my turn yet*/
 
@@ -1313,6 +1332,7 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 	else
 		task->kreon_operation_status = REPLICATE;
+#endif
 }
 
 static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work_task *task)
@@ -1386,8 +1406,8 @@ static uint8_t key_exists(struct krm_work_task *task)
 	assert(task);
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_key pkey = { 0 };
-	pkey.size = task->kv->key_size;
-	pkey.data = task->kv->kv_payload;
+	pkey.size = get_key_size(task->kv);
+	pkey.data = get_key_offset_in_kv(task->kv);
 	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
 		return 0;
 
@@ -1401,18 +1421,15 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	 * initiates internally rdma connections if needed
 	 * */
 	if (task->kv == NULL) {
-		task->kv = (struct msg_put_kv *)((char *)task->msg + sizeof(struct msg_header));
-		uint32_t key_length = task->kv->key_size;
-		char *key = task->kv->kv_payload;
+		task->kv = put_msg_get_kv_offset(task->msg);
+		uint32_t key_length = get_key_size(task->kv);
+		char *key = get_key_offset_in_kv(task->kv);
 		if (key_length == 0) {
 			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 		/*calculate kv_payload size*/
-		task->kv_size = task->kv->key_size + sizeof(task->kv->key_size); /*key part*/
-		task->kv_size = task->kv_size + task->kv->value_size + sizeof(task->kv->value_size); /*value part*/
-		/*offt + lsn + sizes_tail + payload_tail*/
-		task->kv_size = task->kv_size + sizeof(task->kv->lsn) + 2 * sizeof(task->kv->sizes_tail);
+		task->msg_payload_size = put_msg_get_payload_size(task->msg);
 
 		task->r_desc = krm_get_region(mydesc, key, key_length);
 		if (task->r_desc == NULL) {

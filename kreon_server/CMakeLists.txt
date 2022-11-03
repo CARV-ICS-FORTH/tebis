@@ -5,6 +5,7 @@ add_definitions(-DKREONR)
 add_library(
   kreon_client
   messages.c ../kreon_rdma_client/client_utils.c
+  ../kreon_rdma_client/msg_factory.c
   ../kreon_rdma_client/kreon_rdma_client.c ../kreon_server/globals.c zk_utils.c
   djb2.c)
 add_dependencies(kreon_client cjson)
@@ -24,6 +25,7 @@ add_executable(
   server_communication.c
   ../kreon_rdma/rdma.c
   ../kreon_rdma_client/client_utils.c
+  ../kreon_rdma_client/msg_factory.c
   stats.c)
 
 add_dependencies(kreon_server cjson)
