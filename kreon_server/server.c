@@ -1474,14 +1474,14 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	msg_get_req *get_req = NULL;
 	msg_get_rep *get_rep = NULL;
 	assert(task->msg->msg_type == GET_REQUEST);
-	get_req = (struct msg_get_req *)((uint64_t)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, get_req->key, get_req->key_size);
+	char *key = get_msg_get_key_offset(task->msg);
+	int32_t key_size = get_msg_get_key_size(task->msg);
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, key, key_size);
 
 	if (r_desc == NULL) {
-		log_fatal("Region not found for key %s", get_req->key);
+		log_fatal("Region not found for key %s", key);
 		_exit(EXIT_FAILURE);
 	}
 
@@ -1496,14 +1496,14 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(struct msg_header));
 
 	par_handle par_hd = (par_handle)task->r_desc->db;
-	struct par_key lookup_key = { .size = get_req->key_size, .data = get_req->key };
+	struct par_key lookup_key = { .size = key_size, .data = key };
 	struct par_value lookup_value = { .val_buffer = NULL };
 	const char *error_message = NULL;
 	par_get(par_hd, &lookup_key, &lookup_value, &error_message);
 	krm_leave_kreon(r_desc);
 
 	if (error_message) {
-		log_warn("key not found key %s : length %u", get_req->key, get_req->key_size);
+		log_warn("key not found key %s : length %u", key, key_size);
 
 		get_rep->key_found = 0;
 		get_rep->bytes_remaining = 0;
@@ -1512,25 +1512,28 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 		goto exit;
 
 	} else {
+		uint32_t offset = get_msg_get_offset(task->msg);
+		uint32_t msg_bytes_to_read = get_msg_get_bytes_to_read(task->msg);
+		int32_t fetch_value = get_msg_get_fetch_value(task->msg);
 		get_rep->key_found = 1;
 		// tranlate now
-		if (get_req->offset > lookup_value.val_size) {
+		if (offset > lookup_value.val_size) {
 			get_rep->offset_too_large = 1;
 			get_rep->value_size = 0;
 			get_rep->bytes_remaining = lookup_value.val_size;
 			goto exit;
 		} else
 			get_rep->offset_too_large = 0;
-		if (!get_req->fetch_value) {
-			get_rep->bytes_remaining = lookup_value.val_size - get_req->offset;
+		if (!fetch_value) {
+			get_rep->bytes_remaining = lookup_value.val_size - offset;
 			get_rep->value_size = 0;
 			goto exit;
 		}
-		uint32_t value_bytes_remaining = lookup_value.val_size - get_req->offset;
+		uint32_t value_bytes_remaining = lookup_value.val_size - offset;
 		uint32_t bytes_to_read = 0;
-		if (get_req->bytes_to_read <= value_bytes_remaining) {
-			bytes_to_read = get_req->bytes_to_read;
-			get_rep->bytes_remaining = lookup_value.val_size - (get_req->offset + bytes_to_read);
+		if (msg_bytes_to_read <= value_bytes_remaining) {
+			bytes_to_read = msg_bytes_to_read;
+			get_rep->bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
 		} else {
 			bytes_to_read = value_bytes_remaining;
 			get_rep->bytes_remaining = 0;

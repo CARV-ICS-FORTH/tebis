@@ -521,6 +521,14 @@ exit:
 
 krc_ret_code krc_get(uint32_t key_size, char *key, char **buffer, uint32_t *size, uint32_t offset)
 {
+	(void)key_size;
+	(void)key;
+	(void)buffer;
+	(void)size;
+	(void)offset;
+	log_fatal("Blocking api needs rewriting");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
 	msg_get_req *get_req = NULL;
@@ -610,10 +618,16 @@ exit:
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return code;
+#endif
 }
 
 uint8_t krc_exists(uint32_t key_size, void *key)
 {
+	(void)key_size;
+	(void)key;
+	log_fatal("krc_exists needs rewriting");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
 	msg_get_req *get_req = NULL;
@@ -649,6 +663,7 @@ uint8_t krc_exists(uint32_t key_size, void *key)
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return get_rep->key_found;
+#endif
 }
 
 krc_ret_code krc_delete(uint32_t key_size, void *key)
@@ -1278,21 +1293,16 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 #endif
 
 	uint32_t reply_size = *buf_size;
+	uint32_t request_size = calculate_get_msg_size(key_size);
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 	/*get the rdma communication buffers*/
 	struct msg_header *req_header = NULL;
 	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, sizeof(msg_get_req) + key_size, &rep_header, GET_REPLY,
+	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY,
 			  sizeof(msg_get_rep) + reply_size);
 
-	struct msg_get_req *m_get = (struct msg_get_req *)((uint64_t)req_header + sizeof(struct msg_header));
-
-	m_get->key_size = key_size;
-	memcpy(m_get->key, key, key_size);
-	m_get->offset = 0;
-	m_get->fetch_value = 1;
-	m_get->bytes_to_read = reply_size;
+	create_get_msg(key_size, key, reply_size, (char *)req_header + sizeof(struct msg_header));
 
 	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
