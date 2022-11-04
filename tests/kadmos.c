@@ -201,7 +201,7 @@ static struct tebis_host_group **generate_groups(long int replication_size, long
 		for (int j = 0; j < num_of_servers_per_group; ++j) {
 			char host_buffer[MAX_HOSTNAME_SIZE] = { 0 };
 			strcpy(host_buffer, hostname[i]);
-			if (sprintf(&host_buffer[strlen(hostname[i])], ":%d,0", j) < 0) {
+			if (sprintf(&host_buffer[strlen(hostname[i])], "%d:%d,0", j, j) < 0) {
 				log_fatal("Sprintf failed");
 				_exit(EXIT_FAILURE);
 			}

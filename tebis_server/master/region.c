@@ -1,5 +1,6 @@
 #include "region.h"
 #include "../metadata.h"
+#include <limits.h>
 #include <log.h>
 #include <uthash.h>
 struct replica_member_info {
@@ -13,7 +14,6 @@ struct region {
 	char min_key[KRM_MAX_KEY_SIZE];
 	char max_key[KRM_MAX_KEY_SIZE];
 	struct replica_member_info primary;
-	enum server_role primary_role;
 
 	struct replica_member_info backup[RU_MAX_NUM_REPLICAS];
 	uint32_t min_key_size;
@@ -80,11 +80,28 @@ void REG_set_region_backup_role(region_t region, int backup_id, enum server_role
 	region->backup[backup_id].role = role;
 }
 
+void REG_append_backup_in_region(region_t region, char *server)
+{
+	if (region->num_of_backup >= RU_MAX_NUM_REPLICAS) {
+		log_fatal("Backup servers overflow");
+		_exit(EXIT_FAILURE);
+	}
+	if (strlen(server) >= KRM_HOSTNAME_SIZE) {
+		log_fatal("Server name: %s too large", server);
+		_exit(EXIT_FAILURE);
+	}
+
+	memset(region->backup[region->num_of_backup].hostname, 0x00,
+	       sizeof(region->backup[region->num_of_backup].hostname));
+	strcpy(region->backup[region->num_of_backup].hostname, server);
+	region->backup[region->num_of_backup].clock = UINT64_MAX;
+	region->backup[region->num_of_backup].role = BACKUP_NEWBIE;
+}
+
 void REG_remove_backup_from_region(region_t region, int backup_id)
 {
 	memmove(&region->backup[backup_id], &region->backup[backup_id + 1],
-		(region->num_of_backup - (backup_id + 1)) * sizeof(struct replica_member_info));
-	--region->num_of_backup;
+		(region->num_of_backup-- - (backup_id + 1)) * sizeof(struct replica_member_info));
 }
 
 enum server_role REG_get_region_primary_role(region_t region)
@@ -94,7 +111,7 @@ enum server_role REG_get_region_primary_role(region_t region)
 
 void REG_set_region_primary_role(region_t region, enum server_role role)
 {
-	region->primary_role = role;
+	region->primary.role = role;
 }
 
 void REG_remove_and_upgrade_primary(region_t region)
@@ -135,4 +152,18 @@ void REG_set_region_backup(region_t region, int backup_id, char *hostname)
 	strncpy(region->backup[backup_id].hostname, hostname, KRM_HOSTNAME_SIZE);
 	if (backup_id >= region->num_of_backup)
 		++region->num_of_backup;
+}
+
+bool REG_is_server_prefix_in_region_group(char *server, size_t prefix_size, region_t region)
+{
+	if (prefix_size < strlen(region->primary.hostname) &&
+	    0 == strncmp(region->primary.hostname, server, prefix_size))
+		return true;
+
+	for (int i = 0; i < region->num_of_backup; ++i) {
+		if (prefix_size < strlen(region->backup[i].hostname) &&
+		    0 == strncmp(region->backup[i].hostname, server, prefix_size))
+			return true;
+	}
+	return false;
 }

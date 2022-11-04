@@ -441,24 +441,61 @@ static bool MASTER_is_server_alive(const char *server_name, struct master_s *mas
 	return true;
 }
 
+static size_t MASTER_calculate_prefix_size(char *server_name)
+{
+	size_t prefix_size = strlen(server_name);
+
+	for (; prefix_size != 0; --prefix_size) {
+		if (':' == server_name[prefix_size])
+			break;
+	}
+	return prefix_size;
+}
+
+static char *MASTER_choose_random_server(struct region_server_table_s *alive_servers, region_t region)
+{
+	int capacity = alive_servers->capacity;
+	int start = rand() % capacity;
+	log_debug("Start is %d", start);
+	struct krm_server_name *hostname = NULL;
+	for (int i = start; i < start + capacity; ++i) {
+		if (!alive_servers->region_servers[i % capacity].slot_in_use)
+			continue;
+		hostname = RS_get_region_server_krm_hostname(alive_servers->region_servers[i % capacity].region_server);
+		size_t prefix_size = MASTER_calculate_prefix_size(hostname->kreon_ds_hostname);
+		if (!REG_is_server_prefix_in_region_group(hostname->kreon_ds_hostname, prefix_size, region))
+			break;
+		hostname = NULL;
+	}
+	return hostname == NULL ? NULL : hostname->kreon_ds_hostname;
+}
+
 /**
  * Replaces dead backup or dead servers in the region, this should go
  */
 static void MASTER_reconfigure_region(struct master_s *master, region_t region)
 {
-	(void)master;
 	int num_of_backup = REG_get_region_num_of_backups(region);
 	for (int i = num_of_backup - 1; i >= 0; --i) {
 		if (BACKUP_DEAD != REG_get_region_backup_role(region, i))
 			continue;
 		REG_remove_backup_from_region(region, i);
-		log_debug("Time to choose a random region server XXX TODO XXX");
+		char *new_host = MASTER_choose_random_server(master->alive_servers, region);
+		if (NULL == new_host) {
+			log_fatal("Cannot replace faulty server, no suitable server found");
+			_exit(EXIT_FAILURE);
+		}
+		log_debug("I replaced faulty backup with %s for region:%s", new_host, REG_get_region_id(region));
+		REG_append_backup_in_region(region, new_host);
 	}
 
 	if (PRIMARY_DEAD != REG_get_region_primary_role(region))
 		return;
 	REG_remove_and_upgrade_primary(region);
-	log_debug("Time to choose a random region server XXX TODO XXX");
+	char *new_host = MASTER_choose_random_server(master->alive_servers, region);
+	log_debug("I add backup %s due to faulty primary %s for region:%s", new_host, REG_get_region_primary(region),
+		  REG_get_region_id(region));
+	REG_append_backup_in_region(region, new_host);
 }
 
 /**
@@ -480,19 +517,19 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 	int n_failures = 0;
 	/*is primary healthy?*/
 
-	log_debug("Checking if primary %s of region %s is alive", REG_get_region_primary(region),
-		  REG_get_region_id(region));
 	if (!MASTER_is_server_alive(REG_get_region_primary(region), master, REG_get_region_primary_clock(region))) {
+		// log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
+		// 	  REG_get_region_id(region));
 		REG_set_region_primary_role(region, PRIMARY_DEAD);
 		++n_failures;
 	}
 
 	for (int i = 0; i < REG_get_region_num_of_backups(region); ++i) {
-		log_debug("Checking if backup no %d %s of region %s is alive", i, REG_get_region_backup(region, i),
-			  REG_get_region_id(region));
 		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master,
 					   REG_get_region_backup_clock(region, i)))
 			continue;
+		// log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, REG_get_region_backup(region, i),
+		// 	  REG_get_region_id(region));
 		REG_set_region_backup_role(region, i, BACKUP_DEAD);
 		++n_failures;
 	}
@@ -557,7 +594,7 @@ static void MASTER_handle_region_server_failure(struct master_s *master, region_
 		HASH_FIND_PTR(affected_regions, RS_get_region(region_info), updated_region);
 		if (updated_region)
 			continue;
-		updated_region = calloc(1, sizeof(*updated_region));
+		updated_region = calloc(1UL, sizeof(*updated_region));
 		updated_region->region = RS_get_region(region_info);
 		HASH_ADD_PTR(affected_regions, region, updated_region);
 	}
@@ -950,7 +987,7 @@ static void MASTER_build_region_table(struct master_s *master)
 			_exit(EXIT_FAILURE);
 		}
 		struct region_table_s *region_entry = calloc(1UL, sizeof(*region_entry));
-		log_debug("Region id is %s", cJSON_GetStringValue(id));
+		// log_debug("Region id is %s", cJSON_GetStringValue(id));
 		region_entry->region = REG_create_region(cJSON_GetStringValue(min_key), cJSON_GetStringValue(max_key),
 							 cJSON_GetStringValue(id),
 							 (enum krm_region_status)cJSON_GetNumberValue(status));

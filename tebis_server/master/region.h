@@ -56,4 +56,7 @@ extern void REG_set_region_backup_clock(region_t region, int backup_id, uint64_t
 extern void REG_remove_backup_from_region(region_t region, int backup_id);
 extern void REG_remove_and_upgrade_primary(region_t region);
 extern char *REG_get_region_id(region_t region);
+extern void REG_append_backup_in_region(region_t region, char *server);
+
+extern bool REG_is_server_prefix_in_region_group(char *server, size_t prefix_size, region_t region);
 #endif
