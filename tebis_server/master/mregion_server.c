@@ -105,3 +105,8 @@ void RS_set_region_server_status(region_server_t region_server, enum region_serv
 {
 	region_server->status = status;
 }
+
+enum region_server_status RS_get_region_server_status(region_server_t region_server)
+{
+	return region_server->status;
+}

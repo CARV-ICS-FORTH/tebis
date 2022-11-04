@@ -80,17 +80,6 @@ struct region_server_table_entry_s *allocate_region_server_slot(struct region_se
 	}
 	return NULL;
 }
-static void MASTER_remove_region_server(struct region_server_table_s *table, char *region_server_name)
-{
-	uint64_t server_key = djb2_hash((unsigned char *)region_server_name, strlen(region_server_name));
-	struct region_server_table_entry_s *server = NULL;
-	HASH_FIND_PTR(table->hash_table_root, &server_key, server);
-	if (!server)
-		return;
-	HASH_DELETE(hh, table->hash_table_root, server);
-	RS_destroy_region_server(server->region_server);
-	memset(server, 0x00, sizeof(*server));
-}
 
 static struct region_server_table_iterator_s *create_region_server_table_iterator(struct region_server_table_s *table)
 {
@@ -336,7 +325,7 @@ static struct server_vector_s *MASTER_copy_from_string_vector(struct String_vect
 {
 	struct server_vector_s *server_vector = MASTER_create_server_vector(servers->count);
 	server_vector->count = server_vector->capacity = servers->count;
-	for (int i = 0; i < server_vector->count; ++i)
+	for (int i = 0; i < servers->count; ++i)
 		server_vector->names[i] = strdup(servers->data[i]);
 	return server_vector;
 }
@@ -357,16 +346,16 @@ static void MASTER_deallocate_server_names(struct server_vector_s *server_vector
 static void MASTER_remove_from_server_names(struct server_vector_s *server_vector, int position)
 {
 	free(server_vector->names[position]);
-	memmove(server_vector->names[position], server_vector->names[position],
-		(server_vector->count - 1) * sizeof(char *));
-	--server_vector->count;
+	memmove(&server_vector->names[position], &server_vector->names[position + 1],
+		(server_vector->count - (position + 1)) * sizeof(char *));
+	server_vector->count--;
 }
 
 static int MASTER_children_comparator(const void *child_1, const void *child_2)
 {
-	char *left_child = (char *)child_1;
-	char *right_child = (char *)child_2;
-	return strcmp(left_child, right_child);
+	char **left_child = (char **)child_1;
+	char **right_child = (char **)child_2;
+	return strcmp(*left_child, *right_child);
 }
 
 /**
@@ -382,8 +371,13 @@ static int MASTER_get_server_pos(struct server_vector_s *server_vector, region_s
 {
 	for (int start = 0, end = server_vector->count - 1, middle = (server_vector->count - 1) / 2; start <= end;
 	     middle = (end + start) / 2) {
-		int ret_code = MASTER_children_comparator(server_vector->names[middle],
-							  RS_get_region_server_krm_hostname(region_server));
+		struct krm_server_name *region_server_hostname = RS_get_region_server_krm_hostname(region_server);
+		char *hostname = region_server_hostname->kreon_ds_hostname;
+		// log_debug("server name %s:len(%u) middle is %d name %s count %d",
+		// 	  region_server_hostname->kreon_ds_hostname, strlen(region_server_hostname->kreon_ds_hostname),
+		// 	  middle, server_vector->names[middle], server_vector->count);
+
+		int ret_code = MASTER_children_comparator(&server_vector->names[middle], &hostname);
 		if (ret_code < 0)
 			start = middle + 1;
 		else if (ret_code > 0)
@@ -407,6 +401,9 @@ static int MASTER_get_server_pos(struct server_vector_s *server_vector, region_s
 static struct server_vector_s *MASTER_find_dead_servers(struct master_s *master, struct server_vector_s *alive_servers)
 {
 	qsort(alive_servers->names, alive_servers->count, sizeof(char *), MASTER_children_comparator);
+	// for (int i = 0; i < alive_servers->count; i++)
+	// 	log_debug("Found alive server %s", alive_servers->names[i]);
+
 	struct server_vector_s *dead_servers = MASTER_create_server_vector(16);
 
 	struct region_server_table_iterator_s *iter = create_region_server_table_iterator(master->alive_servers);
@@ -420,9 +417,8 @@ static struct server_vector_s *MASTER_find_dead_servers(struct master_s *master,
 		}
 		struct krm_server_name *server_name =
 			RS_get_region_server_krm_hostname(region_server_table_entry->region_server);
-		log_debug("Oops found dead server %s position is %d", server_name->kreon_ds_hostname, position);
-		MASTER_add_item_in_server_vector(
-			dead_servers, RS_get_region_server_krm_hostname(region_server_table_entry->region_server));
+		// log_debug("Oops found dead server %s position is %d", server_name->kreon_ds_hostname, position);
+		MASTER_add_item_in_server_vector(dead_servers, server_name->kreon_ds_hostname);
 	}
 	close_region_server_table_iterator(iter);
 	return dead_servers;
@@ -435,10 +431,10 @@ static bool MASTER_is_server_alive(const char *server_name, struct master_s *mas
 {
 	uint64_t region_server_key = djb2_hash((const unsigned char *)server_name, strlen(server_name));
 	struct region_server_table_entry_s *region_server_entry = NULL;
-	MUTEX_LOCK(&master->master_lock);
 	HASH_FIND_PTR(master->alive_servers->hash_table_root, &region_server_key, region_server_entry);
-	MUTEX_UNLOCK(&master->master_lock);
 	if (!region_server_entry)
+		return false;
+	if (DEAD == RS_get_region_server_status(region_server_entry->region_server))
 		return false;
 	if (RS_get_server_clock(region_server_entry->region_server) != server_epoch)
 		return false;
@@ -484,12 +480,16 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 	int n_failures = 0;
 	/*is primary healthy?*/
 
+	log_debug("Checking if primary %s of region %s is alive", REG_get_region_primary(region),
+		  REG_get_region_id(region));
 	if (!MASTER_is_server_alive(REG_get_region_primary(region), master, REG_get_region_primary_clock(region))) {
 		REG_set_region_primary_role(region, PRIMARY_DEAD);
 		++n_failures;
 	}
 
 	for (int i = 0; i < REG_get_region_num_of_backups(region); ++i) {
+		log_debug("Checking if backup no %d %s of region %s is alive", i, REG_get_region_backup(region, i),
+			  REG_get_region_id(region));
 		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master,
 					   REG_get_region_backup_clock(region, i)))
 			continue;
@@ -540,17 +540,9 @@ struct region_reconfiguration_s {
  * @param server_name is the name of the failed server in the form
  * <hostname>:<port>:<epoch>
  */
-static void MASTER_handle_region_server_failure(struct master_s *master, char *server_name,
+static void MASTER_handle_region_server_failure(struct master_s *master, region_server_t region_server,
 						struct region_reconfiguration_s *affected_regions)
 {
-	(void)master;
-	(void)server_name;
-
-	region_server_t region_server = find_server(master->alive_servers, server_name);
-	if (!region_server) {
-		log_fatal("Where is server %s", server_name);
-		_exit(EXIT_FAILURE);
-	}
 	region_server_iterator_t region_it = RS_create_region_server_iterator(region_server);
 
 	for (region_info_t region_info = RS_get_next_region_info(region_it); region_info != NULL;
@@ -571,7 +563,6 @@ static void MASTER_handle_region_server_failure(struct master_s *master, char *s
 	}
 
 	RS_close_region_server_iterator(region_it);
-	MASTER_remove_region_server(master->alive_servers, server_name);
 }
 
 /**
@@ -589,6 +580,7 @@ static void MASTER_mark_servers_dead(struct master_s *master, struct server_vect
 		if (!region_server_entry) {
 			log_fatal("Could not find freshly dead server %s in alive servers table",
 				  dead_server_vector->names[i]);
+			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 		RS_set_region_server_status(region_server_entry->region_server, DEAD);
@@ -638,7 +630,8 @@ static void MASTER_remove_dead_servers(struct master_s *master, struct server_ve
 		}
 		HASH_DEL(master->alive_servers->hash_table_root, region_server_entry);
 		RS_destroy_region_server(region_server_entry->region_server);
-		free(region_server_entry);
+		--master->alive_servers->num_elements;
+		memset(region_server_entry, 0x00, sizeof(*region_server_entry));
 	}
 }
 
@@ -652,7 +645,6 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 
 	struct master_s *master = (struct master_s *)context;
 	MUTEX_LOCK(&master->master_lock);
-	log_debug("path: %s type %d", path, type);
 
 	struct String_vector alive_servers = { 0 };
 	char *alive_servers_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH);
@@ -667,6 +659,9 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	alive_servers_path = NULL;
 
 	struct server_vector_s *alive_server_vector = MASTER_copy_from_string_vector(&alive_servers);
+	// log_debug("Real alive servers are total number: %d", alive_server_vector->count);
+	// for (int i = 0; i < alive_server_vector->count; i++)
+	// 	log_debug("Real alive server is %s", alive_server_vector->names[i]);
 
 	struct server_vector_s *dead_server_vector = MASTER_find_dead_servers(master, alive_server_vector);
 
@@ -676,11 +671,20 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 
 	MASTER_mark_servers_dead(master, dead_server_vector);
 	struct region_reconfiguration_s *affected_regions = NULL;
-	log_debug("Dead servers count %d", dead_server_vector->count);
-	for (int i = 0; i < dead_server_vector->count; ++i)
-		MASTER_handle_region_server_failure(master, dead_server_vector->names[i], affected_regions);
 
-	log_debug("Dead servers count %d done handling affected regions", dead_server_vector->count);
+	for (int i = 0; i < dead_server_vector->count; ++i) {
+		log_debug("Dead server is %s", dead_server_vector->names[i]);
+
+		region_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		if (!region_server) {
+			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
+			_exit(EXIT_FAILURE);
+		}
+		RS_set_region_server_status(region_server, DEAD);
+		MASTER_handle_region_server_failure(master, region_server, affected_regions);
+	}
+
+	log_debug("Gathered info about infected regions proceeding to recongifuration");
 	/*Log all new region configuration in Zookeeper*/
 	struct region_reconfiguration_s *updated_region = NULL;
 	struct region_reconfiguration_s *tmp = NULL;
@@ -693,9 +697,6 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	}
 
 	MASTER_remove_dead_servers(master, dead_server_vector);
-	/*Remove dead servers from server table*/
-	for (int i = 0; i < dead_server_vector->count; ++i)
-		MASTER_handle_region_server_failure(master, dead_server_vector->names[i], affected_regions);
 	MASTER_deallocate_server_names(dead_server_vector);
 	MUTEX_UNLOCK(&master->master_lock);
 }

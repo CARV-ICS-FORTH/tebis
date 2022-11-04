@@ -150,13 +150,29 @@ static void add_host_in_group(struct tebis_host_group *group, char *host)
 	strcpy(group->hosts[group->num_of_servers++].hostname, host);
 }
 
-#if 0
-static void remove_tebis_host_from_group(struct tebis_host_group *group, int id)
+static void remove_tebis_host_from_group(zhandle_t *zhandle, int group_id, struct tebis_host_group **group,
+					 int num_servers)
 {
-	(void)group;
-	(void)id;
+	struct tebis_host_group *failure_group = group[group_id];
+
+	for (int i = 0; i < num_servers; i++) {
+		unsigned int server_id = rand() % failure_group->num_of_servers;
+		char *hostname = failure_group->hosts[server_id].hostname;
+
+		char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH, KRM_SLASH, hostname);
+		int ret_code = zoo_delete(zhandle, zk_path, -1);
+		if (ZOK != ret_code) {
+			log_fatal("Failed to delete path %s for host: %s reason: %s", zk_path, hostname,
+				  zerror(ret_code));
+			_exit(EXIT_FAILURE);
+		}
+		free(zk_path);
+		zk_path = NULL;
+		log_info("Successfully emulated failure of server %s", hostname);
+		memmove(&failure_group->hosts[server_id + 1], &failure_group->hosts[server_id],
+			(failure_group->num_of_servers-- - (server_id + 1)) * sizeof(struct tebis_host));
+	}
 }
-#endif
 
 static struct tebis_host_group **generate_groups(long int replication_size, long int num_of_servers_per_group)
 {
@@ -246,8 +262,8 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 		}
 	}
 }
-#define MASTER "sith2.cluster.ics.forth.gr:8080,0"
-#define ZOOKEEPER_HOST "sith2.cluster.ics.forth.gr:2181"
+#define MASTER "sith6.cluster.ics.forth.gr:8080,0"
+#define ZOOKEEPER_HOST "sith6.cluster.ics.forth.gr:2181"
 #define ZOOKEEPER_TIMEOUT 15000
 static void create_hosts_file(struct tebis_host_group **groups, long int num_of_groups, char *host_file_path)
 {
@@ -425,18 +441,19 @@ int main(int argc, char **argv)
 	}
 
 	if (0 == strcmp(argv[1], "run")) {
-		if (argc != 3) {
-			log_fatal("Wrong arguments Usage: ./kadmos run <directory with host/regions file>");
+		if (argc != 5) {
+			log_fatal(
+				"Wrong arguments Usage: ./kadmos run <replication size> <number of servers per group> <directory with host/regions file>");
 			_exit(EXIT_FAILURE);
 		}
 	}
 
 	int arg_id = 2;
+	long int replication_size = strtol(argv[arg_id++], NULL, DECIMAL);
+	long int num_of_servers_per_group = strtol(argv[arg_id++], NULL, DECIMAL);
+	struct tebis_host_group **groups = generate_groups(replication_size, num_of_servers_per_group);
 
 	if (is_load) {
-		long int replication_size = strtol(argv[arg_id++], NULL, DECIMAL);
-		long int num_of_servers_per_group = strtol(argv[arg_id++], NULL, DECIMAL);
-		struct tebis_host_group **groups = generate_groups(replication_size, num_of_servers_per_group);
 		long int num_of_regions = strtol(argv[arg_id++], NULL, DECIMAL);
 		char *hosts_file_path = calloc(1, strlen(argv[arg_id]) + strlen("hosts_file") + 1);
 		strcpy(hosts_file_path, argv[arg_id]);
@@ -467,6 +484,12 @@ int main(int argc, char **argv)
 	struct kadmos_manager manager = { .manager_lock = PTHREAD_MUTEX_INITIALIZER };
 
 	register_all_servers_as_alive(handle, hosts_file_path, &manager);
-	sleep(5000);
+	sleep(2);
+	log_info("Starting injecting failures...");
+
+#define NUM_OF_FAILED_SERVERS 2
+	unsigned int group_id = rand() % replication_size;
+	remove_tebis_host_from_group(handle, group_id, groups, NUM_OF_FAILED_SERVERS);
+
 	return 0;
 }

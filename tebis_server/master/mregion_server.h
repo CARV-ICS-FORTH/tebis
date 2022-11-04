@@ -18,6 +18,7 @@ void RS_destroy_region_server(region_server_t region_server);
 uint64_t RS_get_server_clock(region_server_t region_server);
 struct krm_server_name *RS_get_region_server_krm_hostname(region_server_t region_server);
 void RS_set_region_server_status(region_server_t region_server, enum region_server_status status);
+enum region_server_status RS_get_region_server_status(region_server_t region_server);
 
 region_server_iterator_t RS_create_region_server_iterator(region_server_t);
 region_info_t RS_get_next_region_info(region_server_iterator_t iterator);
