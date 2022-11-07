@@ -15,12 +15,6 @@ extern region_t REG_create_region(const char *min_key, const char *max_key, cons
 extern void REG_destroy_region(region_t region);
 
 /**
- * Sets primary for the given region. Hostname must be in the form
- * hostname:port,region_server_epoch
-*/
-extern void REG_set_primary_in_region(region_t region, const char *hostname);
-
-/**
  * Returns hostname of the primary fot the given region in the form
  * hostname:port,region_server_epoch
 */
@@ -59,4 +53,5 @@ extern char *REG_get_region_id(region_t region);
 extern void REG_append_backup_in_region(region_t region, char *server);
 
 extern bool REG_is_server_prefix_in_region_group(char *server, size_t prefix_size, region_t region);
+extern void REG_print_region_configuration(region_t region);
 #endif

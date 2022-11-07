@@ -58,7 +58,8 @@ enum server_role {
 	BACKUP,
 	BACKUP_NEWBIE,
 	BACKUP_INFANT,
-	BACKUP_DEAD
+	BACKUP_DEAD,
+	ROLE_NUM
 };
 
 enum krm_server_state {

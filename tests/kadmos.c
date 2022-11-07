@@ -262,8 +262,8 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 		}
 	}
 }
-#define MASTER "sith6.cluster.ics.forth.gr:8080,0"
-#define ZOOKEEPER_HOST "sith6.cluster.ics.forth.gr:2181"
+#define MASTER "sith5.cluster.ics.forth.gr:8080,0"
+#define ZOOKEEPER_HOST "sith5.cluster.ics.forth.gr:2181"
 #define ZOOKEEPER_TIMEOUT 15000
 static void create_hosts_file(struct tebis_host_group **groups, long int num_of_groups, char *host_file_path)
 {
@@ -487,7 +487,7 @@ int main(int argc, char **argv)
 	sleep(2);
 	log_info("Starting injecting failures...");
 
-#define NUM_OF_FAILED_SERVERS 2
+#define NUM_OF_FAILED_SERVERS 1
 	unsigned int group_id = rand() % replication_size;
 	remove_tebis_host_from_group(handle, group_id, groups, NUM_OF_FAILED_SERVERS);
 

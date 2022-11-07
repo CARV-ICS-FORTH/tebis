@@ -51,12 +51,6 @@ region_t REG_create_region(const char *min_key, const char *max_key, const char 
 	return region;
 }
 
-void REG_set_primary_in_region(region_t region, const char *hostname)
-{
-	(void)region;
-	(void)hostname;
-}
-
 void REG_destroy_region(region_t region)
 {
 	(void)region;
@@ -95,7 +89,7 @@ void REG_append_backup_in_region(region_t region, char *server)
 	       sizeof(region->backup[region->num_of_backup].hostname));
 	strcpy(region->backup[region->num_of_backup].hostname, server);
 	region->backup[region->num_of_backup].clock = UINT64_MAX;
-	region->backup[region->num_of_backup].role = BACKUP_NEWBIE;
+	region->backup[region->num_of_backup++].role = BACKUP_NEWBIE;
 }
 
 void REG_remove_backup_from_region(region_t region, int backup_id)
@@ -117,6 +111,7 @@ void REG_set_region_primary_role(region_t region, enum server_role role)
 void REG_remove_and_upgrade_primary(region_t region)
 {
 	region->primary = region->backup[0];
+	region->primary.role = PRIMARY_NEWBIE;
 	REG_remove_backup_from_region(region, 0);
 }
 
@@ -166,4 +161,20 @@ bool REG_is_server_prefix_in_region_group(char *server, size_t prefix_size, regi
 			return true;
 	}
 	return false;
+}
+
+const char *const server_role_2_string[ROLE_NUM] = { "FAULTY_ROLE",    "PRIMARY",	"PRIMARY_NEWBIE",
+						     "PRIMARY_INFANT", "PRIMARY_DEAD",	"BACKUP",
+						     "BACKUP_NEWBIE",  "BACKUP_INFANT", "BACKUP_DEAD" };
+void REG_print_region_configuration(region_t region)
+{
+	log_info("\n***************************************************************************");
+	log_info("Region: %s has primary: %s with role: %s", region->id, region->primary.hostname,
+		 server_role_2_string[region->primary.role]);
+	log_info("Region has %d backups", region->num_of_backup);
+	for (int i = 0; i < region->num_of_backup; ++i) {
+		log_info("Backup %s has role %s", region->backup[i].hostname,
+			 server_role_2_string[region->backup[i].role]);
+	}
+	log_info("\n***************************************************************************");
 }

@@ -456,7 +456,6 @@ static char *MASTER_choose_random_server(struct region_server_table_s *alive_ser
 {
 	int capacity = alive_servers->capacity;
 	int start = rand() % capacity;
-	log_debug("Start is %d", start);
 	struct krm_server_name *hostname = NULL;
 	for (int i = start; i < start + capacity; ++i) {
 		if (!alive_servers->region_servers[i % capacity].slot_in_use)
@@ -485,8 +484,11 @@ static void MASTER_reconfigure_region(struct master_s *master, region_t region)
 			log_fatal("Cannot replace faulty server, no suitable server found");
 			_exit(EXIT_FAILURE);
 		}
-		log_debug("I replaced faulty backup with %s for region:%s", new_host, REG_get_region_id(region));
+
 		REG_append_backup_in_region(region, new_host);
+		log_debug("I replaced faulty backup with %s for region:%s num backups: %d", new_host,
+			  REG_get_region_id(region), REG_get_region_num_of_backups(region));
+		i = REG_get_region_num_of_backups(region); //recheck
 	}
 
 	if (PRIMARY_DEAD != REG_get_region_primary_role(region))
@@ -518,9 +520,10 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 	/*is primary healthy?*/
 
 	if (!MASTER_is_server_alive(REG_get_region_primary(region), master, REG_get_region_primary_clock(region))) {
-		// log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
-		// 	  REG_get_region_id(region));
+		log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
+			  REG_get_region_id(region));
 		REG_set_region_primary_role(region, PRIMARY_DEAD);
+		assert(0);
 		++n_failures;
 	}
 
@@ -528,8 +531,8 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master,
 					   REG_get_region_backup_clock(region, i)))
 			continue;
-		// log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, REG_get_region_backup(region, i),
-		// 	  REG_get_region_id(region));
+		log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, REG_get_region_backup(region, i),
+			  REG_get_region_id(region));
 		REG_set_region_backup_role(region, i, BACKUP_DEAD);
 		++n_failures;
 	}
@@ -578,7 +581,7 @@ struct region_reconfiguration_s {
  * <hostname>:<port>:<epoch>
  */
 static void MASTER_handle_region_server_failure(struct master_s *master, region_server_t region_server,
-						struct region_reconfiguration_s *affected_regions)
+						struct region_reconfiguration_s **affected_regions)
 {
 	region_server_iterator_t region_it = RS_create_region_server_iterator(region_server);
 
@@ -591,12 +594,12 @@ static void MASTER_handle_region_server_failure(struct master_s *master, region_
 		}
 		MASTER_reconfigure_region(master, RS_get_region(region_info));
 		struct region_reconfiguration_s *updated_region = NULL;
-		HASH_FIND_PTR(affected_regions, RS_get_region(region_info), updated_region);
+		HASH_FIND_PTR(*affected_regions, RS_get_region(region_info), updated_region);
 		if (updated_region)
 			continue;
 		updated_region = calloc(1UL, sizeof(*updated_region));
 		updated_region->region = RS_get_region(region_info);
-		HASH_ADD_PTR(affected_regions, region, updated_region);
+		HASH_ADD_PTR(*affected_regions, region, updated_region);
 	}
 
 	RS_close_region_server_iterator(region_it);
@@ -707,6 +710,16 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	MASTER_deallocate_server_names(alive_server_vector);
 
 	MASTER_mark_servers_dead(master, dead_server_vector);
+
+	for (int i = 0; i < dead_server_vector->count; ++i) {
+		region_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		if (!region_server) {
+			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
+			_exit(EXIT_FAILURE);
+		}
+		RS_set_region_server_status(region_server, DEAD);
+	}
+
 	struct region_reconfiguration_s *affected_regions = NULL;
 
 	for (int i = 0; i < dead_server_vector->count; ++i) {
@@ -717,8 +730,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
 			_exit(EXIT_FAILURE);
 		}
-		RS_set_region_server_status(region_server, DEAD);
-		MASTER_handle_region_server_failure(master, region_server, affected_regions);
+		MASTER_handle_region_server_failure(master, region_server, &affected_regions);
 	}
 
 	log_debug("Gathered info about infected regions proceeding to recongifuration");
@@ -727,6 +739,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	struct region_reconfiguration_s *tmp = NULL;
 	HASH_ITER(hh, affected_regions, updated_region, tmp)
 	{
+		REG_print_region_configuration(updated_region->region);
 		/*log new region configuration in Zookeeper*/
 		/*send message to corresponding primary*/
 		HASH_DEL(affected_regions, updated_region);
