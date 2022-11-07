@@ -33,4 +33,6 @@ int32_t get_msg_get_offset(msg_header *msg);
 int32_t get_msg_get_key_size(msg_header *msg);
 
 char *get_msg_get_key_offset(msg_header *msg);
+
+void put_msg_print_msg(msg_header *msg);
 #endif //MSG_FACTORY_H

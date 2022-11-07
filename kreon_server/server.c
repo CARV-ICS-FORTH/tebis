@@ -14,6 +14,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "btree/kv_pairs.h"
+#include "btree/lsn.h"
 #include "conf.h"
 #include "parallax/structures.h"
 #include <include/parallax/parallax.h>
@@ -1109,41 +1110,31 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
  *  The space of these fields is preallocated from the client in order to have zero copy transfer
  *  from primaries to backups
  *  The replications fields are |lsn|log_offt|sizes_tail|payload_tail|*/
-static void fill_replication_fields(struct kv_splice *put_msg, struct par_put_metadata metadata)
+static void fill_replication_fields(msg_header *msg, struct par_put_metadata metadata)
 {
-	(void)put_msg;
-	(void)metadata;
-	log_fatal("Replication under construction");
-	_exit(EXIT_FAILURE);
-#if 0
-	assert(put_msg);
-	put_msg->lsn = metadata.lsn;
-	put_msg->sizes_tail = TU_RDMA_REPLICATION_MSG;
-	set_tail_for_kv_payload(put_msg->kv_payload, put_msg->key_size, put_msg->value_size, TU_RDMA_REPLICATION_MSG);
-#endif
+	assert(msg);
+	struct lsn *lsn_of_put_msg = put_msg_get_lsn_offset(msg);
+	lsn_of_put_msg->id = metadata.lsn;
+	struct kv_splice *kv = put_msg_get_kv_offset(msg);
+	set_sizes_tail(kv, TU_RDMA_REPLICATION_MSG);
+	set_payload_tail(kv, TU_RDMA_REPLICATION_MSG);
 }
 
-#if 0
-static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
+inline static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
 {
-	(void)r_buf;
-	(void)task;
-	log_fatal("replication under construction");
-	_exit(EXIT_FAILURE);
-
 	/*if (task->kv_category == BIG)
-		log_debug("current end of big buf %lu end %lu", r_buf->segment.curr_end, r_buf->segment.end);
+		log_debug("[current end of big buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
 	else
-		log_debug("current end of small buf %lu end %lu", r_buf->segment.curr_end, r_buf->segment.end);
+		log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
+	put_msg_print_msg(task->msg);
 	*/
 	if (r_buf->segment.curr_end >= r_buf->segment.start &&
 	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
 		return 1;
 	return 0;
 }
-#endif
 
-uint64_t lsn_to_be_replicated = 0;
+int64_t lsn_to_be_replicated = 0;
 void insert_kv_to_store(struct krm_work_task *task)
 {
 #if CREATE_TRACE_FILE
@@ -1165,10 +1156,8 @@ void insert_kv_to_store(struct krm_work_task *task)
 	}
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
-		log_fatal("Replication under construction");
-		_exit(EXIT_FAILURE);
 		/*this needs the Parallax support*/
-		fill_replication_fields(task->kv, metadata);
+		fill_replication_fields(task->msg, metadata);
 		task->kv_category = SMALLORMEDIUM;
 		if (metadata.key_value_category == BIG_INLOG)
 			task->kv_category = BIG;
@@ -1255,6 +1244,7 @@ void wait_for_flush_replies(struct krm_work_task *task)
 
 void replicate_task(struct krm_server_desc const *server, struct krm_work_task *task)
 {
+	assert(server && task);
 	//log_debug("replicate task");
 	struct krm_region_desc *r_desc = task->r_desc;
 	struct ru_master_state *primary = task->r_desc->m_state;
@@ -1271,9 +1261,10 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 
 		task->msg_ctx[i].args = task;
 		task->msg_ctx[i].on_completion_callback = wait_for_replication_completion_callback;
+		char *msg_payload = (char *)task->msg + sizeof(struct msg_header);
 		while (1) {
 			int ret = rdma_post_write(
-				r_conn->rdma_cm_id, &task->msg_ctx[i], task->kv, task->msg_payload_size,
+				r_conn->rdma_cm_id, &task->msg_ctx[i], msg_payload, task->msg_payload_size,
 				task->conn->rdma_memory_regions->remote_memory_region, IBV_SEND_SIGNALED,
 				(uint64_t)r_buf->segment.mr[i].addr + remote_offset, r_buf->segment.mr[i].rkey);
 
@@ -1314,11 +1305,9 @@ void wait_for_replication_completion(struct krm_work_task *task)
 
 static void wait_for_replication_turn(struct krm_work_task *task)
 {
-	(void)task;
-	log_fatal("Replication under construction");
-	_exit(EXIT_FAILURE);
-#if 0
-	if (task->kv->lsn != lsn_to_be_replicated)
+	assert(task);
+	int64_t lsn = get_lsn_id(put_msg_get_lsn_offset(task->msg));
+	if (lsn != lsn_to_be_replicated)
 		return; /*its not my turn yet*/
 
 	/*only 1 threads enters this region at a time*/
@@ -1332,7 +1321,6 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 	else
 		task->kreon_operation_status = REPLICATE;
-#endif
 }
 
 static void insert_kv_pair(struct krm_server_desc const *server, struct krm_work_task *task)

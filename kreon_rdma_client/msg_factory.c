@@ -1,5 +1,6 @@
 #include "msg_factory.h"
 #include "btree/lsn.h"
+#include "log.h"
 #include <btree/key_splice.h>
 #include <btree/kv_pairs.h>
 #include <stdint.h>
@@ -97,4 +98,11 @@ int32_t get_msg_get_fetch_value(msg_header *msg)
 {
 	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
 	return msg_payload->fetch_value;
+}
+
+void put_msg_print_msg(msg_header *msg)
+{
+	struct lsn *lsn = put_msg_get_lsn_offset(msg);
+	struct kv_splice *kv = put_msg_get_kv_offset(msg);
+	log_debug("< lsn %ld - key %s key_size %u>", lsn->id, get_key_offset_in_kv(kv), get_key_size(kv));
 }
