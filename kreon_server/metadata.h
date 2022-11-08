@@ -171,8 +171,8 @@ struct ru_master_state {
 };
 
 struct ru_replica_rdma_buffer {
-	uint32_t rdma_buf_size;
 	struct ibv_mr *mr;
+	uint32_t rdma_buf_size;
 };
 
 struct ru_replica_state {
@@ -377,14 +377,6 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
 //				       uint8_t level_id, struct node_header *root);
 //void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
 //				       uint64_t primary_seg_offt, uint8_t level_id);
-
-struct rco_build_index_task {
-	struct krm_region_desc *r_desc;
-	struct segment_header *segment;
-	uint64_t log_start;
-	uint64_t log_end;
-};
-void rco_build_index(struct rco_build_index_task *task);
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,

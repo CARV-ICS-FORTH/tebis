@@ -40,6 +40,7 @@
 #include "../kreon_rdma_client/msg_factory.h"
 #include "../utilities/queue.h"
 #include "../utilities/spin_loop.h"
+#include "build_index.h"
 #include "djb2.h"
 #include "globals.h"
 #include "messages.h"
@@ -1115,6 +1116,7 @@ static void fill_replication_fields(msg_header *msg, struct par_put_metadata met
 	assert(msg);
 	struct lsn *lsn_of_put_msg = put_msg_get_lsn_offset(msg);
 	lsn_of_put_msg->id = metadata.lsn;
+	log_debug("msg assigned %lu", lsn_of_put_msg->id);
 	struct kv_splice *kv = put_msg_get_kv_offset(msg);
 	set_sizes_tail(kv, TU_RDMA_REPLICATION_MSG);
 	set_payload_tail(kv, TU_RDMA_REPLICATION_MSG);
@@ -1150,6 +1152,7 @@ void insert_kv_to_store(struct krm_work_task *task)
 	/*insert kv to data store*/
 	const char *error_message = NULL;
 	struct par_put_metadata metadata = par_put_serialized(task->r_desc->db, (char *)task->kv, &error_message);
+	log_debug("lsn from parallax %lu", metadata.lsn);
 	if (error_message) {
 		krm_leave_kreon(task->r_desc);
 		return;
@@ -1159,8 +1162,10 @@ void insert_kv_to_store(struct krm_work_task *task)
 		/*this needs the Parallax support*/
 		fill_replication_fields(task->msg, metadata);
 		task->kv_category = SMALLORMEDIUM;
-		if (metadata.key_value_category == BIG_INLOG)
+		if (metadata.key_value_category == BIG_INLOG) {
+			assert(0);
 			task->kv_category = BIG;
+		}
 
 		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
 	} else
@@ -1170,6 +1175,7 @@ void insert_kv_to_store(struct krm_work_task *task)
 void send_flush_commands(struct krm_server_desc const *server, struct krm_work_task *task)
 {
 	log_debug("Send flush commands");
+	exit(EXIT_FAILURE);
 	struct krm_region_desc *r_desc = task->r_desc;
 
 	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
@@ -1310,12 +1316,15 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 	if (lsn != lsn_to_be_replicated)
 		return; /*its not my turn yet*/
 
+	log_debug("serving %lu", lsn);
 	/*only 1 threads enters this region at a time*/
 	/*find which rdma_buffer must be appended*/
 	struct ru_master_state *primary = task->r_desc->m_state;
 	struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == BIG)
+	if (task->kv_category == BIG) {
+		assert(0);
 		rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
+	}
 
 	if (!buffer_have_enough_space(rdma_buffer_to_fill, task))
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
@@ -1723,6 +1732,20 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
 	if (r_desc->r_state == NULL) {
 		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+
+	if (!globals_get_send_index()) {
+		// build index logic
+		struct rco_build_index_task build_index_task;
+		build_index_task.l0_recovery_rdma_buffer = (char *)r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
+		build_index_task.big_recovery_rdma_buffer = (char *)r_desc->r_state->big_recovery_rdma_buf.mr->addr;
+		build_index_task.rdma_buffers_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
+		build_index_task.r_desc = r_desc;
+		(void)build_index_task;
+		//rco_build_index(&build_index_task);
+	} else {
+		log_fatal("Send index is not supported yet");
 		_exit(EXIT_FAILURE);
 	}
 

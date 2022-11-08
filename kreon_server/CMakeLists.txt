@@ -16,6 +16,8 @@ add_executable(
   kreon_server
   server.c
   metadata_server.c
+  build_index.c
+  rdma_buffer_iterator.c
   remote_compaction.c
   deserialize_index.c
   zk_utils.c
