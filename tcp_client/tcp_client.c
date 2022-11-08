@@ -1,5 +1,6 @@
 /** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling (log) */
-/** TODO: tebis_tcp_types.h --> make changes to the reply-buffer to support scan */
+
+#define _GNU_SOURCE 1
 
 #include "tcp_client.h"
 #include "tebis_tcp_errors.h"
@@ -19,10 +20,16 @@
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
+#define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
+#define req_uses_payload(rtype) ((uint32_t)(rtype) >= REQ_SCAN)
+
 struct internal_tcp_rep {
 	uint32_t retc;
+	uint32_t flags;
+	uint64_t count;
 	uint64_t size;
 
+	uint64_t bindex; // buf-index used for pop()ing tcp replies
 	struct buffer buf;
 };
 
@@ -132,8 +139,9 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 			ch->flags1 = MAGIC_INIT_NUM;
 			return EXIT_SUCCESS;
-		} else
-			close(ch->sock);
+		}
+
+		close(ch->sock);
 	}
 
 	freeaddrinfo(res);
@@ -158,33 +166,66 @@ int chandle_destroy(cHandle chandle)
 
 	/** END OF ERROR HANDLING **/
 
-	/** TODO: what else? */
 	close(ch->sock);
 	free(chandle);
 
 	return EXIT_SUCCESS;
 }
 
-////////////////////////////////////////////////////////////////////
+/*****************************************************************************/
 
-c_tcp_req c_tcp_req_new(req_t rtype, size_t keysz, size_t paysz)
+c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
 {
-	/** TODO: check that 'rtype' is a valid request */
+	struct internal_tcp_req *ireq;
+	uint64_t tsize;
 
-	if (rtype < REQ_SCAN)
+	if (is_req_invalid(rtype) || !keysz) {
+		errno = ENOTSUP;
+		return NULL;
+	}
+
+	if (!req_uses_payload(rtype))
 		paysz = 0UL;
 
-	struct internal_tcp_req *ireq;
-	uint64_t tsize = ((TT_REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfff) + 1UL; // efficient page-align
+	if (req) /* update() */
+	{
+		ireq = *req;
 
-	if ((ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
-		return NULL;
+		if (ireq->flags != MAGIC_INIT_NUM) {
+			errno = EINVAL;
+			return NULL;
+		}
+
+		tsize = keysz + paysz + TT_REQHDR_SIZE;
+
+		if (tsize <= ireq->buf.bytes)
+			ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
+		else {
+			tsize = ((tsize + sizeof(*ireq)) | 0xfffUL) + 1UL; // efficient page-alignment
+
+			void *tmp = mremap(ireq, ireq->buf.bytes + sizeof(*ireq), tsize, MREMAP_MAYMOVE);
+
+			if (tmp == MAP_FAILED)
+				return NULL;
+
+			*req = tmp;
+			ireq = tmp;
+			ireq->buf.bytes = tsize - sizeof(*ireq);
+		}
+	} else /* new() */
+	{
+		tsize = ((TT_REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
+
+		if ((ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
+			return NULL;
+
+		ireq->buf.bytes = tsize - sizeof(*ireq);
+		ireq->flags = MAGIC_INIT_NUM;
+	}
 
 	ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
-	ireq->buf.bytes = tsize - sizeof(*ireq);
 	ireq->keysz = keysz;
 	ireq->paysz = paysz;
-	ireq->flags = MAGIC_INIT_NUM;
 	ireq->type = rtype;
 
 	*((char *)(ireq->buf.mem)) = rtype;
@@ -194,60 +235,6 @@ c_tcp_req c_tcp_req_new(req_t rtype, size_t keysz, size_t paysz)
 
 	return ireq;
 }
-
-// tmp:
-int c_tcp_req_update(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
-{
-	if (!req) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** TODO: error-check if rtype is a valid request */
-
-	struct internal_tcp_req *ireq = *req;
-
-	if (ireq->flags != MAGIC_INIT_NUM) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	if (rtype < REQ_SCAN)
-		paysz = 0UL;
-
-	uint64_t tsize = keysz + paysz + TT_REQHDR_SIZE;
-
-	if (tsize <= ireq->buf.bytes - sizeof(*ireq))
-		ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
-	else {
-		if (munmap(ireq, ireq->buf.bytes + sizeof(*ireq)) < 0)
-			return -(EXIT_FAILURE);
-
-		tsize = ((tsize + sizeof(*ireq)) | 0xfff) + 1UL; // page-alignment
-
-		if ((*req = mmap(NULL, tsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0UL)) == MAP_FAILED)
-			return -(EXIT_FAILURE);
-
-		ireq = *req;
-		ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
-		ireq->buf.bytes = tsize - sizeof(*ireq);
-	}
-
-	ireq->type = rtype;
-	ireq->keysz = keysz;
-	ireq->paysz = paysz;
-
-	*((char *)(ireq->buf.mem)) = rtype;
-	*((uint64_t *)(ireq->buf.mem + 1UL)) = keysz;
-	*((uint64_t *)(ireq->buf.mem + 9UL)) = paysz;
-	ireq->buf.mem += TT_REQHDR_SIZE;
-
-	return EXIT_SUCCESS;
-}
-
-/** TODO: merge req_update() and req_new() */
 
 int c_tcp_req_destroy(c_tcp_req req)
 {
@@ -270,8 +257,6 @@ int c_tcp_req_destroy(c_tcp_req req)
 
 	return EXIT_SUCCESS;
 }
-
-/** TODO: find a way to reuse c_tcp_req (avoid mallocs) */
 
 void *c_tcp_req_expose_key(c_tcp_req req)
 {
@@ -318,18 +303,57 @@ void *c_tcp_req_expose_payload(c_tcp_req req)
 
 c_tcp_rep c_tcp_rep_new(size_t size)
 {
+	if (!size) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	/** END OF ERROR HANDLING **/
+
 	struct internal_tcp_rep *irep;
-	uint64_t tsize = ((TT_REPHDR_SIZE + sizeof(*irep) + size) | 0xfff) + 1UL;
+	uint64_t tsize = ((TT_REPHDR_SIZE + sizeof(*irep) + size) | 0xfffUL) + 1UL; // efficient page-alignment
 
 	if ((irep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 		return NULL;
 
 	irep->buf.mem = (char *)(irep) + sizeof(*irep);
 	irep->buf.bytes = tsize - sizeof(*irep);
+	irep->flags = MAGIC_INIT_NUM;
+	irep->bindex = 0UL;
+	irep->count = 0UL;
 	irep->size = 0UL;
 	irep->retc = 0U;
 
 	return irep;
+}
+
+static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count) // internal-use-only
+{
+	struct internal_tcp_rep *irep = *rep;
+	uint64_t tsize = TT_REPHDR_SIZE + size;
+
+	if (tsize <= irep->buf.bytes)
+		irep->buf.mem = (char *)(irep) + sizeof(*irep);
+	else {
+		if (munmap(irep->buf.mem, irep->buf.bytes + sizeof(*irep)) < 0)
+			return -(EXIT_FAILURE);
+
+		tsize = ((tsize + sizeof(*irep)) | 0xfffUL) + 1UL;
+
+		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
+			return -(EXIT_FAILURE);
+
+		irep = *rep;
+		irep->buf.mem = (char *)(irep) + sizeof(*irep);
+		irep->buf.bytes = tsize - sizeof(*irep);
+	}
+
+	irep->count = count;
+	irep->size = tsize;
+	irep->retc = retc;
+	irep->bindex = 0UL;
+
+	return EXIT_SUCCESS;
 }
 
 int c_tcp_rep_destroy(c_tcp_rep rep)
@@ -339,9 +363,14 @@ int c_tcp_rep_destroy(c_tcp_rep rep)
 		return -(EXIT_FAILURE);
 	}
 
-	/** END OF ERROR HANDLING **/
-
 	struct internal_tcp_rep *irep = rep;
+
+	if (irep->flags != MAGIC_INIT_NUM) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	/** END OF ERROR HANDLING **/
 
 	if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0)
 		return -(EXIT_FAILURE);
@@ -349,21 +378,35 @@ int c_tcp_rep_destroy(c_tcp_rep rep)
 	return EXIT_SUCCESS;
 }
 
-void *c_tcp_rep_expose(c_tcp_rep rep)
+int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val)
 {
-	if (!rep) {
+	if (!rep || !val) {
 		errno = EINVAL;
-		return NULL;
+		return -(EXIT_FAILURE);
 	}
-
-	/** END OF ERROR HANDLING **/
 
 	struct internal_tcp_rep *irep = rep;
 
-	return irep->buf.mem;
+	if (irep->flags != MAGIC_INIT_NUM) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	/** TODO: add guard value!!! */
+
+	/** END OF ERROR HANDLING **/
+
+	char *tmp = irep->buf.mem + irep->bindex;
+
+	val->size = *((uint64_t *)(tmp));
+	val->data = tmp + sizeof(uint64_t);
+
+	irep->bindex += sizeof(uint64_t) + val->size;
+
+	return EXIT_SUCCESS;
 }
 
-////////////////////////////////////////////////////////////////////
+/*****************************************************************************/
 
 int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 {
@@ -382,7 +425,7 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 
 	if (!(ch->flags2 & CLHF_SND_REQ)) // client waits for a 'reply' (not a 'request')
 	{
-		errno = EINVAL;
+		errno = EPERM;
 		return -(EXIT_FAILURE);
 	}
 
@@ -408,10 +451,13 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 	struct client_handle *ch = chandle;
 	struct internal_tcp_rep *irep = rep;
 
-	/* clients waits to send() a 'request' (not to reacv() a 'reply') */
-
-	if ((ch->flags1 != MAGIC_INIT_NUM) || (ch->flags2 & CLHF_SND_REQ)) {
+	if (ch->flags1 != MAGIC_INIT_NUM) {
 		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	if (ch->flags2 & CLHF_SND_REQ) {
+		errno = EPERM;
 		return -(EXIT_FAILURE);
 	}
 
@@ -426,57 +472,28 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 	}
 
 	irep->retc = *((uint8_t *)(irep->buf.mem));
-	irep->size = be64toh(*((uint64_t *)(irep->buf.mem + 1UL)));
+	irep->count = be64toh(*((uint64_t *)(irep->buf.mem + 1UL)));
+	irep->size = be64toh(*((uint64_t *)(irep->buf.mem + 9UL))); // total size (payload-sizes + payloads)
 
 	if (irep->retc != TT_REQ_SUCC) {
+		/// TODO: return a custom error-code or set an appropriate errno (?)
 		ch->flags2 |= CLHF_SND_REQ;
-		return EXIT_SUCCESS;
+		return -(EXIT_FAILURE);
+	}
+
+	if (c_tcp_rep_update((void **)&rep, irep->retc, irep->size, irep->count) < 0) {
+		dprint("c_tcp_rep_update() failed!");
+		return -(EXIT_FAILURE);
 	}
 
 	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
+		/// TODO: ask again (irep->size > kernel-recv-buf ????)
 		dprint("read() failed!");
 		printf("read() returned: %ld\n", bytes_read);
 		return -(EXIT_FAILURE);
 	}
 
 	ch->flags2 |= CLHF_SND_REQ;
-
-	return EXIT_SUCCESS;
-}
-
-int c_tcp_print_rep(c_tcp_rep rep)
-{
-	if (!rep) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	struct internal_tcp_rep *irep = rep;
-
-	printf("- size = %lu\n", irep->size);
-	printf("- data = %s\n\n", (char *)(irep->buf.mem));
-
-	return EXIT_SUCCESS;
-}
-
-int debug_print_req(c_tcp_req req)
-{
-	if (!req) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	struct internal_tcp_req *ireq = req;
-
-	printf("ireq->type = %d\n", ireq->type);
-	printf("ireq->keysz = %lu\n", ireq->keysz);
-	printf("ireq->paysz = %lu\n", ireq->paysz);
-	printf("ireq->buf.bytes = %lu\n", ireq->buf.bytes);
-	printf("ireq->buf.mem = 0x%lX\n", *((uint64_t *)(ireq->buf.mem)));
 
 	return EXIT_SUCCESS;
 }

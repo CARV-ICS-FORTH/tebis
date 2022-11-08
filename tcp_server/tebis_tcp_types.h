@@ -7,7 +7,7 @@
 
 #define TT_VERSION 0x01000000 //0x000.000.00 [major, minor, patch]
 #define TT_MAX_LISTEN 512
-#define TT_REPHDR_SIZE 9UL
+#define TT_REPHDR_SIZE 17UL
 #define TT_REQHDR_SIZE 17UL
 
 #define __x86_PAGESIZE (1UL << 12)
@@ -15,9 +15,7 @@
 
 #define TT_REQ_SUCC 0
 
-#define req_in_get_family(req) (((req)->type) <= REQ_SCAN)
-#define is_req_init_conn_type(req) (((req)->type) == REQ_INIT_CONN)
-#define is_req_invalid(req) ((uint32_t)(((req)->type)) >= OPSNO)
+#define req_in_get_family(req) (((req)->type) < REQ_SCAN)
 
 struct buffer {
 	uint64_t bytes;
@@ -62,7 +60,7 @@ typedef enum {
 
 typedef enum {
 
-	/** buffer scheme: [1B retc | 8B paysz | payload[data]] **/
+	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
 
 	REP_GET,
 	REP_DEL,

@@ -1,5 +1,5 @@
 #ifndef TEBIS_TCP_ERRORS_H
-#define TEBIS_TCP_ERRORS_H 1
+#define TEBIS_TCP_ERRORS_H
 
 #include <errno.h>
 #include <stddef.h>
@@ -17,8 +17,7 @@
 
 typedef enum {
 
-	TT_ERR_CONN_DROP = 2,
-#define TT_ERR_CONN_DROP -(TT_ERR_CONN_DROP)
+	TT_ERR_CONN_DROP = -2,
 	TT_ERR_
 } tterr_t;
 

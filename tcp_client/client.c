@@ -90,7 +90,7 @@ int main(int argc, char **argv)
 	c_tcp_req req;
 	c_tcp_rep rep;
 
-	if (!(req = c_tcp_req_new(REQ_GET, gopts.keysz, gopts.paysz))) {
+	if (!(req = c_tcp_req_factory(NULL, gopts.rtype, gopts.keysz, gopts.paysz))) {
 		perror("c_tcp_req_new() failed");
 		exit(EXIT_FAILURE);
 	}
@@ -102,9 +102,6 @@ int main(int argc, char **argv)
 		perror("__pay -->");
 
 	generate_random_gdata(__key, gopts.keysz);
-
-	if (debug_print_req(req) < 0)
-		print_debug("debug_print_req()");
 
 	if (c_tcp_send_req(chandle, req) < 0) {
 		print_debug("c_tcp_send_req");
@@ -121,8 +118,12 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	if (c_tcp_print_rep(rep) < 0)
-		print_debug("c_tcp_print_replies()");
+	generic_data_t val;
+
+	c_tcp_rep_pop_value(rep, &val);
+
+	printf("val->size = %lu\n", val.size);
+	printf("val->data = %10s\n", (char *)(val.data));
 
 	chandle_destroy(chandle);
 	c_tcp_req_destroy(req);

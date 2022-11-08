@@ -3,12 +3,39 @@
 
 using namespace ycsbc;
 
+/** PRIVATE **/
+
+int tcpDB::serialize_values(std::vector<KVPair> &values, char *buf)
+{
+	for (KVPair p : values) {
+		memcpy(buf, p.first.c_str(), p.first.size());
+		buf += p.first.size();
+
+		memcpy(buf, p.second.c_str(), p.second.size());
+		buf += p.second.size();
+	}
+
+	return EXIT_SUCCESS;
+}
+
+size_t tcpDB::values_size(std::vector<KVPair> &values)
+{
+	size_t tsize = 0UL;
+
+	for (KVPair p : values)
+		tsize += p.first.size() + p.second.size();
+
+	return tsize;
+}
+
+/** PUBLIC **/
+
 tcpDB::tcpDB(cHandle __restrict__ *__restrict__ chandle, const char *__restrict__ addr,
 	     const char *__restrict__ port) /* OK */
 {
 	chandle_init(chandle, addr, port);
 
-	if (!(this->req = c_tcp_req_new(REQ_GET, TT_DEF_KEYSZ, TT_DEF_PAYSZ))) {
+	if (!(this->req = c_tcp_req_factory(NULL, REQ_GET, TT_DEF_KEYSZ, TT_DEF_PAYSZ))) {
 		perror("c_tcp_req_new() failed >");
 		exit(EXIT_FAILURE);
 	}
@@ -31,7 +58,7 @@ tcpDB::~tcpDB() /* OK */
 int tcpDB::Read(const std::string &table, const std::string &key, const std::vector<std::string> *fields,
 		std::vector<KVPair> &result) /* OK */
 {
-	c_tcp_req_update(&this->req, REQ_GET, key.size(), 0UL);
+	c_tcp_req_factory(&this->req, REQ_GET, key.size(), 0UL);
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req);
 
@@ -56,8 +83,9 @@ int tcpDB::Read(const std::string &table, const std::string &key, const std::vec
 		return -(EXIT_FAILURE);
 	}
 
-	const char *value = (const char *)c_tcp_rep_expose(this->rep);
-	result.push_back(std::make_pair(value, ""));
+	generic_data_t val;
+
+	c_tcp_rep_pop_value(rep, &val); // "saloustros"
 
 	return DB::kOK;
 }
@@ -65,47 +93,49 @@ int tcpDB::Read(const std::string &table, const std::string &key, const std::vec
 int tcpDB::Scan(const std::string &table, const std::string &key, int len, const std::vector<std::string> *fields,
 		std::vector<std::vector<KVPair> > &result) /* Under Construction */
 {
-	throw "Scan not implemented yet!";
+	c_tcp_req_factory(&this->req, REQ_SCAN, key.size(), sizeof(len));
 
-	// char *__key = (char *) c_tcp_req_expose_key(this->req);
+	char *__key = (char *)c_tcp_req_expose_key(this->req);
 
-	// if ( !__key )
-	// {
-	//     perror("c_tcp_req_expose_key() failed >");
-	//     return DB::kErrorNoData;
-	// }
+	if (!__key) {
+		perror("c_tcp_req_expose_key() failed >");
+		return DB::kErrorNoData;
+	}
 
-	// c_tcp_req_update(&this->req, REQ_SCAN, key.size(), len);
+	char *__pay = (char *)c_tcp_req_expose_payload(this->req);
 
-	// /* my client implementation has no need for this copy bellow! */
+	if (!__pay) {
+		perror("c_tcp_req_expose_payload() failed >");
+		return DB::kErrorNoData;
+	}
 
-	// memcpy(__key, key.c_str(), key.size());
+	/* my client implementation has no need for this copy bellow! */
 
-	// if ( c_tcp_send_req(this->chandle, this->req) < 0 )
-	// {
-	//     perror("c_tcp_send_req() failed >");
-	//     return -(EXIT_FAILURE);
-	// }
+	memcpy(__key, key.c_str(), key.size());
+	memcpy(__pay, &len, sizeof(len));
 
-	// /* wait for the reply from the server */
+	if (c_tcp_send_req(this->chandle, this->req) < 0) {
+		perror("c_tcp_send_req() failed >");
+		return -(EXIT_FAILURE);
+	}
 
-	// if ( c_tcp_recv_rep(this->chandle, this->rep) < 0 )
-	// {
-	//     perror("c_tcp_recv_rep() failed >");
-	//     return -(EXIT_FAILURE);
-	// }
+	/* wait for the reply from the server */
 
-	// const char *value = (const char *) c_tcp_rep_expose(this->rep);
-	// /** TODO: tebis_tcp_types.h --> make changes to the reply-buffer to support scan */
+	if (c_tcp_recv_rep(this->chandle, this->rep) < 0) {
+		perror("c_tcp_recv_rep() failed >");
+		return -(EXIT_FAILURE);
+	}
 
-	// return DB::kOK;
+	generic_data_t val;
+
+	c_tcp_rep_pop_value(rep, &val); // "saloustros"
+
+	return DB::kOK;
 }
 
 int tcpDB::Update(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
 {
-	c_tcp_req_update(&this->req, REQ_PUT_IFEX, key.size(), values[0].second.size());
-	/** TODO: saloustro to 'values' giati exei duo fields. To 'second' einai pragmatiko to value? */
-	/** TODO: epishs, giati Vector apo values? Exei support gia Scatter Gather IO ?*/
+	c_tcp_req_factory(&this->req, REQ_PUT_IFEX, key.size(), this->values_size(values));
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req);
 
@@ -122,7 +152,7 @@ int tcpDB::Update(const std::string &table, const std::string &key, std::vector<
 	}
 
 	memcpy(__key, key.c_str(), key.size());
-	memcpy(__pay, values.at(0).second.c_str(), values.at(0).second.size());
+	this->serialize_values(values, __pay);
 
 	if (c_tcp_send_req(this->chandle, this->req) < 0) {
 		perror("c_tcp_send_req() failed >");
@@ -130,14 +160,11 @@ int tcpDB::Update(const std::string &table, const std::string &key, std::vector<
 	}
 
 	return DB::kOK;
-	return DB::kOK;
 }
 
 int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
 {
-	c_tcp_req_update(&this->req, REQ_PUT, key.size(), values[0].second.size());
-	/** TODO: saloustro to 'values' giati exei duo fields. To 'second' einai pragmatiko to value? */
-	/** TODO: epishs, giati Vector apo values? Exei support gia Scatter Gather IO ?*/
+	c_tcp_req_factory(&this->req, REQ_PUT, key.size(), this->values_size(values));
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req);
 
@@ -154,7 +181,7 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 	}
 
 	memcpy(__key, key.c_str(), key.size());
-	memcpy(__pay, values.at(0).second.c_str(), values.at(0).second.size());
+	this->serialize_values(values, __pay);
 
 	if (c_tcp_send_req(this->chandle, this->req) < 0) {
 		perror("c_tcp_send_req() failed >");
@@ -166,7 +193,7 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 
 int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
 {
-	c_tcp_req_update(&this->req, REQ_DEL, key.size(), 0UL);
+	c_tcp_req_factory(&this->req, REQ_DEL, key.size(), 0UL);
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req);
 

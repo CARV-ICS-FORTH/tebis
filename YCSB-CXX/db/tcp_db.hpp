@@ -29,6 +29,9 @@ class tcpDB : public DB {
 	cHandle chandle;
 	c_tcp_req req;
 	c_tcp_rep rep;
+
+	size_t values_size(std::vector<KVPair> &values);
+	int serialize_values(std::vector<KVPair> &values, char *buf);
 };
 
 }

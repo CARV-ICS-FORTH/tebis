@@ -18,8 +18,8 @@ typedef void *s_tcp_rep;
  * @param port
  * @return int
  */
-int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict interface, unsigned short port,
-		 uint threads);
+int shandle_init(sHandle __restrict__ *__restrict__ shandle, int afamily, const char *__restrict__ interface,
+		 unsigned short port, unsigned threads);
 
 /**
  * @brief

@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 
 #include "tcp_server.h"
-// #include "tebis_tcp_errors.h"
+#include "tebis_tcp_errors.h"
 
 #include <arpa/inet.h>
 
@@ -18,7 +18,7 @@
 #include <sys/socket.h>
 
 #define MAGIC_INIT_NUM (0xCAFE)
-#define EPOLL_MAX_EVENTS 50
+#define EPOLL_MAX_EVENTS 64
 
 typedef struct {
 	pthread_t tid;
@@ -48,12 +48,17 @@ typedef struct {
 } tcp_req;
 
 typedef struct {
-	int32_t retc;
+	char retc;
 	uint64_t paysz;
 
 	struct buffer buf;
 
+	// linked list?
+
 } tcp_rep;
+
+#define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
+#define is_req_init_conn_type(req) (((req).type) == REQ_INIT_CONN)
 
 /*******************************************************************/
 
@@ -130,7 +135,9 @@ static int handle_new_connection(worker_t *this)
 
 		if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) <
 		    0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			if (errno == EAGAIN ||
+			    errno ==
+				    EWOULDBLOCK) /** TODO: is this ever going to happen? I don't think so, remove that? */
 				break;
 
 			perror("handle_new_connection::accept4()");
@@ -157,7 +164,7 @@ static int handle_new_connection(worker_t *this)
 	return EXIT_SUCCESS;
 }
 
-s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz);
+s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz);
 static void *s_tcp_rep_expose_payload(s_tcp_rep rep);
 static int tcp_recv_req(worker_t *restrict worker, int clifd, tcp_req *restrict req);
 static int tcp_send_rep(worker_t *restrict worker, int clifd, s_tcp_rep restrict rep);
@@ -226,7 +233,7 @@ static void *thread_routine(void *arg)
 						continue;
 					}
 
-					if (is_req_init_conn_type(&req)) {
+					if (is_req_init_conn_type(req)) {
 						if (client_version_check(clifd, this) < 0) {
 							perror("thread_routine::client_version_check()");
 							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
@@ -237,7 +244,7 @@ static void *thread_routine(void *arg)
 						continue;
 					}
 
-					if (is_req_invalid(&req)) {
+					if (is_req_invalid(req.type)) {
 						printf("\e[91minvalid request\e[0m\n");
 
 						/** TODO: send() retcode + discard receive buffer */
@@ -258,14 +265,21 @@ static void *thread_routine(void *arg)
 
 					s_tcp_print_req(&req);
 
-					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 10UL);
-					memcpy(s_tcp_rep_expose_payload(rep), "saloustros", 10UL);
-
 					/* tebis_handle_request(); */
 
+					/** temp response **/
+					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 10UL);
+					char *tptr = s_tcp_rep_expose_payload(rep);
+					*((uint64_t *)(tptr)) = 10UL;
+					memcpy(tptr + sizeof(uint64_t), "saloustros", 10UL);
+
 					if (tcp_send_rep(this, clifd, rep) < 0) {
-						perror("tcp_send_rep()");
-						/* abort_send_rep(); (?) */
+						dprint("tcp_send_rep() failed!");
+						perror("errno: ");
+
+						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
+						close(clifd);
+
 						continue;
 					}
 				}
@@ -316,7 +330,7 @@ static int spawn_workers(server_handle *sh, uint32_t workers)
 /*******************************************************************/
 
 int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict addr, unsigned short port,
-		 uint nothreads)
+		 unsigned nothreads)
 {
 	if (!shandle || !addr) {
 		errno = EINVAL;
@@ -369,7 +383,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 		goto cleanup;
 
 	int opt = 1;
-	setsockopt(sh->sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	setsockopt(sh->sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)); /** TODO: remove, only for debug purposes! */
 
 	if (bind(sh->sock, (struct sockaddr *)(&addrstore), addrlen) < 0)
 		goto cleanup;
@@ -419,25 +433,25 @@ int shandle_destroy(sHandle shandle)
 	return EXIT_SUCCESS;
 }
 
-s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz)
+s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 {
 	if (!this) {
 		errno = EINVAL;
 		return NULL;
 	}
 
-	tcp_rep *trep;
+	tcp_rep *trep = (void *)(this->buf.mem);
 	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
+
+	if (retcode == TT_REQ_SUCC)
+		tsize += paysz; // extra page for future use!
+	else
+		paysz = 0UL; // failure-reply has 0-length payload
 
 	if (this->buf.bytes < tsize) {
 		errno = ENOMEM;
 		return NULL;
 	}
-
-	if (retcode == TT_REQ_SUCC)
-		tsize += paysz + __x86_PAGESIZE; // extra page for future use!
-	else
-		paysz = 0UL; // failure-reply has 0-length payload
 
 	trep->buf.mem = (char *)(this->buf.mem) + sizeof(*trep);
 	trep->buf.bytes = this->buf.bytes - sizeof(*trep);
@@ -445,7 +459,8 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, int retcode, size_t paysz)
 	trep->paysz = paysz;
 
 	*((char *)(trep->buf.mem)) = retcode;
-	*((uint64_t *)(trep->buf.mem + 1UL)) = htobe64(paysz);
+	*((uint64_t *)(trep->buf.mem + 1UL)) = htobe64(1UL); // count
+	*((uint64_t *)(trep->buf.mem + 9UL)) = htobe64(8UL + 10UL); // total-size
 	trep->buf.mem += TT_REPHDR_SIZE;
 
 	return trep;
@@ -540,7 +555,7 @@ static int get_req_hdr(worker_t *restrict worker, int clifd, tcp_req *restrict r
 static int tcp_send_rep(worker_t *restrict worker, int clifd, s_tcp_rep restrict rep)
 {
 	tcp_rep *trep = rep;
-	uint64_t tsize = trep->paysz + TT_REPHDR_SIZE;
+	uint64_t tsize = trep->paysz + sizeof(uint64_t) + TT_REPHDR_SIZE;
 
 	if (send(clifd, trep->buf.mem - TT_REPHDR_SIZE, tsize, 0) < 0)
 		return -(EXIT_FAILURE);
