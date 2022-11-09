@@ -7,6 +7,7 @@
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
+#include <btree/gc.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
 #include <include/parallax/parallax.h>
@@ -22,6 +23,7 @@ uint64_t ds_hash_key;
 
 par_handle open_db(const char *path)
 {
+	disable_gc();
 	par_db_options db_options = { .volume_name = (char *)path,
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = "tebis_storage_engine",
