@@ -29,23 +29,11 @@
 #include "../utilities/simple_concurrent_list.h"
 #include "memory_region_pool.h"
 
-#define MAX_USEC_BEFORE_SLEEPING 5000000
-
 #define TU_CONNECTION_RC 1 // 1 -> RC, 0 -> UC
 #define VALIDATE_CHECKSUMS 0
 
 // Allow to perform our own Reliable Connection. It can be used with TU_CONNECTION_RC 1 or 0
 //#define TU_CONNECTION_RC_CONTROL 1 // 1 will control time per msg, 0 will not control nothing
-
-#define KEY_MSG_SIZE 76 //(59)   /* Message size without gid. */
-#define KEY_MSG_SIZE_GID 116 // (68) //(108)   /* Message size with gid (MGID as well). */
-
-/* The Format of the message we pass through sockets , without passing Gid. */
-#define KEY_PRINT_FMT "%04x:%06x:%06x:%08x:%016Lx:%016Lx:"
-
-/* The Format of the message we pass through sockets (With Gid). */
-#define KEY_PRINT_FMT_GID \
-	"%04x:%06x:%06x:%08x:%016Lx:%016Lx:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x:"
 
 #define CONNECTION_BUFFER_WITH_MUTEX_LOCK
 
@@ -55,36 +43,17 @@
 #define SPINNING_NUM_TH_CLI 8 // 4
 
 #define MAX_WR 4096
-#define MAX_WR_LESS_ONE (MAX_WR - 1)
-
-#define TU_RDMA_MEMORY_REGIONS 1 //We use memory regions, 0 we allocate space for  void *rdma_local_region
 
 typedef enum kr_reply_status { KR_REP_ARRIVED = 430, KR_REP_PENDING = 345, KR_REP_DONT_CARE } kr_reply_status;
 
-#define TU_CONTROL_MSG_BY_RDMA 0 //1 the control messages such as TU_RDMA_MRED_MSG will be sent by RDMA messages,
-// 0  These control messages will be sent by SEND/RECEIVE messages
-
-#define TU_RDMA_MSG_DONE 0
-#define TU_RDMA_REGULAR_MSG_READY 3
-#define TU_RDMA_DISCONNECT_MSG_READY 5
 #define TU_RDMA_REGULAR_MSG 10
 #define TU_RDMA_REPLICATION_MSG 20
 #define CONNECTION_PROPERTIES \
 	9 /*not a message type used for recv flags in messages to indicate that either a
 																 DISCONNECT, CHANGE_CONNECTION_PROPERTIES_REQUEST,CHANGE_CONNECTION_PROPERTIES_REPLY follows*/
-#define TU_RDMA_RECEIVED_MREND_MSG 9 //To inform the spinning thread to go to the beginning
-#define TU_RDMA_ACK_RECEIVED_MREND_REPLY_MSG \
-	12 //To inform the client we received the MREND_REPLY_MSG and can be released
-
-#define TU_RDMA_RECEIVED_ACK_MSG \
-	14 //To inform the last message we have received. It should be usually sent from the client to the server.
-#define TU_RDMA_DISCONNECT_MSG 99
-
 #define SERVER_MODE 149
 #define CLIENT_MODE 189
 extern int LIBRARY_MODE; /*two modes for the communication rdma library SERVER and CLIENT*/
-
-#define MAX_IDLE_ITERATIONS 1000000
 
 extern uint32_t num_of_spinning_threads;
 extern uint32_t num_of_worker_threads;
