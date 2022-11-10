@@ -1125,7 +1125,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
 	struct put_msg_data put_data = { .key_size = key_size, .key = key, .value_size = val_size, .value = value };
-	create_put_msg(put_data, (char *)req_header + sizeof(msg_header));
+	create_put_msg(put_data, req_header);
 
 	/*Now the reply part*/
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));

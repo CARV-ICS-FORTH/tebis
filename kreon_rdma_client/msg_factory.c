@@ -26,12 +26,13 @@ inline int32_t calculate_get_msg_size(int32_t key_size)
 	return get_msg_size;
 }
 
-void create_put_msg(struct put_msg_data data, char *msg)
+void create_put_msg(struct put_msg_data data, msg_header *msg_header)
 {
-	struct lsn *lsn = (struct lsn *)msg;
+	char *msg_payload = (char *)msg_header + sizeof(struct msg_header);
+	struct lsn *lsn = (struct lsn *)msg_payload;
 	set_lsn_id(lsn, UINT64_MAX);
 
-	struct kv_splice *kv = (struct kv_splice *)(msg + get_lsn_size());
+	struct kv_splice *kv = (struct kv_splice *)(msg_payload + get_lsn_size());
 	set_key(kv, data.key, data.key_size);
 	set_value(kv, data.value, data.value_size);
 	//clients should not care for tail sizes. This approach is chosen to avoid different formats between clients/servers
