@@ -1,8 +1,8 @@
 #ifndef UTILS_QUEUE_HEADER
 #define UTILS_QUEUE_HEADER
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <pthread.h>
 #ifdef __cplusplus
 extern "C" {
 #endif /* ifdef __cplusplus */

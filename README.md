@@ -338,7 +338,7 @@ First we need a Zookeeper server. For simplicity we assume that the Zookeeper se
 need to initialize Tebis metadata. This can be done through the command
 <tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
 <<<<<<< HEAD
-- **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections> <role leader or empty> 
+- **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections> <role leader or empty>
  Example:
 - sith2.cluster.ics.forth.gr:8080 leader (so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)
 =======
@@ -356,7 +356,7 @@ need to initialize Tebis metadata. This can be done through the command
 1 MM  ZZ sith3.cluster.ics.forth.gr:8080 sith6.cluster.ics.forth.gr:8080
 2 ZZ +oo sith6.cluster.ics.forth.gr:8080 sith2.cluster.ics.forth.gr:8080
 
-In each tebis server we need a preallocated file where Tebis will store its data (either with dd or fallocate).Each server's 
+In each tebis server we need a preallocated file where Tebis will store its data (either with dd or fallocate).Each server's
 storage capacity will be equal to the size of the file provided.
 Example
 fallocate -l 100G /path/to/file
@@ -365,12 +365,8 @@ Then we need to boot first the leader of the Tebis rack
 <tebis_build_root folder>/kreon_server/kreon_server <path to tebis file> <zk_host:zk_port> <RDMA IP subnet> <LSM L0 size in keys>
 <growth factor> <server RDMA port, worker core 0, worker core 1,...,worker core N>
 
-example: build/kreon_server/kreon_server /nvme/par1.dat sith2:2181 192.168.4 128000 8 "8080,0,1,2,3,4" 
+example: build/kreon_server/kreon_server /nvme/par1.dat sith2:2181 192.168.4 128000 8 "8080,0,1,2,3,4"
 
 # Tests
 cd into folder <BUILD_ROOT_FOLDER>/tests/ and type
 test_krc_api zk_host:zk_port
-
-
-
-

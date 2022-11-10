@@ -1,12 +1,12 @@
+#include <assert.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <signal.h>
-#include <assert.h>
 
-#include "simple_concurrent_list.h"
 #include "../kreon_server/conf.h"
 #include "../utilities/macros.h"
+#include "simple_concurrent_list.h"
 
 SIMPLE_CONCURRENT_LIST *init_simple_concurrent_list(void)
 {

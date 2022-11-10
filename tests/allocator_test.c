@@ -1,10 +1,10 @@
 #define _GNU_SOURCE
-#include <stdio.h>
-#include <stdint.h>
+#include "allocator.h"
 #include <pthread.h>
 #include <sched.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include "allocator.h"
 #define DEV "/dev/kram"
 
 #define NUM_OF_THREADS 1
@@ -92,10 +92,10 @@ void start(void *id)
 	printf("allocations %d\n", allocations);
 	duration = get_timestamp();
 	for (i = 0; i < allocations; i++) {
-		/*decision = rand_r(&seeds[myid])%10;	
-		if(decision < 7) 
+		/*decision = rand_r(&seeds[myid])%10;
+		if(decision < 7)
 			size = 4096;
-		else 
+		else
 			size = 131072;*/
 		size = 16384;
 		addr = allocate(size);
