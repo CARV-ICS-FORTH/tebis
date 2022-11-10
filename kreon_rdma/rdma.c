@@ -857,8 +857,6 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 				}
 			}
 			break;
-		}
-
 		case IBV_WC_RDMA_READ:
 			log_debug("IBV_WC_RDMA_READ code");
 			break;
