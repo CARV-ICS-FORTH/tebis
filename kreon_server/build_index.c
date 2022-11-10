@@ -9,18 +9,16 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static void insert_and_proceed_iterator(rdma_buffer_iterator_t iterator, struct krm_region_desc *r_desc)
+static void insert_kv(rdma_buffer_iterator_t iterator, struct krm_region_desc *r_desc)
 {
-	par_handle *db = r_desc->db;
+	par_handle *handle = r_desc->db;
 	const char *error_message = NULL;
 	struct kv_splice *kv = rdma_buffer_iterator_get_kv(iterator);
-	par_put_serialized(db, (char *)kv, &error_message);
+	par_put_serialized(handle, (char *)kv, &error_message);
 	if (error_message) {
 		log_fatal("Error uppon inserting key %s, key_size %u", get_key_offset_in_kv(kv), get_key_size(kv));
 		_exit(EXIT_FAILURE);
 	}
-
-	rdma_buffer_iterator_next(iterator);
 }
 
 void rco_build_index(struct rco_build_index_task *task)
@@ -37,11 +35,13 @@ void rco_build_index(struct rco_build_index_task *task)
 
 		int64_t ret = compare_lsns(curr_l0_recovery_lsn, curr_big_recovery_lsn);
 
-		if (ret > 0)
-			insert_and_proceed_iterator(l0_recovery_iterator, task->r_desc);
-		else if (ret < 0)
-			insert_and_proceed_iterator(big_recovery_iterator, task->r_desc);
-		else {
+		if (ret > 0) {
+			insert_kv(l0_recovery_iterator, task->r_desc);
+			rdma_buffer_iterator_next(l0_recovery_iterator);
+		} else if (ret < 0) {
+			insert_kv(big_recovery_iterator, task->r_desc);
+			rdma_buffer_iterator_next(big_recovery_iterator);
+		} else {
 			log_fatal("Found a duplicate lsn > 0 in both rdma buffers, this should never happen");
 			_exit(EXIT_FAILURE);
 		}
@@ -52,6 +52,7 @@ void rco_build_index(struct rco_build_index_task *task)
 		unterminated_iterator = big_recovery_iterator;
 	//proceed unterminated iterator until the end-of-buffer
 	while (rdma_buffer_iterator_is_valid(unterminated_iterator) == VALID) {
-		insert_and_proceed_iterator(unterminated_iterator, task->r_desc);
+		insert_kv(unterminated_iterator, task->r_desc);
+		rdma_buffer_iterator_next(unterminated_iterator);
 	}
 }
