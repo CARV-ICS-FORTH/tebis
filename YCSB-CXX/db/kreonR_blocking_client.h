@@ -9,25 +9,25 @@
 
 #include "../core/ycsbdb.h"
 
-#include <iostream>
-#include <string>
-#include <mutex>
 #include <algorithm>
 #include <atomic>
 #include <functional>
+#include <iostream>
+#include <mutex>
+#include <string>
 #include <unordered_map>
 
+#include <boost/algorithm/string.hpp>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include <boost/algorithm/string.hpp>
 
 #include "../core/properties.h"
 
 extern "C" {
 #include "../../kreon_rdma_client/kreon_rdma_client.h"
-#include "../../kreon_lib/btree/btree.h"
+#include <btree/btree.h>
 #include <log.h>
 }
 
@@ -63,9 +63,10 @@ class kreonRBlockingClientDB : public YCSBDB {
 
     public:
 	kreonRBlockingClientDB(int num, utils::Properties &props)
-		: db_num(num), field_count(std::stoi(props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY,
-								       CoreWorkload::FIELD_COUNT_DEFAULT))),
-		  dbs()
+		: db_num(num)
+		, field_count(std::stoi(
+			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT)))
+		, dbs()
 	{
 		struct timeval start;
 

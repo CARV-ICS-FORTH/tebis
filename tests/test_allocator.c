@@ -13,15 +13,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #define _GNU_SOURCE
-#include <stdio.h>
-#include <stdint.h>
-#include <pthread.h>
-#include <sched.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <log.h>
 #include "../kreon_lib/allocator/allocator.h"
 #include "../kreon_lib/btree/btree.h"
+#include <assert.h>
+#include <log.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 static struct volume_descriptor *open_volume(char *volumeName)
 {

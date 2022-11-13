@@ -5,11 +5,6 @@
 #include <pthread.h>
 #include <stdint.h>
 
-struct cu_lamport_counter {
-	uint64_t c1;
-	uint64_t c2;
-};
-
 struct cu_region_desc {
 	struct krm_region region;
 	/*plus future other staff*/
@@ -25,10 +20,8 @@ typedef struct cu_conn_per_server {
 struct cu_regions {
 	struct cu_region_desc r_desc[KRM_MAX_REGIONS];
 	pthread_mutex_t r_lock;
-	struct cu_lamport_counter lc;
 	uint32_t num_regions;
 	cu_conn_per_server *root_cps;
-	struct cu_lamport_counter lc_conn;
 	pthread_mutex_t conn_lock;
 	struct channel_rdma *channel;
 	/*plus future other staff*/

@@ -13,11 +13,11 @@
 
 #include "queue.h"
 #include <assert.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
 #include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #define COMPILER_BARRIER() asm volatile("" : : : "memory")
 

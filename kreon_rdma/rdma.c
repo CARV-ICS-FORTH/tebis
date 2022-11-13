@@ -223,8 +223,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case DELETE_REQUEST:
 		case TEST_REQUEST:
 		case TEST_REQUEST_FETCH_PAYLOAD:
-		case GET_LOG_BUFFER_REQ:
-		case GET_LOG_BUFFER_REP:
+		case GET_RDMA_BUFFER_REQ:
+		case GET_RDMA_BUFFER_REP:
 		case FLUSH_COMMAND_REQ:
 		case FLUSH_COMMAND_REP:
 		case REPLICA_INDEX_GET_BUFFER_REQ:
@@ -449,7 +449,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		break;
 	default:
 		log_fatal("BAD connection type");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	conn->remaining_bytes_in_remote_rdma_region = conn->rdma_memory_regions->memory_region_length;
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
@@ -637,7 +637,7 @@ void crdma_add_connection_channel(struct channel_rdma *channel, struct connectio
 void ec_sig_handler(int signo)
 {
 	(void)signo;
-	struct sigaction sa = {};
+	struct sigaction sa = { 0 };
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_handler = ec_sig_handler;
@@ -768,7 +768,6 @@ void *poll_cq(void *arg)
 {
 	struct sigaction sa;
 	struct channel_rdma *channel;
-	struct connection_rdma *conn;
 	struct ibv_cq *cq;
 	struct ibv_wc wc[MAX_COMPLETION_ENTRIES];
 	void *ev_ctx;
@@ -797,10 +796,13 @@ void *poll_cq(void *arg)
 			int rc = ibv_poll_cq(cq, MAX_COMPLETION_ENTRIES, wc);
 			if (rc < 0) {
 				log_fatal("poll of completion queue failed!");
-				exit(EXIT_FAILURE);
+				_exit(EXIT_FAILURE);
 			} else if (rc > 0) {
-				conn = (connection_rdma *)cq->cq_context;
-				assert(conn);
+				struct connection_rdma *conn = (connection_rdma *)cq->cq_context;
+				if (!conn) {
+					assert(0);
+					_exit(EXIT_FAILURE);
+				}
 				for (int i = 0; i < rc; i++) {
 					struct rdma_message_context *msg_ctx =
 						(struct rdma_message_context *)wc[i].wr_id;
@@ -836,28 +838,25 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 		case IBV_WC_RECV:
 			// log_info("IBV_WC_RECV code id of connection %d", conn->idconn);
 			break;
-		case IBV_WC_RDMA_WRITE: {
-			msg_header *msg = msg_ctx->msg;
-			if (NULL == msg)
-				break;
-
-			switch (msg->msg_type) {
-			/*server to server new school*/
-			case GET_LOG_BUFFER_REQ:
-			case GET_LOG_BUFFER_REP:
-			case FLUSH_COMMAND_REQ:
-			case FLUSH_COMMAND_REP:
-				break;
-			/*client to server RPCs*/
-			case DISCONNECT:
-				break;
-			default:
-				log_fatal("Entered unplanned state FATAL for message type %d", msg->msg_type);
-				_exit(EXIT_FAILURE);
+		case IBV_WC_RDMA_WRITE:;
+			struct msg_header *msg = msg_ctx->msg;
+			if (msg) {
+				switch (msg->msg_type) {
+				/*server to server new school*/
+				case GET_RDMA_BUFFER_REQ:
+				case GET_RDMA_BUFFER_REP:
+				case FLUSH_COMMAND_REQ:
+				case FLUSH_COMMAND_REP:
+					break;
+				/*client to server RPCs*/
+				case DISCONNECT:
+					break;
+				default:
+					log_fatal("Entered unplanned state FATAL for message type %d", msg->msg_type);
+					_exit(EXIT_FAILURE);
+				}
 			}
 			break;
-		}
-
 		case IBV_WC_RDMA_READ:
 			log_debug("IBV_WC_RDMA_READ code");
 			break;

@@ -10,7 +10,7 @@ extern uint64_t wake_up_workers_operations;
  *  produce an error when __VA_ARGS__ is empty
  */
 #define DPRINT(format_string, ...) printf("[%s:%s:%d] " format_string, __FILE__, __func__, __LINE__, ##__VA_ARGS__)
-#define ERRPRINT(format_string, ...)                                                                                   \
+#define ERRPRINT(format_string, ...) \
 	fprintf(stderr, "[%s:%s:%d] ERROR: " format_string, __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 /*gesalous: the def below is used for performance debugging reasons. It is used to evaluate

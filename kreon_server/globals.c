@@ -1,10 +1,10 @@
 #define _LARGEFILE64_SOURCE
 #include "globals.h"
-#include "../kreon_lib/allocator/allocator.h"
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/macros.h"
 #include "conf.h"
 #include <fcntl.h>
+#include <include/parallax/parallax.h>
 #include <linux/fs.h>
 #include <linux/hdreg.h>
 #include <log.h>
@@ -23,6 +23,7 @@ struct globals {
 	char *mount_point;
 	off64_t volume_size;
 	struct channel_rdma *channel;
+	FILE *trace_file;
 	uint32_t L0_size;
 	uint32_t growth_factor;
 	int connections_per_server;
@@ -37,6 +38,7 @@ static struct globals global_vars = { .zk_host_port = NULL,
 				      .volume_size = 0,
 				      .is_volume_init = 0,
 				      .channel = NULL,
+				      .trace_file = NULL,
 				      .connections_per_server = NUM_OF_CONNECTIONS_PER_SERVER,
 				      .job_scheduling_max_queue_depth = 8,
 				      .worker_spin_time_usec = 100,
@@ -50,7 +52,7 @@ char *globals_get_RDMA_IP_filter(void)
 {
 	if (global_vars.RDMA_IP_filter == NULL) {
 		log_fatal("RDMA_IP_filter host,port not set!\n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	return global_vars.RDMA_IP_filter;
 }
@@ -59,7 +61,7 @@ void globals_set_RDMA_IP_filter(char *RDMA_IP_filter)
 {
 	if (pthread_mutex_lock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.RDMA_IP_filter == NULL) {
 		global_vars.RDMA_IP_filter = (char *)malloc(strlen(RDMA_IP_filter) + 1);
@@ -69,7 +71,7 @@ void globals_set_RDMA_IP_filter(char *RDMA_IP_filter)
 	}
 	if (pthread_mutex_unlock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -77,7 +79,7 @@ char *globals_get_zk_host(void)
 {
 	if (global_vars.zk_host_port == NULL) {
 		log_fatal("Zookeeper host,port not set!\n");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	return global_vars.zk_host_port;
 }
@@ -86,7 +88,7 @@ void globals_set_zk_host(char *host)
 {
 	if (pthread_mutex_lock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.zk_host_port == NULL) {
 		global_vars.zk_host_port = (char *)malloc(strlen(host) + 1);
@@ -96,7 +98,7 @@ void globals_set_zk_host(char *host)
 	}
 	if (pthread_mutex_unlock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -136,10 +138,10 @@ void globals_set_dev(char *dev)
 	}
 	if (strncmp(dev, "/dev/", 5) == 0) {
 		if (ioctl(file_descriptor, BLKGETSIZE64, &global_vars.volume_size) == -1) {
-			log_fatal("failed to determine volume's size", dev);
+			log_fatal("failed to determine volume's size");
 			_exit(EXIT_FAILURE);
 		}
-		log_info("%s is a block device of size %llu", dev, global_vars.volume_size);
+		log_info("%s is a block device of size %lu", dev, global_vars.volume_size);
 
 	} else {
 		off64_t end_of_file;
@@ -150,12 +152,12 @@ void globals_set_dev(char *dev)
 			_exit(EXIT_FAILURE);
 		}
 		global_vars.volume_size = end_of_file;
-		log_info("%s is a file of size %llu", dev, global_vars.volume_size);
+		log_info("%s is a file of size %lu", dev, global_vars.volume_size);
 		global_vars.mount_point = strdup(dev);
 	}
 	file_descriptor = close(file_descriptor);
 	if (file_descriptor == -1) {
-		log_fatal("failed to open %s reason follows");
+		log_fatal("failed to close the file");
 		perror("Reason");
 		_exit(EXIT_FAILURE);
 	}
@@ -180,7 +182,7 @@ void globals_create_rdma_channel(void)
 {
 	if (pthread_mutex_lock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	if (global_vars.channel == NULL)
 		global_vars.channel = crdma_client_create_channel(NULL);
@@ -188,7 +190,7 @@ void globals_create_rdma_channel(void)
 		log_warn("rdma channel already set");
 	if (pthread_mutex_unlock(&g_lock) != 0) {
 		log_fatal("Failed to acquire lock");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 }
 
@@ -226,7 +228,11 @@ void globals_init_volume(void)
 			_exit(EXIT_FAILURE);
 		}
 		log_info("underyling volume is a block device %s of size %ld bytes", global_vars.dev, size);
-		volume_init(global_vars.dev, 0, size, 0);
+		char *error_message = par_format(global_vars.dev, 128);
+		if (error_message) {
+			log_fatal("Error uppon formating, error %s", error_message);
+			_exit(EXIT_FAILURE);
+		}
 	} else {
 		log_info("Retrieving file: %s size...", global_vars.dev);
 		size = lseek64(fd, 0, SEEK_END);
@@ -237,7 +243,11 @@ void globals_init_volume(void)
 		}
 		log_info("Volume is a file %s of size %ld bytes", global_vars.dev, size);
 		close(fd);
-		volume_init(global_vars.dev, 0, size, 1);
+		char *error_message = par_format(global_vars.dev, 128);
+		if (error_message) {
+			log_fatal("Error uppon formating, error %s", error_message);
+			_exit(EXIT_FAILURE);
+		}
 	}
 
 	global_vars.volume_size = size;
@@ -279,4 +289,30 @@ void globals_set_send_index(int enable)
 int globals_get_send_index(void)
 {
 	return global_vars.send_index;
+}
+
+void globals_open_trace_file(const char *filename)
+{
+	global_vars.trace_file = fopen(filename, "a");
+}
+
+static FILE *globals_get_trace_file(void)
+{
+	return global_vars.trace_file;
+}
+
+void globals_append_trace_file(uint32_t key_size, void *key, uint32_t value_size, void *value, enum operation_type op)
+{
+	FILE *fptr = globals_get_trace_file();
+	if (op == TEB_GET)
+		fprintf(fptr, "GET %u %s\n", key_size, (char *)key);
+	else
+		fprintf(fptr, "PUT %u %.*s %u %.*s\n", key_size, key_size, (char *)key, value_size, value_size,
+			(char *)value);
+}
+
+void globals_close_trace_file(void)
+{
+	FILE *fptr = globals_get_trace_file();
+	fclose(fptr);
 }

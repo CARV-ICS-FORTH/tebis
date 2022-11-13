@@ -21,6 +21,9 @@ option(
 
 option(DISABLE_ALL_WARNINGS "Disable all warnings to parse iwyu output." OFF)
 
+# TODO: remove this and find a clean solution for it
+option(USE_FORKED_PARALLAX "Use open sourced Parallax from github" OFF)
+
 if(RUN_IWYU STREQUAL "ON")
   file(COPY ${CMAKE_SOURCE_DIR}/scripts/CI/check-iwyu-output.py
        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
@@ -45,14 +48,14 @@ include(cmake_utils/ycsb.cmake.in)
 FetchContent_Declare(
   uthash # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/troydhanson/uthash.git
-  SOURCE_DIR external-deps/src/uthash # (Relative) path within in the build
-                                      # directory.
+  GIT_PROGRESS YES # (Relative) path within in the build
+  # directory.
 )
 
 FetchContent_Declare(
   log # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/innerout/log.c.git
-  GIT_TAG 1278d9cb58e2c6b848f6cbdd62c9a01eb9ed45da)
+  GIT_PROGRESS TRUE)
 
 FetchContent_Declare(
   libbloom # Recommendation: Stick close to the original name.
@@ -64,6 +67,20 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/StableCoder/cmake-scripts.git
   GIT_TAG main
   GIT_PROGRESS TRUE)
+
+if(USE_FORKED_PARALLAX)
+  FetchContent_Declare(
+    parallax
+    GIT_REPOSITORY https://github.com/gesalous/parallax-1.git
+    GIT_TAG tebis_kv_format)
+else()
+  FetchContent_Declare(
+    parallax
+    GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
+    GIT_TAG tebis_kv_format)
+
+endif(USE_FORKED_PARALLAX)
+unset(USE_FORKED_PARALLAX CACHE)
 
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
@@ -87,9 +104,13 @@ FetchContent_GetProperties(log)
 FetchContent_GetProperties(libbloom)
 FetchContent_GetProperties(cjson)
 FetchContent_GetProperties(cmake-scripts)
+FetchContent_GetProperties(parallax)
 
+# Do not add uthash as dependency. Uthash is a special case becuase it is a
+# header only library
 if(NOT uthash_POPULATED)
   FetchContent_Populate(uthash)
+  include_directories(${uthash_SOURCE_DIR}/src)
   FetchContent_MakeAvailable(uthash)
 endif()
 
@@ -112,6 +133,13 @@ if(NOT cmake-scripts_POPULATED)
   FetchContent_Populate(cmake-scripts)
   FetchContent_MakeAvailable(cmake-scripts)
   include(${cmake-scripts_SOURCE_DIR}/sanitizers.cmake)
+endif()
+
+if(NOT parallax_POPULATED)
+  FetchContent_Populate(parallax)
+  add_subdirectory(${parallax_SOURCE_DIR} ${parallax_BINARY_DIR})
+  include_directories(${parallax_SOURCE_DIR}/lib)
+  FetchContent_MakeAvailable(parallax)
 endif()
 
 # If users have zookeeper installed in a custom path they can provide it to
@@ -150,6 +178,9 @@ include(CMakeconfig.txt)
 configure_file(config.h.in config.h @ONLY)
 
 include_directories(${CMAKE_BINARY_DIR})
+if(CREATE_TRACE_FILE)
+  add_compile_definitions(CREATE_TRACE_FILE=1)
+endif()
 
 if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
   string(APPEND CMAKE_C_FLAGS APPEND " -w")
@@ -160,7 +191,7 @@ string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
 string(
   APPEND
   CMAKE_C_FLAGS
-  " -Wstrict-prototypes -Wall -Werror -Wextra -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
+  " -Wstrict-prototypes -Wall -Werror -Wextra -pedantic -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
@@ -171,7 +202,6 @@ set(CMAKE_LINKER_FLAGS
 )
 
 add_subdirectory(kreon_rdma)
-add_subdirectory(kreon_lib)
 add_subdirectory(kreon_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)

@@ -13,12 +13,12 @@
 #include <string.h>
 #include <time.h>
 //#include "../kreon_server/client_regions.h"
-#include "../kreon_lib/scanner/scanner.h"
 #include "../kreon_rdma/rdma.h"
 #include "../kreon_server/djb2.h"
 #include "../kreon_server/globals.h"
 #include "../kreon_server/messages.h"
 #include "../utilities/spin_loop.h"
+#include "msg_factory.h"
 #include <log.h>
 #define KRC_GET_SIZE (16 * 1024)
 
@@ -53,7 +53,7 @@ struct krc_scanner {
 	struct cu_region_desc *curr_region;
 };
 
-static char neg_infinity[1] = { 0 };
+//static char neg_infinity[1] = { 0 };
 static char *pos_infinity = "+oo";
 
 /*extern ZooLogLevel logLevel;*/
@@ -166,8 +166,13 @@ static int krc_wait_for_message_reply(struct msg_header *req, struct connection_
 	return KREON_SUCCESS;
 }
 
-/** This function fills the fields of a request msg that relate to its reply
- *  request must know where its reply is at the recv circular buffer etc*/
+/**
+ * This function fills the fields of a request msg header, related to its reply
+ * request must know where its reply is at the recv circular buffer in order to be able to reply to that specific offset
+ * @param conn, rdma connection specific
+ * @param req, req msg header of the request to be fileld
+ * @param rep, the msg header of the reply
+ * */
 static void fill_request_msg(connection_rdma *conn, struct msg_header *req, struct msg_header *rep)
 {
 	/*inform the req about its buddy*/
@@ -219,10 +224,20 @@ static void send_no_op_operation(connection_rdma *conn)
 	client_free_rpc_pair(conn, no_op_reply);
 }
 
-/** Allocate a pair of buffers, one for the request and one for the reply. All messages are multiples of MESSAGE_SEGMENT_SIZE unit
- *  In case where server's recv circular buffer does no have enough space a NO_OP message is send, allocating
- *  the remaining space of the buffer. Client spins for a NO_OP_ACK.
- *  Function returns rep and req allocated in their corresponding circular buffers */
+//TODO create a struct with the parameters of this function
+/**
+ * Allocate a pair of buffers, one for the request and one for the reply. All messages are multiples of MESSAGE_SEGMENT_SIZE unit
+ * In case where server's recv circular buffer does no have enough space a NO_OP message is send, allocating
+ * the remaining space of the buffer and client spins for a NO_OP_ACK.
+ * Function returns rep and req allocated in their corresponding circular buffers
+ * @param conn, the rmda_connection specifics
+ * @param req, a reference to the request that must be allocated in the send circular buffer
+ * @param req_msg_type, the type of the request (eg.g PUT_REQ)
+ * @param req_size the size of the request
+ * @param rep, a reference to the reply that must be allocated in the recv circular buffer
+ * @param rep_msg_type the type of the reply (e.g. PUT_REPLY)
+ * @param rep_size, the size of the reply
+ * */
 static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
 			      int rep_msg_type, int rep_size)
 {
@@ -242,6 +257,7 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 	pthread_mutex_unlock(&conn->buffer_lock);
 }
 
+#if 0
 static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 {
 	uint32_t size;
@@ -266,6 +282,7 @@ static int64_t krc_compare_keys(krc_key *key1, krc_key *key2)
 	return -1;
 }
 
+
 static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 {
 	if (key->key_size < prefix->key_size)
@@ -275,7 +292,7 @@ static int64_t krc_prefix_match(krc_key *prefix, krc_key *key)
 	else
 		return 0;
 }
-
+#endif
 krc_ret_code krc_init(char *zookeeper_host)
 {
 	if (!krc_lib_init) {
@@ -286,9 +303,18 @@ krc_ret_code krc_init(char *zookeeper_host)
 	}
 	return KRC_SUCCESS;
 }
+
 static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_size, void *value,
 				     int is_update_if_exists)
 {
+	(void)key_size;
+	(void)key;
+	(void)val_size;
+	(void)value;
+	(void)is_update_if_exists;
+	log_fatal("Not supported yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header;
 	msg_put_key *put_key;
 	msg_put_value *put_value;
@@ -296,10 +322,10 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 	msg_put_rep *put_rep;
 
 	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
-		log_fatal("KV size too large currently for Kreon, current max value size supported = %u bytes",
+		log_fatal("KV size too large currently for Kreon, current max value size supported = %lu bytes",
 			  SEGMENT_SIZE - sizeof(segment_header));
 		log_fatal("Contact gesalous@ics.forth.gr");
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	//old school
 	//client_region *region = client_find_region(key, key_size);
@@ -351,12 +377,13 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
 	/*check ret code*/
 	if (put_rep->status != KREON_SUCCESS) {
-		log_fatal("put operation failed for key %s", key);
+		log_fatal("put operation failed for key %s", (char *)key);
 		_exit(EXIT_FAILURE);
 	}
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return KRC_SUCCESS;
+#endif
 }
 
 krc_ret_code krc_put_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value)
@@ -494,6 +521,14 @@ exit:
 
 krc_ret_code krc_get(uint32_t key_size, char *key, char **buffer, uint32_t *size, uint32_t offset)
 {
+	(void)key_size;
+	(void)key;
+	(void)buffer;
+	(void)size;
+	(void)offset;
+	log_fatal("Blocking api needs rewriting");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
 	msg_get_req *get_req = NULL;
@@ -583,10 +618,16 @@ exit:
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return code;
+#endif
 }
 
 uint8_t krc_exists(uint32_t key_size, void *key)
 {
+	(void)key_size;
+	(void)key;
+	log_fatal("krc_exists needs rewriting");
+	_exit(EXIT_FAILURE);
+#if 0
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
 	msg_get_req *get_req = NULL;
@@ -622,6 +663,7 @@ uint8_t krc_exists(uint32_t key_size, void *key)
 	zero_rendezvous_locations_l(rep_header, req_header->reply_length_in_recv_buffer);
 	client_free_rpc_pair(conn, rep_header);
 	return get_rep->key_found;
+#endif
 }
 
 krc_ret_code krc_delete(uint32_t key_size, void *key)
@@ -668,7 +710,7 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
 	if (del_rep->status != KREON_SUCCESS) {
-		log_warn("Key %s not found!", key);
+		log_warn("Key %s not found!", (char *)key);
 		error_code = KRC_KEY_NOT_FOUND;
 	} else
 		error_code = KRC_SUCCESS;
@@ -720,6 +762,14 @@ void krc_scan_fetch_keys_only(krc_scannerp sp)
 
 uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **value, size_t *valueSize)
 {
+	(void)key;
+	(void)sp;
+	(void)keySize;
+	(void)value;
+	(void)valueSize;
+	log_fatal("Not implemented yet");
+	_exit(EXIT_FAILURE);
+#if 0
 	struct krc_scanner *sc = (struct krc_scanner *)sp;
 	msg_header *req_header;
 	msg_multi_get_req *m_get;
@@ -911,6 +961,7 @@ exit:
 		*value = NULL;
 	}
 	return sc->is_valid;
+#endif
 }
 
 void krc_scan_set_start(krc_scannerp sp, uint32_t start_key_size, void *start_key, krc_seek_mode seek_mode)
@@ -934,7 +985,6 @@ void krc_scan_set_start(krc_scannerp sp, uint32_t start_key_size, void *start_ke
 	sc->start_key->key_size = start_key_size;
 	memcpy(sc->start_key->key_buf, start_key, start_key_size);
 	//log_info("start key set to %s", sc->start_key->key_buf);
-	return;
 }
 
 void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, krc_seek_mode seek_mode)
@@ -955,7 +1005,6 @@ void krc_scan_set_stop(krc_scannerp sp, uint32_t stop_key_size, void *stop_key, 
 	sc->stop_key->key_size = stop_key_size;
 	memcpy(sc->stop_key->key_buf, stop_key, stop_key_size);
 	log_debug("stop key set to %s", sc->stop_key->key_buf);
-	return;
 }
 
 void krc_scan_set_prefix_filter(krc_scannerp sp, uint32_t prefix_size, void *prefix)
@@ -974,7 +1023,6 @@ void krc_scan_set_prefix_filter(krc_scannerp sp, uint32_t prefix_size, void *pre
 	sc->prefix_key = (krc_key *)malloc(sizeof(krc_key) + prefix_size);
 	sc->prefix_key->key_size = prefix_size;
 	memcpy(sc->prefix_key->key_buf, prefix, prefix_size);
-	return;
 }
 
 void krc_scan_close(krc_scannerp sp)
@@ -987,7 +1035,6 @@ void krc_scan_close(krc_scannerp sp)
 	if (!sc->stop_infinite)
 		free(sc->stop_key);
 	free(sc);
-	return;
 }
 
 static unsigned operation_count = 0, replies_arrived = 0;
@@ -1002,8 +1049,8 @@ krc_ret_code krc_close()
 		while (spinner->outstanding_requests != 0) {
 			clock_gettime(CLOCK_MONOTONIC, &current);
 			if (print && current.tv_sec - start.tv_sec > 5) {
-				log_info("%d: Operation count = %u, replies = %u, outstanding = %u", getpid(),
-					 operation_count, replies_arrived);
+				log_info("%d: Operation count = %u, replies = %u", getpid(), operation_count,
+					 replies_arrived);
 				print = false;
 			}
 		}
@@ -1018,6 +1065,9 @@ krc_ret_code krc_close()
 		}
 		log_info("Reply checker exited!");
 		reply_checker_exit = 0;
+#if CREATE_TRACE_FILE
+		globals_close_trace_file();
+#endif
 	}
 	//cu_close_open_connections();
 	return KRC_SUCCESS;
@@ -1061,32 +1111,21 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 				      void *context, int is_update_if_exists)
 {
 	msg_header *req_header = NULL;
-	msg_put_key *put_key = NULL;
-	msg_put_value *put_value = NULL;
 	msg_header *rep_header = NULL;
 	msg_put_rep *put_rep = NULL;
 
-	if (key_size + val_size + (2 * sizeof(uint32_t)) > SEGMENT_SIZE - sizeof(segment_header)) {
-		log_fatal("KV size too large currently for Kreon, current max value size supported = %u bytes",
-			  SEGMENT_SIZE - sizeof(segment_header));
-		log_fatal("Contact gesalous@ics.forth.gr");
-		_exit(EXIT_FAILURE);
-	}
-
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
-	connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
+	uint64_t seed = djb2_hash((unsigned char *)key, key_size);
+	connection_rdma *conn = cu_get_conn_for_region(r_desc, seed);
 
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
-	_krc_get_rpc_pair(conn, &req_header, req_type, key_size + val_size + (2 * sizeof(uint32_t)), &rep_header,
-			  PUT_REPLY, sizeof(msg_put_rep));
+	uint32_t req_size = calculate_put_msg_size(key_size, val_size);
+	//log_debug("key_size val_size is <%u,%u>, total put_msg size is %u", key_size, val_size, req_size);
+	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 
-	put_key = (msg_put_key *)((uint64_t)req_header + sizeof(msg_header));
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
-	put_key->key_size = key_size;
-	memcpy(put_key->key, key, key_size);
-	put_value = (msg_put_value *)((uint64_t)put_key + sizeof(msg_put_key) + put_key->key_size);
-	put_value->value_size = val_size;
-	memcpy(put_value->value, value, val_size);
+	struct put_msg_data put_data = { .key_size = key_size, .key = key, .value_size = val_size, .value = value };
+	create_put_msg(put_data, req_header);
 
 	/*Now the reply part*/
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
@@ -1134,7 +1173,10 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 
 	struct timespec now;
 	int ret = clock_gettime(CLOCK_MONOTONIC, &now);
-	assert(!ret);
+	if (ret) {
+		assert(0);
+		_exit(EXIT_FAILURE);
+	}
 	if (!req->start_time.tv_sec) {
 		req->start_time = now;
 	}
@@ -1145,7 +1187,12 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 	}
 	return false;
 }
-
+/**
+ * handle the reply of the request based on the request's type.
+ * Then zero the rendezvous location of the request & reply and free the rpc_pair from their circular buffers
+ * Also, free the request from the spinners private buffer
+ * @param req, the spinner's async request to be handled
+ * */
 static void reply_checker_handle_reply(struct krc_async_req *req)
 {
 	assert(req->request->session_id == req->reply->session_id);
@@ -1212,7 +1259,7 @@ static void *krc_reply_checker(void *args)
 
 	struct krc_async_req *curr_req = NULL;
 	while (!reply_checker_exit) {
-		/* find an empty place to put a request, if spinner does not find free space on a run
+		/* find an empty place to put a request, if spinner does not find free space in the buffer
 		 * he will wrap around */
 		for (int i = 0; i < UTILS_QUEUE_CAPACITY; ++i) {
 			/*possible req to be handled*/
@@ -1241,22 +1288,21 @@ static void *krc_reply_checker(void *args)
 
 krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context)
 {
+#if CREATE_TRACE_FILE
+	globals_append_trace_file(key_size, key, 0, NULL, TEB_GET);
+#endif
+
 	uint32_t reply_size = *buf_size;
+	uint32_t request_size = calculate_get_msg_size(key_size);
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 	/*get the rdma communication buffers*/
 	struct msg_header *req_header = NULL;
 	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, sizeof(msg_get_req) + key_size, &rep_header, GET_REPLY,
+	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY,
 			  sizeof(msg_get_rep) + reply_size);
 
-	struct msg_get_req *m_get = (struct msg_get_req *)((uint64_t)req_header + sizeof(struct msg_header));
-
-	m_get->key_size = key_size;
-	memcpy(m_get->key, key, key_size);
-	m_get->offset = 0;
-	m_get->fetch_value = 1;
-	m_get->bytes_to_read = reply_size;
+	create_get_msg(key_size, key, reply_size, (char *)req_header + sizeof(struct msg_header));
 
 	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
@@ -1265,6 +1311,9 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 
 uint8_t krc_start_async_thread(void)
 {
+#if CREATE_TRACE_FILE
+	globals_open_trace_file("tracefile.txt");
+#endif
 	if (pthread_create(&spinner_cnxt, NULL, krc_reply_checker, NULL) != 0) {
 		log_fatal("Failed to spawn async reply checker");
 		_exit(EXIT_FAILURE);

@@ -9,20 +9,19 @@
  * @author: Foivos S. Zakkak
  */
 
-#include <string.h>
-#include <numa.h>
 #include "work_stealing_queue.h"
 #include "macros.h"
+#include <numa.h>
+#include <string.h>
 #define CACHE_LINE 64
-
 
 typedef struct _queue_node_t queue_node_t;
 
 struct _queue_t {
 	volatile uint8_t bottom;
 	volatile uint8_t top;
-	uint32_t         size;
-	void             *entries[UTILS_QUEUE_CAPACITY];
+	uint32_t size;
+	void *entries[UTILS_QUEUE_CAPACITY];
 } __attribute__((aligned(CACHE_LINE)));
 
 /**
@@ -30,16 +29,15 @@ struct _queue_t {
  *
  * @param Queue TODO
  */
-void
-new_queue (queue_t **Queue)
+void new_queue(queue_t **Queue)
 {
 	assert(UTILS_QUEUE_CAPACITY == 128);
 	assert(!(UTILS_QUEUE_CAPACITY & (UTILS_QUEUE_CAPACITY - 1)));
 
 	if (numa_available() == -1)
-		*Queue = (queue_t*)malloc( sizeof(queue_t));
+		*Queue = (queue_t *)malloc(sizeof(queue_t));
 	else
-		*Queue = (queue_t*)numa_alloc_local( sizeof(queue_t));
+		*Queue = (queue_t *)numa_alloc_local(sizeof(queue_t));
 
 	assert(*Queue);
 }
@@ -49,8 +47,7 @@ new_queue (queue_t **Queue)
  *
  * @param Queue TODO
  */
-void
-init_queue (queue_t *Queue)
+void init_queue(queue_t *Queue)
 {
 	assert(Queue);
 	bzero(Queue, sizeof(queue_t));
@@ -62,8 +59,7 @@ init_queue (queue_t *Queue)
  *
  * @param Queue TODO
  */
-void
-release_queue (queue_t *Queue)
+void release_queue(queue_t *Queue)
 {
 	assert(Queue);
 
@@ -79,8 +75,7 @@ release_queue (queue_t *Queue)
  * @param Queue TODO
  * @return TODO
  */
-__inline__ uint8_t
-isEmpty_Queue ( queue_t *Queue )
+__inline__ uint8_t isEmpty_Queue(queue_t *Queue)
 {
 	assert(Queue);
 
@@ -93,8 +88,7 @@ isEmpty_Queue ( queue_t *Queue )
  * @param Queue TODO
  * @return TODO
 */
-__inline__ uint8_t
-isFull_Queue ( queue_t *Queue )
+__inline__ uint8_t isFull_Queue(queue_t *Queue)
 {
 	assert(Queue);
 	return 1;
@@ -107,11 +101,10 @@ isFull_Queue ( queue_t *Queue )
  * @param Queue TODO
  * @return TODO
  */
-int
-enqueue (void *data, queue_t *Queue)
+int enqueue(void *data, queue_t *Queue)
 {
 	uint8_t b, t;
-	int     i;
+	int i;
 
 	assert(data);
 	assert(Queue);
@@ -127,7 +120,7 @@ enqueue (void *data, queue_t *Queue)
 	i = b & (Queue->size - 1);
 	Queue->entries[i] = data;
 	__sync_synchronize();
-	Queue->bottom     = b + 1;
+	Queue->bottom = b + 1;
 	/* printf("b=%u t=%u\n", ++b, t);
 	* assert(((b >> 7) == (t >> 7)) || ((b & 127) <= (t & 127))); */
 	return 1;
@@ -139,12 +132,11 @@ enqueue (void *data, queue_t *Queue)
  * @param Queue TODO
  * @return TODO
  */
-void*
-dequeue_front (queue_t *Queue)
+void *dequeue_front(queue_t *Queue)
 {
-	void    *ret_val = NULL;
+	void *ret_val = NULL;
 	uint8_t t, b;
-	int     i;
+	int i;
 
 	assert(Queue);
 
@@ -163,7 +155,7 @@ dequeue_front (queue_t *Queue)
 		return NULL;
 	}
 
-	i       = b & (Queue->size - 1);
+	i = b & (Queue->size - 1);
 	/* Get the bottom element */
 	ret_val = Queue->entries[i];
 
@@ -197,7 +189,7 @@ dequeue_front (queue_t *Queue)
 	 * assert(((b >> 7) == (t >> 7)) || ((b & 127) < (t & 127))); */
 
 	return ret_val;
-}                  /* dequeue_front */
+} /* dequeue_front */
 
 /**
  * dequeue_back
@@ -205,12 +197,11 @@ dequeue_front (queue_t *Queue)
  * @param Queue TODO
  * @return TODO
  */
-void*
-dequeue_back (queue_t *Queue)
+void *dequeue_back(queue_t *Queue)
 {
 	uint8_t t, b;
-	int     i;
-	void    *ret_val = NULL;
+	int i;
+	void *ret_val = NULL;
 
 	assert(Queue);
 
@@ -223,7 +214,7 @@ dequeue_back (queue_t *Queue)
 		return NULL;
 
 	/* Get the top element */
-	i       = t & (Queue->size - 1);
+	i = t & (Queue->size - 1);
 	ret_val = Queue->entries[i];
 
 	if (__sync_bool_compare_and_swap(&Queue->top, t, t + 1)) {

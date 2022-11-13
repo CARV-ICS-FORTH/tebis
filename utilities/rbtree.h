@@ -94,24 +94,26 @@ out:
 #ifndef _LINUX_RBTREE_H
 #define _LINUX_RBTREE_H
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-#include <stddef.h>
-
 
 /*
  *  * rb-tree defines
  *   */
-#define RB_NONE                 (2)
-#define RB_EMPTY(node)          ((node)->rb_node == NULL)
-#define RB_CLEAR(node)          ((node)->rb_color = RB_NONE)
-#define RB_CLEAR_ROOT(root)     ((root)->rb_node = NULL)
+#define RB_NONE (2)
+#define RB_EMPTY(node) ((node)->rb_node == NULL)
+#define RB_CLEAR(node) ((node)->rb_color = RB_NONE)
+#define RB_CLEAR_ROOT(root) ((root)->rb_node = NULL)
 //#define RB_NODE_NULL (struct rb_node) { NULL, 2, NULL, NULL, }
-#define RB_NODE_NULL (struct rb_node) { 2, NULL, NULL, }
+#define RB_NODE_NULL           \
+	(struct rb_node)       \
+	{                      \
+		2, NULL, NULL, \
+	}
 //
 
 //#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
-
 
 #ifndef container_of
 
@@ -122,49 +124,54 @@ out:
  * @member:     the name of the member within the struct.
  *
  */
-#define container_of(ptr, type, member) ({                      \
-        const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
-        (type *)( (char *)__mptr - offsetof(type,member) );})
+#define container_of(ptr, type, member)                            \
+	({                                                         \
+		const typeof(((type *)0)->member) *__mptr = (ptr); \
+		(type *)((char *)__mptr - offsetof(type, member)); \
+	})
 #endif
 
-
-struct rb_node
-{
-    unsigned long  rb_parent_color;
-#define RB_RED      0
-#define RB_BLACK    1
-    struct rb_node *rb_right;
-    struct rb_node *rb_left;
+struct rb_node {
+	unsigned long rb_parent_color;
+#define RB_RED 0
+#define RB_BLACK 1
+	struct rb_node *rb_right;
+	struct rb_node *rb_left;
 };
 // __attribute__((aligned(sizeof(long))));
 /* The alignment might seem pointless, but allegedly CRIS needs it */
 
-struct rb_root
-{
-    struct rb_node *rb_node;
+struct rb_root {
+	struct rb_node *rb_node;
 };
 
-
-#define rb_parent(r)   ((struct rb_node *)((r)->rb_parent_color & ~3))
-#define rb_color(r)   ((r)->rb_parent_color & 1)
-#define rb_is_red(r)   (!rb_color(r))
+#define rb_parent(r) ((struct rb_node *)((r)->rb_parent_color & ~3))
+#define rb_color(r) ((r)->rb_parent_color & 1)
+#define rb_is_red(r) (!rb_color(r))
 #define rb_is_black(r) rb_color(r)
-#define rb_set_red(r)  do { (r)->rb_parent_color &= ~1; } while (0)
-#define rb_set_black(r)  do { (r)->rb_parent_color |= 1; } while (0)
-
-
-
+#define rb_set_red(r)                       \
+	do {                                \
+		(r)->rb_parent_color &= ~1; \
+	} while (0)
+#define rb_set_black(r)                    \
+	do {                               \
+		(r)->rb_parent_color |= 1; \
+	} while (0)
 
 static inline void rb_set_parent(struct rb_node *rb, struct rb_node *p)
 {
-    rb->rb_parent_color = (rb->rb_parent_color & 3) | (unsigned long)p;
+	rb->rb_parent_color = (rb->rb_parent_color & 3) | (unsigned long)p;
 }
 static inline void rb_set_color(struct rb_node *rb, int color)
 {
-    rb->rb_parent_color = (rb->rb_parent_color & ~1) | color;
+	rb->rb_parent_color = (rb->rb_parent_color & ~1) | color;
 }
 
-#define RB_ROOT (struct rb_root) { NULL, }
+#define RB_ROOT          \
+	(struct rb_root) \
+	{                \
+		NULL,    \
+	}
 #define rb_entry(ptr, type, member) container_of(ptr, type, member)
 
 #define RB_EMPTY_ROOT(root) ((root)->rb_node == NULL)
@@ -173,13 +180,13 @@ static inline void rb_set_color(struct rb_node *rb, int color)
 
 static inline void rb_init_node(struct rb_node *rb)
 {
-    rb->rb_parent_color = 0;
-    rb->rb_right = NULL;
-    rb->rb_left = NULL;
-    RB_CLEAR_NODE(rb);
+	rb->rb_parent_color = 0;
+	rb->rb_right = NULL;
+	rb->rb_left = NULL;
+	RB_CLEAR_NODE(rb);
 }
 
-int rb_tree_compare(void *key_1, void * key_2, int size_2);
+int rb_tree_compare(void *key_1, void *key_2, int size_2);
 extern void rb_insert_color(struct rb_node *, struct rb_root *);
 extern void rb_erase(struct rb_node *, struct rb_root *);
 
@@ -190,30 +197,27 @@ extern struct rb_node *rb_first(const struct rb_root *);
 extern struct rb_node *rb_last(const struct rb_root *);
 
 /* Fast replacement of a single node without remove/rebalance/add/rebalance */
-extern void rb_replace_node(struct rb_node *victim, struct rb_node *newnode, 
-        struct rb_root *root);
+extern void rb_replace_node(struct rb_node *victim, struct rb_node *newnode, struct rb_root *root);
 
-static inline void rb_link_node(struct rb_node * node, struct rb_node * parent,
-        struct rb_node ** rb_link)
+static inline void rb_link_node(struct rb_node *node, struct rb_node *parent, struct rb_node **rb_link)
 {
-    node->rb_parent_color = (unsigned long )parent;
-    node->rb_left = node->rb_right = NULL;
+	node->rb_parent_color = (unsigned long)parent;
+	node->rb_left = node->rb_right = NULL;
 
-    *rb_link = node;
+	*rb_link = node;
 }
 
 ///
-struct _tree_min_key{
-    struct rb_node rb_node; // For the tree
-    char *Min_range;    // This should be a pointer to the Min_range of ID_region
-    void *region;       // Pointer to the region
+struct _tree_min_key {
+	struct rb_node rb_node; // For the tree
+	char *Min_range; // This should be a pointer to the Min_range of ID_region
+	void *region; // Pointer to the region
 };
 
-void Init_Tree_Min_Key( struct _tree_min_key *tree_min_key, char *min_range, void *region );
-void insert_tree_min_key( struct rb_root *root, struct _tree_min_key *tree_min_key );
-struct _tree_min_key *find_min_key_on_rbtree(struct rb_root *root, char *min_key, int min_key_len );
-void *find_region_min_key_on_rbtree(struct rb_root *root, char *min_key , int min_key_len);
-void printf_tree_min_key(struct rb_root *root );
+void Init_Tree_Min_Key(struct _tree_min_key *tree_min_key, char *min_range, void *region);
+void insert_tree_min_key(struct rb_root *root, struct _tree_min_key *tree_min_key);
+struct _tree_min_key *find_min_key_on_rbtree(struct rb_root *root, char *min_key, int min_key_len);
+void *find_region_min_key_on_rbtree(struct rb_root *root, char *min_key, int min_key_len);
+void printf_tree_min_key(struct rb_root *root);
 
-#endif  /* _LINUX_RBTREE_H */
-
+#endif /* _LINUX_RBTREE_H */

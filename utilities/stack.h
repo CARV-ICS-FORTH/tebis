@@ -1,4 +1,4 @@
-/*  
+/*
  *          File: stack.h
  *        Author: Robert I. Pitts <rip@cs.bu.edu>
  * Last Modified: March 7, 2000
@@ -11,7 +11,6 @@
 #include <stdint.h>
 
 #include "../kreon_lib/btree/conf.h"
-
 
 /*
  * Type: stackElementT
@@ -37,9 +36,9 @@ typedef uint64_t stackElementT;
  */
 
 typedef struct {
-  stackElementT contents[MAX_SIZE];
-  int maxSize;
-  int top;
+	stackElementT contents[MAX_SIZE];
+	int maxSize;
+	int top;
 } stackT;
 /*
  * Function: StackInit
@@ -88,5 +87,3 @@ void stack_reset(stackT *stackP);
 
 int stack_is_empty(stackT *stackP);
 int stack_is_full(stackT *stackP);
-
-

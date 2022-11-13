@@ -99,15 +99,15 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 	}
 
 	if (actual_reply_size != S2S_MSG_SIZE || actual_request_size != S2S_MSG_SIZE) {
-		log_fatal("Cant allocate a msg for s2s communication larger thant S2S_MSG_size = %lu", S2S_MSG_SIZE);
+		log_fatal("Cant allocate a msg for s2s communication larger thant S2S_MSG_size = %u", S2S_MSG_SIZE);
 		assert(0);
 		_exit(EXIT_FAILURE);
 	}
 
 	pthread_mutex_lock(&conn->buffer_lock);
 	switch (req_type) {
-	case GET_LOG_BUFFER_REQ:
-		rep_type = GET_LOG_BUFFER_REP;
+	case GET_RDMA_BUFFER_REQ:
+		rep_type = GET_RDMA_BUFFER_REP;
 		break;
 	case FLUSH_COMMAND_REQ:
 		rep_type = FLUSH_COMMAND_REP;

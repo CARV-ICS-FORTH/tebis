@@ -4,8 +4,12 @@ add_definitions(-DKREONR)
 
 add_library(
   kreon_client
-  messages.c ../kreon_rdma_client/client_utils.c
-  ../kreon_rdma_client/kreon_rdma_client.c ../kreon_server/globals.c zk_utils.c
+  messages.c
+  ../kreon_rdma_client/client_utils.c
+  ../kreon_rdma_client/msg_factory.c
+  ../kreon_rdma_client/kreon_rdma_client.c
+  ../kreon_server/globals.c
+  zk_utils.c
   djb2.c)
 add_dependencies(kreon_client cjson)
 
@@ -15,6 +19,8 @@ add_executable(
   kreon_server
   server.c
   metadata_server.c
+  build_index.c
+  rdma_buffer_iterator.c
   remote_compaction.c
   deserialize_index.c
   zk_utils.c
@@ -24,13 +30,14 @@ add_executable(
   server_communication.c
   ../kreon_rdma/rdma.c
   ../kreon_rdma_client/client_utils.c
+  ../kreon_rdma_client/msg_factory.c
   stats.c)
 
 add_dependencies(kreon_server cjson)
 target_link_libraries(
   kreon_server
   kreon_rdma
-  kreonr
+  parallax
   log
   ${Zookeeper_LIBRARY}
   ${cjson_LIBRARY}

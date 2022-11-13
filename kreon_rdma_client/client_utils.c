@@ -5,6 +5,7 @@
 #include "../utilities/spin_loop.h"
 #include <cJSON.h>
 #include <log.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +44,6 @@ static uint8_t cu_insert_region(struct cu_regions *regions, struct cu_region_des
 	uint8_t rc = 0;
 
 	pthread_mutex_lock(&client_regions.r_lock);
-	++client_regions.lc.c1;
 	if (regions->num_regions == KRM_MAX_REGIONS) {
 		log_warn("Warning! Adding new region failed, max_regions %d reached", KRM_MAX_REGIONS);
 		rc = 0;
@@ -62,7 +62,9 @@ static uint8_t cu_insert_region(struct cu_regions *regions, struct cu_region_des
 				log_warn("Warning failed to add region, range already present\n");
 				rc = 0;
 				break;
-			} else if (ret > 0) {
+			}
+
+			if (ret > 0) {
 				end_idx = middle - 1;
 				if (start_idx > end_idx) {
 					memmove(&regions->r_desc[middle + 1], &regions->r_desc[middle],
@@ -91,7 +93,6 @@ static uint8_t cu_insert_region(struct cu_regions *regions, struct cu_region_des
 		rc = 1;
 	}
 exit:
-	++client_regions.lc.c2;
 	pthread_mutex_unlock(&client_regions.r_lock);
 	return rc;
 }
@@ -173,7 +174,7 @@ static uint8_t cu_fetch_region_table(void)
 			_exit(EXIT_FAILURE);
 		} else if (stat.dataLength > region_json_string_size) {
 			log_fatal("Statically allocated buffer is not large enough to hold the json region entry."
-				  "Json region entry length is %d and buffer size is %d",
+				  "Json region entry length is %d and buffer size is %lu",
 				  stat.dataLength, sizeof(region_json_string));
 			_exit(EXIT_FAILURE);
 		}
@@ -232,10 +233,6 @@ uint8_t cu_init(char *zookeeper_host)
 	pthread_mutex_init(&client_regions.r_lock, NULL);
 	pthread_mutex_init(&client_regions.conn_lock, NULL);
 	globals_create_rdma_channel();
-	client_regions.lc.c1 = 0;
-	client_regions.lc.c2 = 0;
-	client_regions.lc_conn.c1 = 0;
-	client_regions.lc_conn.c2 = 0;
 	/*log_info("Initializing, connectiong to zookeeper at %s", zk_host_port);*/
 	globals_set_zk_host(zookeeper_host);
 	cu_zh = zookeeper_init(globals_get_zk_host(), _cu_zk_watcher, 15000, 0, 0, 0);
@@ -248,38 +245,38 @@ struct cu_region_desc *cu_get_region(char *key, uint32_t key_size)
 {
 	struct cu_regions *cli_regions = &client_regions;
 	struct cu_region_desc *region = NULL;
+	uint32_t times_retried = 0;
+	uint32_t times_to_retry = 10000;
+	/*retry $times_to_retry times before exiting cause of concurrent region inserts. This should now be a large number.
+	 *if a region is found continue */
+	while (times_retried < times_to_retry && region == NULL) {
+		pthread_mutex_lock(&cli_regions->r_lock);
+		uint32_t start_idx = 0;
+		uint32_t end_idx = cli_regions->num_regions - 1;
+		region = NULL;
 
-	uint64_t lc2, lc1;
-retry:
-	lc2 = client_regions.lc.c2;
-
-	int start_idx = 0;
-	int end_idx = cli_regions->num_regions - 1;
-	region = NULL;
-
-	while (start_idx <= end_idx) {
-		int middle = (start_idx + end_idx) / 2;
-		int ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
-				      cli_regions->r_desc[middle].region.min_key, key_size, key);
-		//log_info("Comparing region min %s with key %s ret %ld",
-		//	 kreon_regions[middle]->ID_region.minimum_range + 4, key, ret);
-		if (ret < 0 || ret == 0) {
-			start_idx = middle + 1;
-			if (zku_key_cmp(cli_regions->r_desc[middle].region.max_key_size,
-					cli_regions->r_desc[middle].region.max_key, key_size, key) > 0) {
-				region = &cli_regions->r_desc[middle];
-				break;
-			}
-		} else
-			end_idx = middle - 1;
+		while (start_idx <= end_idx) {
+			uint32_t middle = (start_idx + end_idx) / 2;
+			int ret = zku_key_cmp(cli_regions->r_desc[middle].region.min_key_size,
+					      cli_regions->r_desc[middle].region.min_key, key_size, key);
+			//log_debug("Comparing region min %s with key %s ret %ld",
+			//	 kreon_regions[middle]->ID_region.minimum_range + 4, key, ret);
+			if (ret < 0 || ret == 0) {
+				start_idx = middle + 1;
+				if (zku_key_cmp(cli_regions->r_desc[middle].region.max_key_size,
+						cli_regions->r_desc[middle].region.max_key, key_size, key) > 0) {
+					region = &cli_regions->r_desc[middle];
+					break;
+				}
+			} else
+				end_idx = middle - 1;
+		}
+		pthread_mutex_unlock(&cli_regions->r_lock);
 	}
-	lc1 = client_regions.lc.c1;
-	if (lc1 != lc2)
-		goto retry;
 
 	if (region == NULL) {
 		log_fatal("NULL region for key %s of size %u\n", key, key_size);
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 	return region;
 }
@@ -302,19 +299,15 @@ static void cu_add_conn_for_server(struct krm_server_name *server, uint64_t hash
 connection_rdma *cu_get_conn_for_region(struct cu_region_desc *r_desc, uint64_t seed)
 {
 	cu_conn_per_server *cps = NULL;
-	uint64_t hash_key;
-	uint64_t c1, c2;
 
-	hash_key = djb2_hash((unsigned char *)r_desc->region.primary.kreon_ds_hostname,
-			     r_desc->region.primary.kreon_ds_hostname_length);
+	uint64_t hash_key = djb2_hash((unsigned char *)r_desc->region.primary.kreon_ds_hostname,
+				      r_desc->region.primary.kreon_ds_hostname_length);
 retry:
 	cps = NULL;
-	c2 = client_regions.lc_conn.c2;
+	pthread_mutex_lock(&client_regions.conn_lock);
 	/*Do we have any open connections with the server?*/
 	HASH_FIND_PTR(client_regions.root_cps, &hash_key, cps);
-	c1 = client_regions.lc_conn.c1;
-	if (c1 != c2)
-		goto retry;
+	pthread_mutex_unlock(&client_regions.conn_lock);
 	if (cps == NULL) {
 		pthread_mutex_lock(&client_regions.conn_lock);
 
@@ -327,14 +320,11 @@ retry:
 			if (rc) {
 				log_warn("Failed to refresh server info %s from zookeeper",
 					 r_desc->region.primary.kreon_ds_hostname);
-				//++client_regions.lc_conn.c2;
 				pthread_mutex_unlock(&client_regions.conn_lock);
 				return NULL;
 			}
 			//log_info("RDMA addr = %s", r_desc->region.primary.RDMA_IP_addr);
-			++client_regions.lc_conn.c1;
 			cu_add_conn_for_server(&r_desc->region.primary, hash_key);
-			++client_regions.lc_conn.c2;
 		}
 		pthread_mutex_unlock(&client_regions.conn_lock);
 		goto retry;

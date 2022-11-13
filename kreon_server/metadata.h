@@ -1,10 +1,12 @@
 #pragma once
+#include "messages.h"
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
-#include "../kreon_lib/btree/btree.h"
 #include "../kreon_rdma/rdma.h"
 #include "../utilities/list.h"
 #include "uthash.h"
+#include <btree/conf.h>
+#include <include/parallax/parallax.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
@@ -25,7 +27,6 @@
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 
-#define RU_REPLICA_NUM_SEGMENTS 1
 #define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
 #define RU_MAX_TREE_HEIGHT 12
 #define RU_MAX_NUM_REPLICAS 4
@@ -74,10 +75,9 @@ enum krm_work_task_status {
 	INIT_LOG_BUFFERS,
 	INS_TO_KREON,
 	REPLICATE,
+	WAIT_FOR_REPLICATION_TURN,
 	WAIT_FOR_REPLICATION_COMPLETION,
 	ALL_REPLICAS_ACKED,
-	SEGMENT_BARRIER,
-	FLUSH_REPLICA_BUFFERS,
 	SEND_FLUSH_COMMANDS,
 	WAIT_FOR_FLUSH_REPLIES,
 	TASK_GET_KEY,
@@ -86,6 +86,9 @@ enum krm_work_task_status {
 	TASK_NO_OP
 };
 
+enum tb_kv_category { SMALLORMEDIUM = 0, BIG };
+
+enum tb_rdma_buf_category { L0_RECOVERY_RDMA_BUF, BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
 struct sc_msg_pair {
 	/*out variables*/
@@ -99,19 +102,18 @@ enum krm_work_task_type { KRM_CLIENT_TASK, KRM_SERVER_TASK };
 
 struct krm_work_task {
 	/*from client*/
-	bt_insert_req ins_req;
 	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
-	volatile uint64_t *replicated_bytes[RU_MAX_NUM_REPLICAS];
+	volatile uint64_t *replicated_bytes;
 	uint32_t last_replica_to_ack;
-	uint64_t kv_size;
+	uint64_t msg_payload_size;
 	/*possible messages to other server generated from this task*/
 	struct sc_msg_pair communication_buf;
 	struct channel_rdma *channel;
 	struct connection_rdma *conn;
 	msg_header *msg;
 	struct krm_region_desc *r_desc;
-	struct msg_put_key *key;
-	struct msg_put_value *value;
+	struct kv_splice *kv;
+	enum tb_kv_category kv_category; /*XXX TODO make these a struct XXX*/
 	uint32_t triggering_msg_offset;
 	msg_header *reply_msg;
 	msg_header *flush_segment_request;
@@ -126,31 +128,6 @@ struct krm_work_task {
 	enum krm_work_task_status kreon_operation_status;
 };
 
-/*this staff are rdma registered*/
-struct ru_seg_metadata {
-	uint64_t master_segment;
-	uint64_t end_of_log;
-	uint64_t log_padding;
-	uint64_t segment_id;
-	uint32_t region_key_size;
-	char region_key[RU_REGION_KEY_SIZE];
-	uint64_t tail;
-};
-
-struct ru_rdma_buffer {
-	struct msg_header msg;
-	struct ru_seg_metadata metadata;
-	char padding[4096 - sizeof(struct ru_seg_metadata)];
-	uint8_t seg[SEGMENT_SIZE];
-};
-
-struct ru_replica_log_segment {
-	struct ru_rdma_buffer *rdma_local_buf;
-	struct ru_rdma_buffer *rdma_remote_buf;
-	int64_t bytes_wr_per_seg;
-	int64_t buffer_free;
-};
-
 enum ru_remote_buffer_status {
 	RU_BUFFER_UNINITIALIZED,
 	RU_BUFFER_REQUESTED,
@@ -159,59 +136,62 @@ enum ru_remote_buffer_status {
 	RU_REPLICA_BUFFER_OK
 };
 
+struct ru_primary_to_backup_comm {
+	/*msg between primary and backup*/
+	struct sc_msg_pair msg_pair;
+	/*status of the remote buffers*/
+	enum ru_remote_buffer_status stat;
+};
+
 struct ru_master_log_buffer_seg {
-	struct sc_msg_pair flush_cmd;
-	enum ru_remote_buffer_status flush_cmd_stat;
+	/* IMPORTANT, primary's segment is related with many backups memory regions.
+	 * The address of each backup's  memory region differ, we have allocated the space with posix memalign*/
+	struct ibv_mr mr[KRM_MAX_BACKUPS];
 	volatile uint64_t start;
 	volatile uint64_t end;
-	struct ibv_mr mr;
-	volatile uint64_t lc1;
-	volatile uint64_t lc2;
+	volatile uint64_t curr_end;
 	volatile uint64_t replicated_bytes;
 };
 
 struct ru_master_log_buffer {
-	struct sc_msg_pair p;
-	enum ru_remote_buffer_status stat;
+	struct ru_master_log_buffer_seg segment;
 	uint32_t segment_size;
-	int num_buffers;
-	struct ru_master_log_buffer_seg segment[RU_REPLICA_NUM_SEGMENTS];
 };
 
 struct ru_master_state {
-#if 0
-	/*parameters used for remote spills at replica with tiering*/
-	node_header *last_node_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t cur_nodes_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t num_of_nodes_per_level[RU_MAX_TREE_HEIGHT];
-	uint64_t entries_in_semilast_node[RU_MAX_TREE_HEIGHT];
-	uint64_t entries_in_last_node[RU_MAX_TREE_HEIGHT];
-	uint32_t current_active_tree_in_the_forest;
-#endif
+	/*rdma buffer for keeping small and medium kv categories*/
+	struct ru_master_log_buffer l0_recovery_rdma_buf;
+	/*rdma buffer for keeping big kv category*/
+	struct ru_master_log_buffer big_recovery_rdma_buf;
+	struct ru_primary_to_backup_comm primary_to_backup[KRM_MAX_BACKUPS];
+	/*The flush commands send to backups will be equal to the number of backups.
+	 *All flush cmds must be allocated and freed accordingly */
+	struct ru_primary_to_backup_comm flush_cmd[KRM_MAX_BACKUPS];
 	int num_backup;
-	struct ru_master_log_buffer r_buf[KRM_MAX_BACKUPS];
 };
 
-struct ru_replica_log_buffer_seg {
-	uint32_t segment_size;
+struct ru_replica_rdma_buffer {
 	struct ibv_mr *mr;
+	uint32_t rdma_buf_size;
 };
 
 struct ru_replica_state {
 	/*for the index staff*/
-	struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
+	//struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
-	int num_buffers;
-	struct ru_replica_log_buffer_seg seg[RU_REPLICA_NUM_SEGMENTS];
+	/*rdma buffer keeping small and medium kv categories*/
+	struct ru_replica_rdma_buffer l0_recovery_rdma_buf;
+	/*rdma buffer keepint the big kv category*/
+	struct ru_replica_rdma_buffer big_recovery_rdma_buf;
 };
 
 struct krm_server_name {
-	char hostname[KRM_HOSTNAME_SIZE];
+	char hostname[KRM_HOSTNAME_SIZE + 1];
 	/*kreon hostname - RDMA port*/
 	char kreon_ds_hostname[KRM_HOSTNAME_SIZE * 2];
-	char kreon_leader[KRM_HOSTNAME_SIZE];
-	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
+	char kreon_leader[KRM_HOSTNAME_SIZE + 1];
+	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE + 1];
 	uint32_t kreon_ds_hostname_length;
 	uint64_t epoch;
 };
@@ -221,9 +201,9 @@ struct krm_region {
 	struct krm_server_name backups[KRM_MAX_BACKUPS];
 	uint32_t min_key_size;
 	uint32_t max_key_size;
-	char id[KRM_MAX_REGION_ID_SIZE];
-	char min_key[KRM_MAX_KEY_SIZE];
-	char max_key[KRM_MAX_KEY_SIZE];
+	char id[KRM_MAX_REGION_ID_SIZE + 1];
+	char min_key[KRM_MAX_KEY_SIZE + 1];
+	char max_key[KRM_MAX_KEY_SIZE + 1];
 	uint32_t num_of_backup;
 	enum krm_region_status stat;
 };
@@ -272,7 +252,7 @@ struct krm_region_desc {
 	/*for replica_role deserializing the index*/
 	pthread_rwlock_t replica_log_map_lock;
 	struct krm_segment_entry *replica_log_map;
-	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
+	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
@@ -283,7 +263,7 @@ struct krm_region_desc {
 	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
 
 	enum krm_region_role role;
-	db_handle *db;
+	par_handle *db;
 	volatile uint64_t next_segment_to_flush;
 	union {
 		struct ru_master_state *m_state;
@@ -333,7 +313,7 @@ struct krm_server_desc {
 	char mail_path[KRM_HOSTNAME_SIZE];
 	sem_t wake_up;
 	pthread_mutex_t msg_list_lock;
-	struct klist *msg_list;
+	struct tebis_klist *msg_list;
 	zhandle_t *zh;
 	struct rco_pool *compaction_pool;
 	uint8_t IP[IP_SIZE];
@@ -374,7 +354,7 @@ struct rco_task_queue {
 	pthread_cond_t queue_monitor;
 	int my_id;
 	int sleeping;
-	struct klist *task_queue;
+	struct tebis_klist *task_queue;
 };
 
 struct rco_pool {
@@ -387,25 +367,16 @@ struct rco_pool {
 #define RCO_POOL_SIZE 1
 struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size);
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
-int rco_send_index_to_group(struct bt_compaction_callback_args *c);
+//int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
 void di_set_cursor_buf(char *buf);
 
 int rco_init_index_transfer(uint64_t db_id, uint8_t level_id);
 int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
-int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
-				       uint8_t level_id, struct node_header *root);
-
-void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
-				       uint64_t primary_seg_offt, uint8_t level_id);
-
-struct rco_build_index_task {
-	struct krm_region_desc *r_desc;
-	struct segment_header *segment;
-	uint64_t log_start;
-	uint64_t log_end;
-};
-void rco_build_index(struct rco_build_index_task *task);
+//int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
+//				       uint8_t level_id, struct node_header *root);
+//void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
+//				       uint64_t primary_seg_offt, uint8_t level_id);
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,

@@ -1,18 +1,21 @@
 #include <assert.h>
 #include <stdint.h>
 
-#include "../kreon_lib/btree/btree.h"
-#include "../kreon_lib/btree/segment_allocator.h"
 #include "metadata.h"
+#include <btree/btree.h>
 #include <log.h>
 
+/*XXX TODO XXX we should not care about deserialization of the indexi n Tebis-Parallax non replication scheme!*/
+/*
 static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_node *leaf)
 {
+	(void)r_desc;
+	(void)leaf;
 	struct node_header *header = &leaf->header;
 	header->epoch = r_desc->db->volume_desc->mem_catalogue->epoch;
 	//header->v1 = 0;
 	//header->v2 = 0;
-	for (uint32_t i = 0; i < header->numberOfEntriesInNode; i++) {
+	for (uint32_t i = 0; i < header->num_entries; i++) {
 		uint64_t offt_in_segment = leaf->kv_entry[i].device_offt % SEGMENT_SIZE;
 		//log_info("offt = %llu leaf pointer[%d] %llu", offt_in_segment, i, leaf->kv_entry[i].device_offt);
 		uint64_t primary_segment_offt = leaf->kv_entry[i].device_offt - offt_in_segment;
@@ -23,9 +26,9 @@ static void di_rewrite_leaf_node(struct krm_region_desc *r_desc, struct leaf_nod
 		HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, entry);
 		pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 		if (entry == NULL) {
-			log_fatal("Cannot find mapping for primary's segment %llu of db %s", primary_segment_offt,
-				  r_desc->db->db_desc->db_name);
-			/*raise(SIGINT);*/
+			log_fatal("Cannot find mapping for primary's segment %lu of db %s", primary_segment_offt,
+				  r_desc->db->db_desc->db_volume->volume_name);
+			//raise(SIGINT);
 			_exit(EXIT_FAILURE);
 		}
 		//log_info("Found translated! for leaf entry %u", i);
@@ -42,9 +45,9 @@ static void di_write_segment(struct krm_region_desc *r_desc, char *buffer, uint6
 	struct krm_segment_entry *entry;
 	HASH_FIND_PTR(r_desc->replica_index_map[level_id], &primary_seg_offt, entry);
 	if (entry == NULL) {
-		log_fatal("Cannot find mapping for primary's segment %llu of db %s", primary_seg_offt,
-			  r_desc->db->db_desc->db_name);
-		/*raise(SIGINT);*/
+		log_fatal("Cannot find mapping for primary's segment %lu of db %s", primary_seg_offt,
+			  r_desc->db->db_desc->db_volume->volume_name);
+		//raise(SIGINT);
 		_exit(EXIT_FAILURE);
 	}
 	ssize_t total_bytes_written = sizeof(struct segment_header);
@@ -59,8 +62,6 @@ static void di_write_segment(struct krm_region_desc *r_desc, char *buffer, uint6
 		}
 		total_bytes_written += bytes_written;
 	}
-
-	return;
 }
 
 static int di_rewrite_index_node(struct di_buffer *buf)
@@ -87,14 +88,13 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 				buf->state = DI_INDEX_NODE_FIRST_IN;
 				break;
 			} else {
-				log_fatal("Wrong type of node type %u buf offt is %llu", *type, buf->offt);
+				log_fatal("Wrong type of node type %u buf offt is %u", *type, buf->offt);
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
 		}
 		case DI_INDEX_NODE_FIRST_IN: {
 			// log_info("Rewriting FIRST IN of index node");
-			/*first */
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
 			uint64_t primary_segment_offt = (uint64_t)index->header.first_IN_log_header % SEGMENT_SIZE;
 			uint64_t primary_segment = (uint64_t)index->header.first_IN_log_header - primary_segment_offt;
@@ -103,7 +103,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 			if (index_entry == NULL) {
 				//log_warn("Cannot find mapping for primary's segment %llu of db %s that's "
 				//	 "ok next time",
-				//	 primary_segment, buf->r_desc->db->db_desc->db_name);
+				//	 primary_segment, buf->r_desc->db->db_desc->db_volume->volume_name);
 				return 0;
 			}
 			index->header.epoch = buf->r_desc->db->volume_desc->mem_catalogue->epoch;
@@ -114,16 +114,15 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 		}
 		case DI_INDEX_NODE_LAST_IN: {
 			// log_info("Rewriting LAST IN of index node");
-			/*last */
 			struct index_node *index = (struct index_node *)&buf->data[buf->offt];
 			uint64_t primary_segment_offt = (uint64_t)index->header.last_IN_log_header % SEGMENT_SIZE;
 			uint64_t primary_segment = (uint64_t)index->header.last_IN_log_header - primary_segment_offt;
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
-				log_fatal("Cannot find mapping for primary's segment %llu of db %s that's "
+				log_fatal("Cannot find mapping for primary's segment %lu of db %s that's "
 					  "ok next time",
-					  primary_segment_offt, buf->r_desc->db->db_desc->db_name);
+					  primary_segment_offt, buf->r_desc->db->db_desc->db_volume->volume_name);
 				return 0;
 			}
 			index->header.last_IN_log_header =
@@ -144,7 +143,7 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 				//log_warn("Cannot find mapping for primary's segment %llu for entry %d "
 				//          "of db %s that's "
 				//          "ok next time",
-				//          primary_segment, c->curr_entry, r_desc->db->db_desc->db_name);
+				//          primary_segment, c->curr_entry, r_desc->db->db_desc->db_volume->volume_name);
 				return 0;
 			}
 			index->p[buf->curr_entry].left = index_entry->my_seg + primary_segment_offt;
@@ -160,16 +159,16 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
-				log_warn("Cannot find mapping for primary's segment %llu of db %s that's "
+				log_warn("Cannot find mapping for primary's segment %lu of db %s that's "
 					 "ok next time",
-					 primary_segment_offt, buf->r_desc->db->db_desc->db_name);
+					 primary_segment_offt, buf->r_desc->db->db_desc->db_volume->volume_name);
 				return 0;
 			}
 			index->p[buf->curr_entry].pivot = index_entry->my_seg + primary_segment_offt;
 
-			if (buf->curr_entry == index->header.numberOfEntriesInNode - 1) {
+			if (buf->curr_entry == index->header.num_entries - 1) {
 				//log_info("Decoded idx %u entries last %u height %u", buf->curr_entry,
-				//	 index->header.numberOfEntriesInNode - 1, index->header.height);
+				//	 index->header.num_entries - 1, index->header.height);
 				buf->state = DI_INDEX_NODE_RIGHT_CHILD;
 			} else {
 				++buf->curr_entry;
@@ -187,9 +186,9 @@ static int di_rewrite_index_node(struct di_buffer *buf)
 			struct krm_segment_entry *index_entry;
 			HASH_FIND_PTR(buf->r_desc->replica_index_map[buf->level_id], &primary_segment, index_entry);
 			if (index_entry == NULL) {
-				log_warn("Cannot find mapping for primary's segment %llu of db %s that's "
+				log_warn("Cannot find mapping for primary's segment %lu of db %s that's "
 					 "ok next time",
-					 primary_segment_offt, buf->r_desc->db->db_desc->db_name);
+					 primary_segment_offt, buf->r_desc->db->db_desc->db_volume->volume_name);
 				return 0;
 			}
 			index->p[buf->curr_entry].right[0] = index_entry->my_seg + primary_segment_offt;
@@ -210,12 +209,17 @@ static void di_free_index_buffer(struct krm_region_desc *r_desc, uint32_t level_
 	memset(r_desc->index_buffer[level_id][height], 0x00, sizeof(struct di_buffer));
 	free(r_desc->index_buffer[level_id][height]);
 	r_desc->index_buffer[level_id][height] = NULL;
-	return;
 }
-
 void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
 				       uint64_t primary_seg_offt, uint8_t level_id)
 {
+	(void)memory_segment;
+	(void)r_desc;
+	(void)primary_seg_offt;
+	(void)level_id;
+	//TODO we should not care about this in Tebis-Parallax no replication porting
+	assert(0);
+	_exit(EXIT_FAILURE);
 	//First try to decode the segment, leaves can be done on the fly
 	uint32_t *type = (uint32_t *)((uint64_t)memory_segment + sizeof(struct segment_header));
 	switch (*type) {
@@ -225,18 +229,18 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 			(struct leaf_node *)((uint64_t)memory_segment + sizeof(struct segment_header));
 		//Allocate a segment where we will place the segment after its decoding
 
-		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
+		assert(l_node->header.num_entries <= (uint64_t)leaf_order);
 		struct segment_header *disk_segment =
 			get_segment_for_explicit_IO(r_desc->db->volume_desc, &r_desc->db->db_desc->levels[level_id], 1);
 		// add mapping to level's hash table
-		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
+		assert(l_node->header.num_entries <= (uint64_t)leaf_order);
 
 		struct krm_segment_entry *e = (struct krm_segment_entry *)malloc(sizeof(struct krm_segment_entry));
 		e->master_seg = primary_seg_offt;
 		e->my_seg = (uint64_t)disk_segment - MAPPED;
 		HASH_ADD_PTR(r_desc->replica_index_map[level_id], master_seg, e);
 
-		assert(l_node->header.numberOfEntriesInNode <= (uint64_t)leaf_order);
+		assert(l_node->header.num_entries <= (uint64_t)leaf_order);
 		uint32_t decoded_bytes = sizeof(struct segment_header);
 		while (decoded_bytes < SEGMENT_SIZE) {
 			if (l_node->header.type == paddedSpace) {
@@ -249,7 +253,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 			l_node = (struct leaf_node *)((uint64_t)l_node + LEAF_NODE_SIZE);
 		}
 		assert(decoded_bytes == SEGMENT_SIZE);
-		/*Now write the buffer to storage and add the hash mapping*/
+		//Now write the buffer to storage and add the hash mapping
 		di_write_segment(r_desc, (char *)memory_segment, primary_seg_offt, FD, level_id);
 		//check if we can decode previous halted tasks
 		for (int i = 1; i < MAX_HEIGHT; i++) {
@@ -257,12 +261,12 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 				if (!di_rewrite_index_node(r_desc->index_buffer[level_id][i])) {
 					log_warn(
 						"Cannot decode pending indexing segment for DB %s level_id %u height %u",
-						r_desc->db->db_desc->db_name, level_id, i);
+						r_desc->db->db_desc->db_volume->volume_name, level_id, i);
 					break;
 				} else {
 					di_free_index_buffer(r_desc, level_id, i);
 					log_warn("Decoded !! pending indexing segment for DB %s level_id %u height %u",
-						 r_desc->db->db_desc->db_name, level_id, i);
+						 r_desc->db->db_desc->db_volume->volume_name, level_id, i);
 				}
 			}
 		}
@@ -290,13 +294,13 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 		if (r_desc->index_buffer[level_id][height]) {
 			if (!di_rewrite_index_node(r_desc->index_buffer[level_id][height])) {
 				log_fatal("Cannot decode pending indexing segment for DB %s level_id %u height %u",
-					  r_desc->db->db_desc->db_name, level_id, height);
+					  r_desc->db->db_desc->db_volume->volume_name, level_id, height);
 				assert(0);
 				exit(EXIT_FAILURE);
 			}
 			di_free_index_buffer(r_desc, level_id, height);
 			log_info("Decoded pending indexing segment for DB %s level_id %u height %u",
-				 r_desc->db->db_desc->db_name, level_id, height);
+				 r_desc->db->db_desc->db_volume->volume_name, level_id, height);
 		}
 
 		r_desc->index_buffer[level_id][height] = (struct di_buffer *)calloc(1, sizeof(struct di_buffer));
@@ -324,7 +328,7 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 		if (!di_rewrite_index_node(r_desc->index_buffer[level_id][height])) {
 			log_warn(
 				"Cannot decode pending indexing segment for DB %s level_id %u height %u, that's ok later",
-				r_desc->db->db_desc->db_name, level_id, height);
+				r_desc->db->db_desc->db_volume->volume_name, level_id, height);
 
 			r_desc->index_buffer[level_id][height]->data = NULL;
 			uint64_t *dst = NULL;
@@ -351,13 +355,13 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 					if (!di_rewrite_index_node(r_desc->index_buffer[level_id][i])) {
 						log_warn(
 							"Cannot decode pending indexing segment for DB %s level_id %u height %u",
-							r_desc->db->db_desc->db_name, level_id, i);
+							r_desc->db->db_desc->db_volume->volume_name, level_id, i);
 						break;
 					} else {
 						di_free_index_buffer(r_desc, level_id, i);
 						log_warn(
 							"Decoded !! pending indexing segment for DB %s level_id %u height %u",
-							r_desc->db->db_desc->db_name, level_id, i);
+							r_desc->db->db_desc->db_volume->volume_name, level_id, i);
 					}
 				}
 			}
@@ -376,3 +380,4 @@ void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, st
 		exit(EXIT_FAILURE);
 	}
 }
+*/

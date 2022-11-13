@@ -2,12 +2,15 @@
 #include "../utilities/spin_loop.h"
 #include "djb2.h"
 #include "globals.h"
+#include "list.h"
 #include "metadata.h"
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
+#include <btree/gc.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
+#include <include/parallax/parallax.h>
 #include <libgen.h>
 #include <log.h>
 #include <pthread.h>
@@ -17,6 +20,22 @@
 #include <zookeeper/zookeeper.jute.h>
 
 uint64_t ds_hash_key;
+
+par_handle open_db(const char *path)
+{
+	disable_gc();
+	par_db_options db_options = { .volume_name = (char *)path,
+				      .create_flag = PAR_CREATE_DB,
+				      .db_name = "tebis_storage_engine",
+				      .options = par_get_default_options() };
+	const char *error_message = NULL;
+	par_handle handle = par_open(&db_options, &error_message);
+	if (error_message) {
+		log_fatal("Error uppon opening the DB, error %s", error_message);
+		_exit(EXIT_FAILURE);
+	}
+	return handle;
+}
 
 char *krm_msg_type_tostring(enum krm_msg_type type)
 {
@@ -108,7 +127,7 @@ static void krm_iterate_servers_state(struct krm_server_desc *desc)
 	log_debug("Kreon master: view of servers");
 	HASH_ITER(hh, desc->dataservers_map, current, tmp)
 	{
-		log_debug("Server: %s hash_key current: %x", current->server_id.kreon_ds_hostname, current->hash_key);
+		log_debug("Server: %s hash_key current: %lu", current->server_id.kreon_ds_hostname, current->hash_key);
 		HASH_ITER(hh, current->region_map, current_r, tmp_r)
 		{
 			r_state = &current_r->lr_state;
@@ -125,8 +144,7 @@ static void krm_iterate_ld_regions(struct krm_server_desc *desc)
 
 	for (int i = 0; i < desc->ld_regions->num_regions; i++) {
 		struct krm_region *r = &desc->ld_regions->regions[i];
-		log_debug("Region id %s min key %s max key %s region overall status", r->id, r->min_key, r->max_key,
-			  r->stat);
+		log_debug("Region id %s min key %s max key %s region overall status", r->id, r->min_key, r->max_key);
 	}
 }
 
@@ -314,7 +332,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 			_exit(EXIT_FAILURE);
 		}
 		region_map = init_region_map(region, KRM_PRIMARY);
-		log_debug("Adding region %s (As a primary) for server %s hash key %x", region->id,
+		log_debug("Adding region %s (As a primary) for server %s hash key %lu", region->id,
 			  dataserver->server_id.kreon_ds_hostname, dataserver->hash_key);
 		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
 	} else {
@@ -335,7 +353,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 		}
 		msg.epoch = dataserver->server_id.epoch;
 		region_map = init_region_map(region, KRM_PRIMARY);
-		log_info("Adding region %s (As a primary) for server %s hash key %x", region->id,
+		log_info("Adding region %s (As a primary) for server %s hash key %lu", region->id,
 			 region->primary.kreon_ds_hostname, region_map->hash_key);
 		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
 		log_info("Sending open command (as primary) to %s", path);
@@ -369,7 +387,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 				_exit(EXIT_FAILURE);
 			}
 			region_map = init_region_map(region, KRM_BACKUP);
-			log_info("Adding region %s (As a backup) for server %s hash key %x", region->id, /*  */
+			log_info("Adding region %s (As a backup) for server %s hash key %lu", region->id, /*  */
 				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
 			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
 		} else {
@@ -388,7 +406,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 				_exit(EXIT_FAILURE);
 			}
 			region_map = init_region_map(region, KRM_BACKUP);
-			log_info("Adding region %s (As a backup) for server %s hash key %x", region->id,
+			log_info("Adding region %s (As a backup) for server %s hash key %lu", region->id,
 				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
 			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
 			msg.epoch = dataserver->server_id.epoch;
@@ -444,7 +462,7 @@ void leader_health_watcher(zhandle_t *zh, int type, int state, const char *path,
 	struct krm_server_desc *my_desc = (struct krm_server_desc *)watcherCtx;
 	struct Stat stat;
 	if (type == ZOO_DELETED_EVENT) {
-		log_warn("Leader %s died unhandled situation TODO");
+		log_warn("Leader died unhandled situation TODO");
 		_exit(EXIT_FAILURE);
 	} else {
 		log_warn("Got unhandled type %d resetting watcher for path %s", type, path);
@@ -460,7 +478,10 @@ static void zoo_rmr_folder(zhandle_t *zh, const char *path)
 {
 	struct String_vector children;
 	int rc = zoo_get_children(zh, path, 0, &children);
-	assert(rc == ZOK);
+	if (rc != ZOK) {
+		assert(0);
+		_exit(EXIT_FAILURE);
+	}
 	if (children.count != 0) {
 		for (int i = 0; i < children.count; ++i) {
 			char *child_path = children.data[i];
@@ -638,7 +659,8 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 		struct String_vector *mails = (struct String_vector *)calloc(1, sizeof(struct String_vector));
 		int rc = zoo_wget_children(zh, s_desc->mail_path, mailbox_watcher, (void *)s_desc, mails);
 		if (rc != ZOK) {
-			log_fatal("failed to get mails from path %s error code ", s_desc->mail_path, zku_op2String(rc));
+			log_fatal("failed to get mails from path %s error code %s", s_desc->mail_path,
+				  zku_op2String(rc));
 			_exit(EXIT_FAILURE);
 		}
 		for (int i = 0; i < mails->count; i++) {
@@ -654,7 +676,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 
 			//log_info("fetched mail %s for region %s", mail, msg->region.id);
 			pthread_mutex_lock(&s_desc->msg_list_lock);
-			klist_add_last(s_desc->msg_list, msg, NULL, NULL);
+			tebis_klist_add_last(s_desc->msg_list, msg, NULL, NULL);
 			sem_post(&s_desc->wake_up);
 			pthread_mutex_unlock(&s_desc->msg_list_lock);
 			//log_info("Deleting %s", mail);
@@ -748,23 +770,28 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
+#if 0
 			for (int i = 0; i < MAX_LEVELS; i++)
 				r_desc->replica_index_map[i] = NULL;
-			/*open kreon db*/
-			r_desc->db = custom_db_open(globals_get_dev(), 0, globals_get_dev_size(), region->id, CREATE_DB,
-						    globals_get_l0_size(), globals_get_growth_factor());
+#endif
+			/*open the db*/
+			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
+			r_desc->db = open_db(globals_get_dev());
 
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
 			/*find system ref*/
 			struct krm_region_desc *t = krm_get_region(server, region->min_key, region->min_key_size);
 			/*set the callback and context for remote compaction*/
-			log_info("Setting DB %s in replicated mode", t->db->db_desc->db_name);
-			bt_set_db_in_replicated_mode(t->db);
-			set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
-			set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
-			set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
-			bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
+			//log_info("Setting DB %s in replicated mode", t->db->db_desc->db_volume->volume_name);
+			// XXX TODO XXX @geostyl FIXME these functions are commented out, do we need them?
+			//bt_set_db_in_replicated_mode((struct db_handle *)t->db);
+			//set_init_index_transfer((struct db_descriptor *)t->db, &rco_init_index_transfer);
+			//set_destroy_local_rdma_buffer((struct db_descriptor *)t->db, &rco_destroy_local_rdma_buffer);
+			//set_send_index_segment_to_replicas((struct db_descriptor *)t->db,
+			//				   &rco_send_index_segment_to_replicas);
+			//bt_set_flush_replicated_logs_callback((struct db_descriptor *)t->db,
+			//				      rco_flush_last_log_segment);
 			rco_add_db_to_pool(server->compaction_pool, t);
 
 			reply.type = (msg->type == KRM_OPEN_REGION_AS_PRIMARY) ? KRM_ACK_OPEN_PRIMARY :
@@ -819,8 +846,10 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 		// Find sender's region
 		struct krm_leader_ds_region_map *ds_region =
 			krm_leader_get_ds_region(server, &msg->region, msg->sender);
-		assert(ds_region);
-		assert(ds_region->lr_state.status == KRM_OPENING || ds_region->lr_state.status == KRM_OPEN);
+		if (!ds_region) {
+			assert(0);
+			_exit(EXIT_FAILURE);
+		}
 		// Resend open command
 		log_info("Resend open command for region %s to dataserver %s", msg->region.id, msg->sender);
 		enum krm_msg_type open_command_type =
@@ -929,7 +958,7 @@ void *krm_metadata_server(void *args)
 		switch (my_desc->state) {
 		case KRM_BOOTING: {
 			sem_init(&my_desc->wake_up, 0, 0);
-			my_desc->msg_list = klist_init();
+			my_desc->msg_list = tebis_klist_init();
 			log_info("Booting kreonR server, my hostname is %s checking my presence "
 				 "at zookeeper %s",
 				 my_desc->name.kreon_ds_hostname, globals_get_zk_host());
@@ -1143,7 +1172,7 @@ void *krm_metadata_server(void *args)
 				} else if (stat.dataLength > (int64_t)sizeof(region_json_string)) {
 					log_fatal(
 						"Statically allocated buffer is not large enough to hold the json region entry."
-						"Json region entry length is %d and buffer size is %d",
+						"Json region entry length is %d and buffer size is %lu",
 						stat.dataLength, sizeof(region_json_string));
 					_exit(EXIT_FAILURE);
 				}
@@ -1221,7 +1250,7 @@ void *krm_metadata_server(void *args)
 			break;
 		}
 		case KRM_OPEN_LD_REGIONS: {
-			log_debug("Leader opening my regions", my_desc->name.kreon_ds_hostname);
+			log_debug("Leader opening my regions");
 
 			struct krm_leader_ds_map *ds_map;
 			uint64_t hash_key = djb2_hash((unsigned char *)my_desc->name.kreon_ds_hostname,
@@ -1255,27 +1284,32 @@ void *krm_metadata_server(void *args)
 				r_desc->m_state = NULL;
 				r_desc->r_state = NULL;
 
-				// open Kreon db
-				r_desc->db = custom_db_open(globals_get_dev(), 0, globals_get_dev_size(),
-							    r_desc->region->id, CREATE_DB, globals_get_l0_size(),
-							    globals_get_growth_factor());
-
+				// open the db
+				// TODO replace db_open with custom db open as should be
+				r_desc->db = open_db(globals_get_dev());
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
+#if 0
 				for (int i = 0; i < MAX_LEVELS; i++)
 					r_desc->replica_index_map[i] = NULL;
+#endif
 				krm_insert_ds_region(my_desc, r_desc, my_desc->ds_regions);
 				/*find system ref*/
 				struct krm_region_desc *t = krm_get_region(my_desc, current->lr_state.region->min_key,
 									   current->lr_state.region->min_key_size);
 				/*set the callback and context for remote compaction*/
-				log_debug("Setting DB %s in replicated mode", t->db->db_desc->db_name);
-				bt_set_db_in_replicated_mode(t->db);
-				set_init_index_transfer(t->db->db_desc, &rco_init_index_transfer);
-				set_destroy_local_rdma_buffer(t->db->db_desc, &rco_destroy_local_rdma_buffer);
-				set_send_index_segment_to_replicas(t->db->db_desc, &rco_send_index_segment_to_replicas);
-				bt_set_flush_replicated_logs_callback(t->db->db_desc, rco_flush_last_log_segment);
+				//log_debug("Setting DB %s in replicated mode", t->db->db_desc->db_volume->volume_name);
+				// XXX TODO XXX @geostyl FIXME, this functions are commented out, do we need them?
+				/*bt_set_db_in_replicated_mode((struct db_handle *)t->db);
+				set_init_index_transfer((struct db_descriptor *)t->db, &rco_init_index_transfer);
+				set_destroy_local_rdma_buffer((struct db_descriptor *)t->db,
+							      &rco_destroy_local_rdma_buffer);
+				set_send_index_segment_to_replicas((struct db_descriptor *)t->db,
+								   &rco_send_index_segment_to_replicas);
+				bt_set_flush_replicated_logs_callback((struct db_descriptor *)t->db,
+								      rco_flush_last_log_segment);
+				*/
 				rco_add_db_to_pool(my_desc->compaction_pool, t);
 			}
 			my_desc->state = KRM_WAITING_FOR_MSG;
@@ -1345,10 +1379,8 @@ void *krm_metadata_server(void *args)
 			break;
 		}
 		case KRM_WAITING_FOR_MSG: {
-			struct klist_node *node;
-
 			pthread_mutex_lock(&my_desc->msg_list_lock);
-			node = klist_remove_first(my_desc->msg_list);
+			struct tebis_klist_node *node = tebis_klist_remove_first(my_desc->msg_list);
 			pthread_mutex_unlock(&my_desc->msg_list_lock);
 			if (!node)
 				/*go to sleep*/

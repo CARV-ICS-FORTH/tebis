@@ -14,7 +14,7 @@ if(Zookeeper_LIBRARY)
     ycsb-blocking-kreon
     kreon_client
     kreon_rdma
-    kreonr
+    parallax
     log
     libbloom
     ${Zookeeper_LIBRARY}
@@ -23,7 +23,7 @@ if(Zookeeper_LIBRARY)
   set_target_properties(
     ycsb-blocking-kreon
     PROPERTIES LINK_FLAGS
-               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
+               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs -lrt"
                COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
 
   add_executable(
@@ -34,7 +34,7 @@ if(Zookeeper_LIBRARY)
     ycsb-async-kreon
     kreon_client
     kreon_rdma
-    kreonr
+    parallax
     log
     libbloom
     ${Zookeeper_LIBRARY}
@@ -42,13 +42,7 @@ if(Zookeeper_LIBRARY)
   set_target_properties(
     ycsb-async-kreon
     PROPERTIES LINK_FLAGS
-               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs"
+               "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs -lrt"
                COMPILE_DEFINITIONS "KREON_DISTRIBUTED")
 
 endif()
-
-add_executable(ycsb-edb db/db_factory_eutropiadb.cc core/core_workload.cc
-                        driver/ycsbc.cc ../utilities/list.c)
-
-target_link_libraries(ycsb-edb kreon libbloom ${Zookeeper_LIBRARY})
-set_target_properties(ycsb-edb PROPERTIES LINK_FLAGS "-pthread -lnuma -lrt")
