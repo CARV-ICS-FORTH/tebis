@@ -8,12 +8,12 @@
 
 #include "db_factory.h"
 
-#include "kreonR_client.h"
+#include "tebis_client.h"
 
 using ycsbc::YCSBDB;
 using ycsbc::DBFactory;
 
 YCSBDB *DBFactory::CreateDB(int num, utils::Properties &props)
 {
-	return new kreonRClientDB(num, props);
+	return new tebisClientDB(num, props);
 }
