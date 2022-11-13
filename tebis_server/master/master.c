@@ -523,7 +523,6 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 		log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
 			  REG_get_region_id(region));
 		REG_set_region_primary_role(region, PRIMARY_DEAD);
-		assert(0);
 		++n_failures;
 	}
 

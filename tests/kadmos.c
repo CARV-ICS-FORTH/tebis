@@ -262,8 +262,8 @@ static void create_new_region_configuration(region_configuration_t *region_confi
 		}
 	}
 }
-#define MASTER "sith5.cluster.ics.forth.gr:8080,0"
-#define ZOOKEEPER_HOST "sith5.cluster.ics.forth.gr:2181"
+#define MASTER "sith2.cluster.ics.forth.gr:8080,0"
+#define ZOOKEEPER_HOST "sith2.cluster.ics.forth.gr:2181"
 #define ZOOKEEPER_TIMEOUT 15000
 static void create_hosts_file(struct tebis_host_group **groups, long int num_of_groups, char *host_file_path)
 {

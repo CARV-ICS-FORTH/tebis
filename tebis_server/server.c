@@ -1978,8 +1978,8 @@ static void sigint_handler(int signo)
 {
 	(void)signo;
 	/*pid_t tid = syscall(__NR_gettid);*/
-	log_warn("caught signal closing server, sorry gracefull shutdown not yet "
-		 "supported. Contace <gesalous,geostyl>@ics.forth.gr");
+	printf("caught signal closing server, sorry gracefull shutdown not yet "
+	       "supported. Contace <gesalous,geostyl>@ics.forth.gr");
 	stats_notify_stop_reporter_thread();
 	sem_post(&exit_main);
 }

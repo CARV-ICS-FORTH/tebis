@@ -127,7 +127,7 @@ char *REG_get_region_primary(region_t region)
 
 void REG_set_region_primary(region_t region, char *hostname)
 {
-	strncpy(region->primary.hostname, hostname, KRM_HOSTNAME_SIZE);
+	strncpy(region->primary.hostname, hostname, KRM_HOSTNAME_SIZE - 1);
 }
 
 char *REG_get_region_backup(region_t region, int backup_id)
