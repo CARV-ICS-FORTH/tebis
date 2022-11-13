@@ -1,6 +1,6 @@
 #ifndef MSG_FACTORY_H
 #define MSG_FACTORY_H
-#include "../kreon_server/messages.h"
+#include "../tebis_server/messages.h"
 #include <stdint.h>
 
 struct put_msg_data {

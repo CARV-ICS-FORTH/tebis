@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include "kreon_rdma_client.h"
+#include "tebis_rdma_client.h"
 #include "client_utils.h"
 #include <assert.h>
 #include <immintrin.h>
@@ -13,10 +13,10 @@
 #include <string.h>
 #include <time.h>
 //#include "../kreon_server/client_regions.h"
-#include "../kreon_rdma/rdma.h"
-#include "../kreon_server/djb2.h"
-#include "../kreon_server/globals.h"
-#include "../kreon_server/messages.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/djb2.h"
+#include "../tebis_server/globals.h"
+#include "../tebis_server/messages.h"
 #include "../utilities/spin_loop.h"
 #include "msg_factory.h"
 #include <log.h>

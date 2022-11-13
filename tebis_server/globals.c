@@ -1,6 +1,6 @@
 #define _LARGEFILE64_SOURCE
 #include "globals.h"
-#include "../kreon_rdma/rdma.h"
+#include "../tebis_rdma/rdma.h"
 #include "../utilities/macros.h"
 #include "conf.h"
 #include <fcntl.h>

@@ -23,10 +23,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "../kreon_server/djb2.h"
-#include "../kreon_server/globals.h"
-#include "../kreon_server/messages.h"
-#include "../kreon_server/metadata.h"
+#include "../tebis_server/djb2.h"
+#include "../tebis_server/globals.h"
+#include "../tebis_server/messages.h"
+#include "../tebis_server/metadata.h"
 #include "get_clock.h"
 
 #include "../utilities/circular_buffer.h"

@@ -4,7 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "../kreon_server/conf.h"
+#include "../tebis_server/conf.h"
 #include "../utilities/macros.h"
 #include "simple_concurrent_list.h"
 

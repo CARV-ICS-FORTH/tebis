@@ -1,22 +1,22 @@
 set_source_files_properties(../utilities/spin_loop.c PROPERTIES COMPILE_FLAGS
                                                                 "-O0")
-add_definitions(-DKREONR)
+add_definitions(-DtebisR)
 
 add_library(
-  kreon_client
+  tebis_client
   messages.c
-  ../kreon_rdma_client/client_utils.c
-  ../kreon_rdma_client/msg_factory.c
-  ../kreon_rdma_client/kreon_rdma_client.c
-  ../kreon_server/globals.c
+  ../tebis_rdma_client/client_utils.c
+  ../tebis_rdma_client/msg_factory.c
+  ../tebis_rdma_client/tebis_rdma_client.c
+  ../tebis_server/globals.c
   zk_utils.c
   djb2.c)
-add_dependencies(kreon_client cjson)
+add_dependencies(tebis_client cjson)
 
-target_link_libraries(kreon_client ${Zookeeper_LIBRARY})
+target_link_libraries(tebis_client ${Zookeeper_LIBRARY})
 
 add_executable(
-  kreon_server
+  tebis_server
   server.c
   metadata_server.c
   build_index.c
@@ -28,15 +28,15 @@ add_executable(
   globals.c
   messages.c
   server_communication.c
-  ../kreon_rdma/rdma.c
-  ../kreon_rdma_client/client_utils.c
-  ../kreon_rdma_client/msg_factory.c
+  ../tebis_rdma/rdma.c
+  ../tebis_rdma_client/client_utils.c
+  ../tebis_rdma_client/msg_factory.c
   stats.c)
 
-add_dependencies(kreon_server cjson)
+add_dependencies(tebis_server cjson)
 target_link_libraries(
-  kreon_server
-  kreon_rdma
+  tebis_server
+  tebis_rdma
   parallax
   log
   ${Zookeeper_LIBRARY}
@@ -60,27 +60,27 @@ target_link_libraries(create_server_node log ${Zookeeper_LIBRARY})
 target_link_options(create_server_node PUBLIC -gdwarf-4 -pthread)
 
 set_target_properties(
-  kreon_client PROPERTIES PUBLIC_HEADER
-                          "../kreon_rdma_client/kreon_rdma_client.h")
+  tebis_client PROPERTIES PUBLIC_HEADER
+                          "../tebis_rdma_client/tebis_rdma_client.h")
 
-set(KREON_CLIENT_LIB "kreon_client")
-set(KREON_SERVER_LIB "kreon_server")
-if(KREON_BUILD_CPACK)
+set(tebis_CLIENT_LIB "tebis_client")
+set(tebis_SERVER_LIB "tebis_server")
+if(tebis_BUILD_CPACK)
   install(
-    TARGETS ${KREON_CLIENT_LIB} ${KREON_SERVER_LIB}
+    TARGETS ${tebis_CLIENT_LIB} ${tebis_SERVER_LIB}
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-  set_target_properties(kreon_client PROPERTIES OUTPUT_NAME ${KREON_CLIENT_LIB})
+  set_target_properties(tebis_client PROPERTIES OUTPUT_NAME ${tebis_CLIENT_LIB})
 endif()
 
 if(RUN_IWYU STREQUAL "ON")
   find_program(iwyu_path NAMES include-what-you-use iwyu iwyu-tool)
   if(iwyu_path)
-    set_property(TARGET ${KREON_CLIENT_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
+    set_property(TARGET ${tebis_CLIENT_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
                                                      ${iwyu_path})
-    set_property(TARGET ${KREON_SERVER_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
+    set_property(TARGET ${tebis_SERVER_LIB} PROPERTY C_INCLUDE_WHAT_YOU_USE
                                                      ${iwyu_path})
     set_property(TARGET create_region PROPERTY C_INCLUDE_WHAT_YOU_USE
                                                ${iwyu_path})

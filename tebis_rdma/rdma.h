@@ -21,8 +21,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "../kreon_server/conf.h"
-#include "../kreon_server/messages.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/messages.h"
 #include "../utilities/circular_buffer.h"
 #include "../utilities/macros.h"
 #include "../utilities/queue.h"

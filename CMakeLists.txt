@@ -1,7 +1,7 @@
 # File: CMakeLists.txt Author: Michalis Vardoulakis <mvard@ics.forth.gr>
 
 cmake_minimum_required(VERSION 3.11.0)
-project(kreon VERSION 1.0)
+project(tebis VERSION 1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(FetchContent)
@@ -201,13 +201,13 @@ set(CMAKE_LINKER_FLAGS
     "-Wl,-no-as-needed -lm -Werror -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
 )
 
-add_subdirectory(kreon_rdma)
-add_subdirectory(kreon_server)
+add_subdirectory(tebis_rdma)
+add_subdirectory(tebis_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
 
-if(KREON_BUILD_CPACK
+if(tebis_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR
    AND Zookeeper_LIBRARY)
   set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
@@ -223,7 +223,7 @@ if(KREON_BUILD_CPACK
       "numactl-libs >= 2, libibverbs, librdmacm, glibc, libgcc, libnl3, zookeeper-native >= 3"
   )
   set(CPACK_RPM_PACKAGE_DESCRIPTION
-      "Kreon is a high-speed and high-efficiency distributed key-value store functioning on top of an RDMA-capable network."
+      "tebis is a high-speed and high-efficiency distributed key-value store functioning on top of an RDMA-capable network."
   )
   set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
   set(CPACK_PACKAGE_FILE_NAME

@@ -1,7 +1,7 @@
 #include "client_utils.h"
-#include "../kreon_server/djb2.h"
-#include "../kreon_server/globals.h"
-#include "../kreon_server/zk_utils.h"
+#include "../tebis_server/djb2.h"
+#include "../tebis_server/globals.h"
+#include "../tebis_server/zk_utils.h"
 #include "../utilities/spin_loop.h"
 #include <cJSON.h>
 #include <log.h>
