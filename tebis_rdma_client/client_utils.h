@@ -1,7 +1,7 @@
 #pragma once
-#include "../kreon_rdma/rdma.h"
-#include "../kreon_server/conf.h"
-#include "../kreon_server/metadata.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/metadata.h"
 #include <pthread.h>
 #include <stdint.h>
 

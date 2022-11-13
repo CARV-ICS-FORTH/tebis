@@ -26,8 +26,8 @@
 #endif
 
 extern "C" {
-#include "../../kreon_rdma_client/client_utils.h"
-#include "../../kreon_rdma_client/kreon_rdma_client.h"
+#include "../../tebis_rdma_client/client_utils.h"
+#include "../../tebis_rdma_client/tebis_rdma_client.h"
 #include "../../utilities/queue.h"
 #include <btree/btree.h>
 #include <log.h>
@@ -121,7 +121,7 @@ extern int *region_requests;
 
 namespace ycsbc
 {
-class kreonRAsyncClientDB : public YCSBDB {
+class tebisAsyncClientDB : public YCSBDB {
     private:
 	int field_count;
 	std::vector<db_handle *> dbs;
@@ -133,7 +133,7 @@ class kreonRAsyncClientDB : public YCSBDB {
 	uint32_t regions_total;
 
     public:
-	kreonRAsyncClientDB(int num, utils::Properties &props)
+	tebisAsyncClientDB(int num, utils::Properties &props)
 		: field_count(std::stoi(
 			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT)))
 		, dbs()
@@ -184,9 +184,9 @@ class kreonRAsyncClientDB : public YCSBDB {
 		}
 	}
 
-	virtual ~kreonRAsyncClientDB()
+	virtual ~tebisAsyncClientDB()
 	{
-		cout << "Calling ~kreonRAsyncClientDB()..." << endl;
+		cout << "Calling ~tebisRAsyncClientDB()..." << endl;
 		gettimeofday(&tim, NULL);
 		t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 		fprintf(stderr, "ycsb=[%lf]sec\n", (t2 - t1));

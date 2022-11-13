@@ -26,7 +26,7 @@
 #include "../core/properties.h"
 
 extern "C" {
-#include "../../kreon_rdma_client/kreon_rdma_client.h"
+#include "../../tebis_rdma_client/tebis_rdma_client.h"
 #include <btree/btree.h>
 #include <log.h>
 }
@@ -49,7 +49,7 @@ void callback_function(void *args)
 {
 	__sync_fetch_and_add((int *)args, 1);
 }
-class kreonRBlockingClientDB : public YCSBDB {
+class tebisBlockingClientDB : public YCSBDB {
     private:
 	int db_num;
 	int field_count;
@@ -62,7 +62,7 @@ class kreonRBlockingClientDB : public YCSBDB {
 	pthread_mutex_t mutex_num;
 
     public:
-	kreonRBlockingClientDB(int num, utils::Properties &props)
+	tebisBlockingClientDB(int num, utils::Properties &props)
 		: db_num(num)
 		, field_count(std::stoi(
 			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT)))
@@ -81,9 +81,9 @@ class kreonRBlockingClientDB : public YCSBDB {
 		tinit = start.tv_sec + (start.tv_usec / 1000000.0);
 	}
 
-	virtual ~kreonRBlockingClientDB()
+	virtual ~tebisBlockingClientDB()
 	{
-		cout << "Calling ~kreonRClientDB()..." << endl;
+		cout << "Calling ~tebisClientDB()..." << endl;
 		gettimeofday(&tim, NULL);
 		t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 		fprintf(stderr, "ycsb=[%lf]sec\n", (t2 - t1));

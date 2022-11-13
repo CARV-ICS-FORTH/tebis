@@ -36,8 +36,8 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 
-#include "../kreon_rdma/rdma.h"
-#include "../kreon_rdma_client/msg_factory.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/queue.h"
 #include "../utilities/spin_loop.h"
 #include "build_index.h"

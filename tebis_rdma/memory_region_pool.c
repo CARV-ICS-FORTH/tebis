@@ -11,7 +11,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
-#include "../kreon_server/conf.h" // FIXME only included for the priority macros
+#include "../tebis_server/conf.h" // FIXME only included for the priority macros
 #include "../utilities/list.h"
 #include "../utilities/macros.h"
 #include "memory_region_pool.h"

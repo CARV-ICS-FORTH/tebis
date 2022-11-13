@@ -8,12 +8,12 @@
 
 #include "db_factory.h"
 
-#include "kreonR_async_client.h"
+#include "kreonR_client.h"
 
-using ycsbc::DBFactory;
 using ycsbc::YCSBDB;
+using ycsbc::DBFactory;
 
 YCSBDB *DBFactory::CreateDB(int num, utils::Properties &props)
 {
-	return new kreonRAsyncClientDB(num, props);
+	return new kreonRClientDB(num, props);
 }

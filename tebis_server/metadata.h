@@ -2,7 +2,7 @@
 #include "messages.h"
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
-#include "../kreon_rdma/rdma.h"
+#include "../tebis_rdma/rdma.h"
 #include "../utilities/list.h"
 #include "uthash.h"
 #include <btree/conf.h>
