@@ -13,8 +13,7 @@
 using ycsbc::YCSBDB;
 using ycsbc::DBFactory;
 
-YCSBDB* DBFactory::CreateDB(int num)
+YCSBDB *DBFactory::CreateDB(int num)
 {
-  return new PerconaFT(num);
+	return new PerconaFT(num);
 }
-

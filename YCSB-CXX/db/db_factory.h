@@ -9,23 +9,22 @@
 #ifndef YCSB_C_DB_FACTORY_H_
 #define YCSB_C_DB_FACTORY_H_
 
-#include "ycsbdb.h"
-#include "utils.h"
 #include "core_workload.h"
+#include "utils.h"
+#include "ycsbdb.h"
 
-namespace ycsbc {
-
-class DBFactory
+namespace ycsbc
 {
- public:
- 	///
-	/// @num works only for levelDB (and Eutropia in the future). 
+
+class DBFactory {
+    public:
+	///
+	/// @num works only for levelDB (and Eutropia in the future).
 	///	It specifies the number of distinct databases.
 	///
-  static YCSBDB* CreateDB(int num, utils::Properties& props);
+	static YCSBDB *CreateDB(int num, utils::Properties &props);
 };
 
 } // ycsbc
 
 #endif // YCSB_C_DB_FACTORY_H_
-

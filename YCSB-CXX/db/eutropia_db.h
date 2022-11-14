@@ -11,14 +11,14 @@
 #ifndef YCSB_C_EUTROPIA_DB_H_
 #define YCSB_C_EUTROPIA_DB_H_
 
-#include <iostream>
-#include <string>
-#include <mutex>
 #include <algorithm>
 #include <atomic>
 #include <functional>
-#include <sstream>
+#include <iostream>
 #include <iterator>
+#include <mutex>
+#include <sstream>
+#include <string>
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -50,9 +50,10 @@ class EutropiaDB : public YCSBDB {
 
     public:
 	EutropiaDB(int num, utils::Properties &props)
-		: db_num(num), field_count(std::stoi(props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY,
-								       CoreWorkload::FIELD_COUNT_DEFAULT))),
-		  dbs()
+		: db_num(num)
+		, field_count(std::stoi(
+			  props.GetProperty(CoreWorkload::FIELD_COUNT_PROPERTY, CoreWorkload::FIELD_COUNT_DEFAULT)))
+		, dbs()
 	{
 		//const char *pathname = "/dev/dmap/dmap1";
 		std::string dev = props.GetProperty("dev");

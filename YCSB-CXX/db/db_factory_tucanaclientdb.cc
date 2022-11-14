@@ -13,8 +13,7 @@
 using ycsbc::YCSBDB;
 using ycsbc::DBFactory;
 
-YCSBDB* DBFactory::CreateDB( int num, utils::Properties& props )
+YCSBDB *DBFactory::CreateDB(int num, utils::Properties &props)
 {
-    return (new TucanaClientDB( num, props ));
+	return (new TucanaClientDB(num, props));
 }
-

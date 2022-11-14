@@ -1,4 +1,5 @@
-/** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling */
+/** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling (log) */
+/** TODO: tebis_tcp_types.h --> make changes to the reply-buffer to support scan */
 
 #include "tcp_client.h"
 #include "tebis_tcp_errors.h"
@@ -15,12 +16,10 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#define TT_DEFAULT_PORT 25565 // Minecraft's port
-#define TT_MAP_PROT     (PROT_READ | PROT_WRITE)
-#define TT_MAP_FLAGS    (MAP_ANON | MAP_PRIVATE)
+#define TT_MAP_PROT (PROT_READ | PROT_WRITE)
+#define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
 struct internal_tcp_rep {
-
 	uint32_t retc;
 	uint64_t size;
 
@@ -28,7 +27,6 @@ struct internal_tcp_rep {
 };
 
 struct internal_tcp_req {
-
 	req_t type;
 	uint32_t flags;
 
@@ -41,16 +39,13 @@ struct internal_tcp_req {
 };
 
 struct client_handle {
-
 	uint16_t flags1;
 	uint16_t flags2;
 
-	#define MAGIC_INIT_NUM (0xCAFE)
-	#define CLHF_SND_REQ (1 << 0)
+#define MAGIC_INIT_NUM (0xCAFE)
+#define CLHF_SND_REQ (1 << 0)
 
 	int sock;
-
-	struct internal_tcp_rep reply;
 };
 
 /*****************************************************************************/
@@ -62,8 +57,7 @@ static int server_version_check(int ssock)
 	*tbuf = REQ_INIT_CONN;
 	*(tbuf + 1UL) = htobe32(TT_VERSION);
 
-	if ( send(ssock, tbuf, 5UL, 0) < 0 )
-	{
+	if (send(ssock, tbuf, 5UL, 0) < 0) {
 		dprint("send()");
 		return -(EXIT_FAILURE);
 	}
@@ -90,8 +84,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		return -(EXIT_FAILURE);
 	}
 
-	if (!(*chandle = malloc(sizeof(struct client_handle))))
-	{
+	if (!(*chandle = malloc(sizeof(struct client_handle)))) {
 		dprint("malloc()");
 		return -(EXIT_FAILURE);
 	}
@@ -151,16 +144,14 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 int chandle_destroy(cHandle chandle)
 {
-	if ( !chandle )
-	{
+	if (!chandle) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	struct client_handle *ch = chandle;
 
-	if ( (ch->flags1 != MAGIC_INIT_NUM) )
-	{
+	if ((ch->flags1 != MAGIC_INIT_NUM)) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -169,6 +160,7 @@ int chandle_destroy(cHandle chandle)
 
 	/** TODO: what else? */
 	close(ch->sock);
+	free(chandle);
 
 	return EXIT_SUCCESS;
 }
@@ -179,13 +171,13 @@ c_tcp_req c_tcp_req_new(req_t rtype, size_t keysz, size_t paysz)
 {
 	/** TODO: check that 'rtype' is a valid request */
 
-	if ( rtype < REQ_SCAN )
+	if (rtype < REQ_SCAN)
 		paysz = 0UL;
 
 	struct internal_tcp_req *ireq;
 	uint64_t tsize = ((TT_REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfff) + 1UL; // efficient page-align
 
-	if ( (ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED )
+	if ((ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 		return NULL;
 
 	ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
@@ -206,8 +198,7 @@ c_tcp_req c_tcp_req_new(req_t rtype, size_t keysz, size_t paysz)
 // tmp:
 int c_tcp_req_update(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
 {
-	if (!req)
-	{
+	if (!req) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -216,29 +207,27 @@ int c_tcp_req_update(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
 
 	struct internal_tcp_req *ireq = *req;
 
-	if (ireq->flags != MAGIC_INIT_NUM)
-	{
+	if (ireq->flags != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	/** END OF ERROR HANDLING **/
 
-	if ( rtype < REQ_SCAN )
+	if (rtype < REQ_SCAN)
 		paysz = 0UL;
 
 	uint64_t tsize = keysz + paysz + TT_REQHDR_SIZE;
 
 	if (tsize <= ireq->buf.bytes - sizeof(*ireq))
 		ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
-	else
-	{
+	else {
 		if (munmap(ireq, ireq->buf.bytes + sizeof(*ireq)) < 0)
 			return -(EXIT_FAILURE);
 
 		tsize = ((tsize + sizeof(*ireq)) | 0xfff) + 1UL; // page-alignment
 
-		if ( (*req = mmap(NULL, tsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0UL)) == MAP_FAILED )
+		if ((*req = mmap(NULL, tsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0UL)) == MAP_FAILED)
 			return -(EXIT_FAILURE);
 
 		ireq = *req;
@@ -262,16 +251,14 @@ int c_tcp_req_update(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
 
 int c_tcp_req_destroy(c_tcp_req req)
 {
-	if (!req)
-	{
+	if (!req) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
 	struct internal_tcp_req *ireq = req;
 
-	if (ireq->flags != MAGIC_INIT_NUM)
-	{
+	if (ireq->flags != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -288,16 +275,14 @@ int c_tcp_req_destroy(c_tcp_req req)
 
 void *c_tcp_req_expose_key(c_tcp_req req)
 {
-	if (!req)
-	{
+	if (!req) {
 		errno = EINVAL;
 		return NULL;
 	}
 
 	struct internal_tcp_req *ireq = req;
 
-	if (ireq->flags !=  MAGIC_INIT_NUM )
-	{
+	if (ireq->flags != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -309,22 +294,19 @@ void *c_tcp_req_expose_key(c_tcp_req req)
 
 void *c_tcp_req_expose_payload(c_tcp_req req)
 {
-	if (!req)
-	{
+	if (!req) {
 		errno = EINVAL;
 		return NULL;
 	}
 
 	struct internal_tcp_req *ireq = req;
 
-	if (ireq->flags !=  MAGIC_INIT_NUM )
-	{
+	if (ireq->flags != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return NULL;
 	}
 
-	if (ireq->type < REQ_SCAN)
-	{
+	if (ireq->type < REQ_SCAN) {
 		errno = ENODATA;
 		return NULL;
 	}
@@ -339,7 +321,7 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 	struct internal_tcp_rep *irep;
 	uint64_t tsize = ((TT_REPHDR_SIZE + sizeof(*irep) + size) | 0xfff) + 1UL;
 
-	if ( (irep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
+	if ((irep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 		return NULL;
 
 	irep->buf.mem = (char *)(irep) + sizeof(*irep);
@@ -348,6 +330,37 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 	irep->retc = 0U;
 
 	return irep;
+}
+
+int c_tcp_rep_destroy(c_tcp_rep rep)
+{
+	if (!rep) {
+		errno = EINVAL;
+		return -(EXIT_FAILURE);
+	}
+
+	/** END OF ERROR HANDLING **/
+
+	struct internal_tcp_rep *irep = rep;
+
+	if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0)
+		return -(EXIT_FAILURE);
+
+	return EXIT_SUCCESS;
+}
+
+void *c_tcp_rep_expose(c_tcp_rep rep)
+{
+	if (!rep) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	/** END OF ERROR HANDLING **/
+
+	struct internal_tcp_rep *irep = rep;
+
+	return irep->buf.mem;
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -362,8 +375,7 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 	struct client_handle *ch = chandle;
 	struct internal_tcp_req *ireq = req;
 
-	if ((ch->flags1 != MAGIC_INIT_NUM) || (ireq->flags != MAGIC_INIT_NUM))
-	{
+	if ((ch->flags1 != MAGIC_INIT_NUM) || (ireq->flags != MAGIC_INIT_NUM)) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -398,8 +410,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 
 	/* clients waits to send() a 'request' (not to reacv() a 'reply') */
 
-	if ((ch->flags1 != MAGIC_INIT_NUM) || (ch->flags2 & CLHF_SND_REQ))
-	{
+	if ((ch->flags1 != MAGIC_INIT_NUM) || (ch->flags2 & CLHF_SND_REQ)) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -408,8 +419,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 
 	int64_t bytes_read;
 
-	if ( (bytes_read = read(ch->sock, irep->buf.mem, TT_REPHDR_SIZE)) < 0 )
-	{
+	if ((bytes_read = read(ch->sock, irep->buf.mem, TT_REPHDR_SIZE)) < 0) {
 		dprint("read() failed!");
 		printf("read() returned: %ld\n", bytes_read);
 		return -(EXIT_FAILURE);
@@ -418,14 +428,12 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 	irep->retc = *((uint8_t *)(irep->buf.mem));
 	irep->size = be64toh(*((uint64_t *)(irep->buf.mem + 1UL)));
 
-	if (irep->retc != TT_REQ_SUCC)
-	{
+	if (irep->retc != TT_REQ_SUCC) {
 		ch->flags2 |= CLHF_SND_REQ;
 		return EXIT_SUCCESS;
 	}
 
-	if ( (bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0 )
-	{
+	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
 		dprint("read() failed!");
 		printf("read() returned: %ld\n", bytes_read);
 		return -(EXIT_FAILURE);
@@ -455,8 +463,7 @@ int c_tcp_print_rep(c_tcp_rep rep)
 
 int debug_print_req(c_tcp_req req)
 {
-	if (!req)
-	{
+	if (!req) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
@@ -473,5 +480,3 @@ int debug_print_req(c_tcp_req req)
 
 	return EXIT_SUCCESS;
 }
-
-

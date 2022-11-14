@@ -14,14 +14,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <iostream>
-#include <string>
-#include <mutex>
 #include <algorithm>
 #include <atomic>
 #include <functional>
 #include <iomanip>
+#include <iostream>
+#include <mutex>
 #include <set>
+#include <string>
 
 #include "core/properties.h"
 
@@ -33,118 +33,132 @@ using std::cout;
 using std::cerr;
 using std::endl;
 
-namespace ycsbc {
-	class BerkeleyDB : public YCSBDB {
-		private:
-			int db_num;
-			std::vector<DbEnv*> envs;
-			std::vector<Db*> dbs;
-			std::mutex *mtx;
+namespace ycsbc
+{
+class BerkeleyDB : public YCSBDB {
+    private:
+	int db_num;
+	std::vector<DbEnv *> envs;
+	std::vector<Db *> dbs;
+	std::mutex *mtx;
 
-		public:
-			BerkeleyDB(int num) : db_num(num), envs(), dbs() {
-				mtx = new std::mutex[num];
-				try{
-					for(int i = 0; i < db_num; i++){
-						Db* pdb;
-						DbTxn *tid;
-						int ret;
+    public:
+	BerkeleyDB(int num)
+		: db_num(num)
+		, envs()
+		, dbs()
+	{
+		mtx = new std::mutex[num];
+		try {
+			for (int i = 0; i < db_num; i++) {
+				Db *pdb;
+				DbTxn *tid;
+				int ret;
 
-						DbEnv *env = new DbEnv(0);
-						env->set_error_stream(&cerr);
-						env->set_cachesize(4, 0, 1); // 4GB
+				DbEnv *env = new DbEnv(0);
+				env->set_error_stream(&cerr);
+				env->set_cachesize(4, 0, 1); // 4GB
 
-						std::string env_name = "/root/HEutropia/YCSB-CXX/database/" + std::to_string(i);
-						env->open(env_name.c_str(), DB_CREATE | DB_PRIVATE | DB_INIT_MPOOL | DB_INIT_TXN | DB_INIT_LOCK | DB_INIT_LOG, 0);
+				std::string env_name = "/root/HEutropia/YCSB-CXX/database/" + std::to_string(i);
+				env->open(env_name.c_str(),
+					  DB_CREATE | DB_PRIVATE | DB_INIT_MPOOL | DB_INIT_TXN | DB_INIT_LOCK |
+						  DB_INIT_LOG,
+					  0);
 
-						pdb = new Db(env, 0);
-						std::string db_name = env_name + "/data.db";
+				pdb = new Db(env, 0);
+				std::string db_name = env_name + "/data.db";
 
-						if((ret = env->txn_begin(NULL, &tid, 0)) != 0){
-							env->err(ret, "DB_ENV->txn_begin");
-							exit(EXIT_FAILURE);
-						}
-
-						pdb->open(tid, db_name.c_str(), NULL, DB_BTREE, DB_CREATE, 0);
-
-						if((ret = tid->commit(0)) != 0){
-							env->err(ret, "DB_TXN->commit");
-							exit(EXIT_FAILURE);
-						}
-
-						dbs.push_back(pdb);
-						envs.push_back(env);
-					}
-				}catch(DbException& e){
-					std::cerr << "DbException: " << e.what() << endl;
-					exit(EXIT_FAILURE);
-				}catch(std::exception& e){
-					std::cerr << e.what() << endl;
+				if ((ret = env->txn_begin(NULL, &tid, 0)) != 0) {
+					env->err(ret, "DB_ENV->txn_begin");
 					exit(EXIT_FAILURE);
 				}
-			}
 
-			virtual ~BerkeleyDB(){
-				cout << "Calling ~BerkeleyDB()..." << endl;
+				pdb->open(tid, db_name.c_str(), NULL, DB_BTREE, DB_CREATE, 0);
 
-				for(auto& d : dbs){
-					d->close(0);
-					delete d;
+				if ((ret = tid->commit(0)) != 0) {
+					env->err(ret, "DB_TXN->commit");
+					exit(EXIT_FAILURE);
 				}
 
-				for(auto& d : envs)
-					d->close(0);
-
-				delete[] mtx;
+				dbs.push_back(pdb);
+				envs.push_back(env);
 			}
+		} catch (DbException &e) {
+			std::cerr << "DbException: " << e.what() << endl;
+			exit(EXIT_FAILURE);
+		} catch (std::exception &e) {
+			std::cerr << e.what() << endl;
+			exit(EXIT_FAILURE);
+		}
+	}
 
-		public:
-			void Init(){}
-			void Close(){}
+	virtual ~BerkeleyDB()
+	{
+		cout << "Calling ~BerkeleyDB()..." << endl;
 
-			int Read(int id, const std::string &table, const std::string &key, const std::vector<std::string> *fields, std::vector<KVPair> &result)
-			{
-				std::hash<std::string> hash_;
-				DbTxn *tid; 
-				int ret; 
+		for (auto &d : dbs) {
+			d->close(0);
+			delete d;
+		}
 
-				if(fields){
-					for(auto f : *fields){
-						std::string rowcol = key + f;
-						int32_t db_id = hash_(key) % db_num;
+		for (auto &d : envs)
+			d->close(0);
 
-						Dbt key(const_cast<char*>(rowcol.data()), rowcol.size());
-						Dbt data;
+		delete[] mtx;
+	}
 
-						if((ret = envs[db_id]->txn_begin(NULL, &tid, 0)) != 0){
-							envs[db_id]->err(ret, "DB_ENV->txn_begin");
-							exit(EXIT_FAILURE);
-						}
+    public:
+	void Init()
+	{
+	}
+	void Close()
+	{
+	}
 
-						dbs[db_id]->get(tid, &key, &data, 0);
-				
-						if((ret = tid->commit(0)) != 0){
-							envs[db_id]->err(ret, "DB_TXN->commit");
-							exit(EXIT_FAILURE);
-						}
-						
-						std::string value((const char *)data.get_data(), data.get_size());
-						KVPair k = std::make_pair(f, value);
-						result.push_back(k);
-					}
-				}else{
-					std::vector<std::string> __fields;
-					for(int i = 0; i < FIELD_COUNT; ++i)
-						__fields.push_back("field" + std::to_string(i));
-					return Read(id, table, key, &__fields, result);
+	int Read(int id, const std::string &table, const std::string &key, const std::vector<std::string> *fields,
+		 std::vector<KVPair> &result)
+	{
+		std::hash<std::string> hash_;
+		DbTxn *tid;
+		int ret;
+
+		if (fields) {
+			for (auto f : *fields) {
+				std::string rowcol = key + f;
+				int32_t db_id = hash_(key) % db_num;
+
+				Dbt key(const_cast<char *>(rowcol.data()), rowcol.size());
+				Dbt data;
+
+				if ((ret = envs[db_id]->txn_begin(NULL, &tid, 0)) != 0) {
+					envs[db_id]->err(ret, "DB_ENV->txn_begin");
+					exit(EXIT_FAILURE);
 				}
 
-				return 0;
-			}
+				dbs[db_id]->get(tid, &key, &data, 0);
 
-			int Scan(int id, const std::string &table, const std::string &key, int len, const std::vector<std::string> *fields, 
-								std::vector<std::vector<KVPair>> &result)
-			{
+				if ((ret = tid->commit(0)) != 0) {
+					envs[db_id]->err(ret, "DB_TXN->commit");
+					exit(EXIT_FAILURE);
+				}
+
+				std::string value((const char *)data.get_data(), data.get_size());
+				KVPair k = std::make_pair(f, value);
+				result.push_back(k);
+			}
+		} else {
+			std::vector<std::string> __fields;
+			for (int i = 0; i < FIELD_COUNT; ++i)
+				__fields.push_back("field" + std::to_string(i));
+			return Read(id, table, key, &__fields, result);
+		}
+
+		return 0;
+	}
+
+	int Scan(int id, const std::string &table, const std::string &key, int len,
+		 const std::vector<std::string> *fields, std::vector<std::vector<KVPair> > &result)
+	{
 #if 0
 				std::hash<std::string> hash_;
 
@@ -167,7 +181,7 @@ namespace ycsbc {
 							KVPair kv = std::make_pair(f, value);
 							tmp_result.push_back(kv);
 
-							items++; 
+							items++;
 							if(items >= len)
 								break;
 
@@ -185,51 +199,52 @@ namespace ycsbc {
 					return Scan(id, table, key, len, &__fields, result);
 				}
 #endif
-				return 0;
-			}
+		return 0;
+	}
 
-			int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
-			{
-				return Insert(id, table, key, values);
-			}
+	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
+	{
+		return Insert(id, table, key, values);
+	}
 
-			int Insert(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values){
-				std::hash<std::string> hash_;
-				DbTxn *tid;
-				int32_t db_id = hash_(key) % db_num;
-				int ret;
-					
-				if((ret = envs[db_id]->txn_begin(NULL, &tid, 0)) != 0){
-					envs[db_id]->err(ret, "DB_ENV->txn_begin");
-					exit(EXIT_FAILURE);
-				}
+	int Insert(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
+	{
+		std::hash<std::string> hash_;
+		DbTxn *tid;
+		int32_t db_id = hash_(key) % db_num;
+		int ret;
 
-				for(auto v : values){
-					std::string rowcol = key + v.first;
+		if ((ret = envs[db_id]->txn_begin(NULL, &tid, 0)) != 0) {
+			envs[db_id]->err(ret, "DB_ENV->txn_begin");
+			exit(EXIT_FAILURE);
+		}
 
-					Dbt key(const_cast<char*>(rowcol.data()), rowcol.size());
-					Dbt value(const_cast<char*>(v.second.data()), v.second.size());
+		for (auto v : values) {
+			std::string rowcol = key + v.first;
 
-					dbs[db_id]->put(tid, &key, &value, 0);
-				}
+			Dbt key(const_cast<char *>(rowcol.data()), rowcol.size());
+			Dbt value(const_cast<char *>(v.second.data()), v.second.size());
 
-				if((ret = tid->commit(0)) != 0){
-					envs[db_id]->err(ret, "DB_TXN->commit");
-					exit(EXIT_FAILURE);
-				}
+			dbs[db_id]->put(tid, &key, &value, 0);
+		}
 
-				return 0;
-			}
+		if ((ret = tid->commit(0)) != 0) {
+			envs[db_id]->err(ret, "DB_TXN->commit");
+			exit(EXIT_FAILURE);
+		}
 
-			int Delete(int id, const std::string &table, const std::string &key)
-			{
-				std::cerr << "DELETE " << table << ' ' << key << std::endl;
-				std::cerr << "Delete() not implemented [" << __FILE__ << ":" << __func__ << "():" << __LINE__ << "]" << std::endl;
-				exit(EXIT_FAILURE);
-				return 0; 
-			}
-	};
+		return 0;
+	}
+
+	int Delete(int id, const std::string &table, const std::string &key)
+	{
+		std::cerr << "DELETE " << table << ' ' << key << std::endl;
+		std::cerr << "Delete() not implemented [" << __FILE__ << ":" << __func__ << "():" << __LINE__ << "]"
+			  << std::endl;
+		exit(EXIT_FAILURE);
+		return 0;
+	}
+};
 } // ycsbc
 
 #endif // YCSB_C_BERKELEY_DB_H_
-
