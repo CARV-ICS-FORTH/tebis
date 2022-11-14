@@ -110,14 +110,6 @@ typedef struct msg_delete_rep {
 	uint32_t status;
 } msg_delete_rep;
 
-typedef struct msg_get_rep {
-	uint32_t bytes_remaining;
-	uint8_t key_found : 4;
-	uint8_t offset_too_large : 4;
-	uint32_t value_size;
-	char value[];
-} msg_get_rep;
-
 typedef struct msg_multi_get_req {
 	uint32_t max_num_entries;
 	uint32_t fetch_keys_only;

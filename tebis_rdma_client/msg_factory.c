@@ -4,13 +4,22 @@
 #include <btree/key_splice.h>
 #include <btree/kv_pairs.h>
 #include <stdint.h>
+#include <string.h>
 
-struct get_msg_data {
+struct get_request_data {
 	int32_t offset;
 	int32_t bytes_to_read;
 	int32_t fetch_value;
 	int32_t key_size;
 	char key[];
+} __attribute__((packed));
+
+struct get_reply_data {
+	int32_t bytes_remaining;
+	int32_t value_size;
+	int8_t key_found;
+	int8_t offset_too_large;
+	char value[];
 } __attribute__((packed));
 
 inline int32_t calculate_put_msg_size(int32_t key_size, int32_t value_size)
@@ -20,13 +29,19 @@ inline int32_t calculate_put_msg_size(int32_t key_size, int32_t value_size)
 	return lsn_size + kv_size;
 }
 
-inline int32_t calculate_get_msg_size(int32_t key_size)
+inline int32_t calculate_get_request_msg_size(int32_t key_size)
 {
-	int32_t get_msg_size = sizeof(struct get_msg_data) + key_size;
-	return get_msg_size;
+	int32_t get_request_msg_size = sizeof(struct get_request_data) + key_size;
+	return get_request_msg_size;
 }
 
-void create_put_msg(struct put_msg_data data, msg_header *msg_header)
+inline int32_t calculate_get_reply_msg_size(int32_t buf_size)
+{
+	int32_t get_reply_msg_size = sizeof(struct get_reply_data) + buf_size;
+	return get_reply_msg_size;
+}
+
+void create_put_msg(struct msg_data_put_request data, msg_header *msg_header)
 {
 	char *msg_payload = (char *)msg_header + sizeof(struct msg_header);
 	struct lsn *lsn = (struct lsn *)msg_payload;
@@ -61,30 +76,59 @@ int32_t put_msg_get_payload_size(msg_header *msg)
 	return get_lsn_size() + get_kv_size(kv);
 }
 
-void create_get_msg(int32_t key_size, char *key, int32_t reply_size, char *msg_payload_offt)
+void create_get_request_msg(int32_t key_size, char *key, int32_t bytes_to_read, char *msg_payload_offt)
 {
-	struct get_msg_data *get_msg = (struct get_msg_data *)msg_payload_offt;
+	struct get_request_data *get_msg = (struct get_request_data *)msg_payload_offt;
 	get_msg->offset = 0;
-	get_msg->bytes_to_read = reply_size;
+	get_msg->bytes_to_read = bytes_to_read;
 	get_msg->fetch_value = 1;
 	get_msg->key_size = key_size;
 	memcpy(get_msg->key, key, key_size);
 }
 
-struct get_req_msg_data get_request_get_msg_data(msg_header *msg)
+struct msg_data_get_request get_request_get_msg_data(msg_header *msg)
 {
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	struct get_req_msg_data req_data = { .bytes_to_read = msg_payload->bytes_to_read,
-					     .fetch_value = msg_payload->fetch_value,
-					     .key = msg_payload->key,
-					     .key_size = msg_payload->key_size,
-					     .offset = msg_payload->offset };
+	struct get_request_data *msg_payload = (struct get_request_data *)((char *)msg + sizeof(msg_header));
+	struct msg_data_get_request req_data = { .bytes_to_read = msg_payload->bytes_to_read,
+						 .fetch_value = msg_payload->fetch_value,
+						 .key = msg_payload->key,
+						 .key_size = msg_payload->key_size,
+						 .offset = msg_payload->offset };
 	return req_data;
+}
+
+void create_get_reply_msg(struct msg_data_get_reply data, msg_header *msg)
+{
+	struct get_reply_data *msg_payload = (struct get_reply_data *)((char *)msg + sizeof(msg_header));
+	msg_payload->bytes_remaining = data.bytes_remaining;
+	msg_payload->key_found = data.key_found;
+	msg_payload->offset_too_large = data.offset_too_large;
+	msg_payload->value_size = data.value_size;
+	if (data.value != NULL && data.value_size != 0) {
+		memcpy(msg_payload->value, data.value, data.value_size);
+	}
+}
+
+struct msg_data_get_reply get_reply_get_msg_data(msg_header *msg)
+{
+	struct get_reply_data *msg_payload = (struct get_reply_data *)((char *)msg + sizeof(msg_header));
+	struct msg_data_get_reply reply_data = { .bytes_remaining = msg_payload->bytes_remaining,
+						 .key_found = msg_payload->key_found,
+						 .offset_too_large = msg_payload->offset_too_large,
+						 .value_size = msg_payload->offset_too_large,
+						 .value = msg_payload->value };
+	return reply_data;
+}
+
+int32_t get_reply_get_payload_size(msg_header *msg)
+{
+	struct msg_data_get_reply reply_data = get_reply_get_msg_data(msg);
+	return sizeof(struct get_reply_data) + reply_data.value_size;
 }
 
 char *get_msg_get_key_slice_t(msg_header *msg)
 {
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
+	struct get_request_data *msg_payload = (struct get_request_data *)((char *)msg + sizeof(msg_header));
 	return (char *)&msg_payload->key_size;
 }
 

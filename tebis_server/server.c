@@ -1462,9 +1462,8 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	msg_get_rep *get_rep = NULL;
 	assert(task->msg->msg_type == GET_REQUEST);
-	struct get_req_msg_data request_data = get_request_get_msg_data(task->msg);
+	struct msg_data_get_request request_data = get_request_get_msg_data(task->msg);
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, request_data.key, request_data.key_size);
 
 	if (r_desc == NULL) {
@@ -1480,7 +1479,6 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	}
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(struct msg_header));
 
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_value lookup_value = { 0 };
@@ -1491,45 +1489,52 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	if (error_message) {
 		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
 
-		get_rep->key_found = 0;
-		get_rep->bytes_remaining = 0;
-		get_rep->value_size = 0;
-		get_rep->offset_too_large = 0;
+		struct msg_data_get_reply reply_data = { 0 };
+		create_get_reply_msg(reply_data, task->reply_msg);
 		goto exit;
 	}
 	uint32_t offset = request_data.offset;
 	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
 	int32_t fetch_value = request_data.fetch_value;
-	get_rep->key_found = 1;
 	// tranlate now
-	get_rep->offset_too_large = 0;
 	if (offset > lookup_value.val_size) {
-		get_rep->offset_too_large = 1;
-		get_rep->value_size = 0;
-		get_rep->bytes_remaining = lookup_value.val_size;
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 1,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size };
+		create_get_reply_msg(reply_data, task->reply_msg);
 		goto exit;
 	}
 
 	if (!fetch_value) {
-		get_rep->bytes_remaining = lookup_value.val_size - offset;
-		get_rep->value_size = 0;
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 0,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size - offset };
+		create_get_reply_msg(reply_data, task->reply_msg);
 		goto exit;
 	}
 	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
 	uint32_t bytes_to_read = value_bytes_remaining;
 	bytes_to_read = value_bytes_remaining;
-	get_rep->bytes_remaining = 0;
+	int32_t bytes_remaining = 0;
 	if (msg_bytes_to_read <= value_bytes_remaining) {
 		bytes_to_read = msg_bytes_to_read;
-		get_rep->bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
+		bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
 	}
 
-	get_rep->value_size = bytes_to_read;
-	memcpy(get_rep->value, lookup_value.val_buffer, bytes_to_read);
+	struct msg_data_get_reply reply_data = { .key_found = 1,
+						 .offset_too_large = 0,
+						 .value_size = bytes_to_read,
+						 .value = lookup_value.val_buffer,
+						 .bytes_remaining = bytes_remaining };
+	create_get_reply_msg(reply_data, task->reply_msg);
 
 exit:;
 	//finally fix the header
-	uint32_t payload_length = sizeof(msg_get_rep) + get_rep->value_size;
+	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
 
 	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);

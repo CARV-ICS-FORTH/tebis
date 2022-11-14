@@ -1124,7 +1124,9 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
-	struct put_msg_data put_data = { .key_size = key_size, .key = key, .value_size = val_size, .value = value };
+	struct msg_data_put_request put_data = {
+		.key_size = key_size, .key = key, .value_size = val_size, .value = value
+	};
 	create_put_msg(put_data, req_header);
 
 	/*Now the reply part*/
@@ -1209,18 +1211,18 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		break;
 	}
 	case GET_REPLY: {
-		struct msg_get_rep *msg_rep = (struct msg_get_rep *)((uint64_t)req->reply + sizeof(struct msg_header));
-		if (!msg_rep->key_found) {
+		struct msg_data_get_reply msg_rep = get_reply_get_msg_data(req->reply);
+		if (!msg_rep.key_found) {
 			log_fatal("Key not found!");
 			_exit(EXIT_FAILURE);
 		}
 
-		if (msg_rep->value_size > *req->buf_size) {
+		if (msg_rep.value_size > (int32_t)*req->buf_size) {
 			log_fatal("Reply larger than buffer!");
 			_exit(EXIT_FAILURE);
 		}
-		memcpy(req->buf, msg_rep->value, msg_rep->value_size);
-		*req->buf_size = msg_rep->value_size;
+		memcpy(req->buf, msg_rep.value, msg_rep.value_size);
+		*req->buf_size = msg_rep.value_size;
 		break;
 	}
 	default:
@@ -1292,17 +1294,16 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	globals_append_trace_file(key_size, key, 0, NULL, TEB_GET);
 #endif
 
-	uint32_t reply_size = *buf_size;
-	uint32_t request_size = calculate_get_msg_size(key_size);
+	uint32_t reply_size = calculate_get_reply_msg_size(*buf_size);
+	uint32_t request_size = calculate_get_request_msg_size(key_size);
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 	/*get the rdma communication buffers*/
 	struct msg_header *req_header = NULL;
 	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY,
-			  sizeof(msg_get_rep) + reply_size);
+	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY, reply_size);
 
-	create_get_msg(key_size, key, reply_size, (char *)req_header + sizeof(struct msg_header));
+	create_get_request_msg(key_size, key, *buf_size, (char *)req_header + sizeof(struct msg_header));
 
 	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
