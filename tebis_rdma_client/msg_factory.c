@@ -41,7 +41,7 @@ inline int32_t calculate_get_reply_msg_size(int32_t buf_size)
 	return get_reply_msg_size;
 }
 
-void create_put_msg(struct msg_data_put_request data, msg_header *msg_header)
+void create_put_request_msg(struct msg_data_put_request data, msg_header *msg_header)
 {
 	char *msg_payload = (char *)msg_header + sizeof(struct msg_header);
 	struct lsn *lsn = (struct lsn *)msg_payload;

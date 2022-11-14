@@ -46,7 +46,7 @@ extern int32_t calculate_get_reply_msg_size(int32_t buf_size);
   * @param data: a put_msg_data struct containing necessary informations for the put msg
   * @param msg_header: a ptr pointing to the msg_header of the message to be filled
 */
-extern void create_put_msg(struct msg_data_put_request data, msg_header *msg_header);
+extern void create_put_request_msg(struct msg_data_put_request data, msg_header *msg_header);
 
 /** Returns a ptr to the kv payload part of the put_msg
   * @param msg_header: a ptr pointing to the msg_header of the message
