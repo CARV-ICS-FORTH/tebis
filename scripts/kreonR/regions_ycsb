@@ -1,9 +1,2 @@
 #<region_id>  <min key> <max key>  <primary>  <Backup 1, Backup 2,... ,BackUp N>
-0  -oo  AB    sith5.cluster.ics.forth.gr:6060
-1  AB   AC    sith5.cluster.ics.forth.gr:6060
-2  AC   AD    sith5.cluster.ics.forth.gr:6060
-3  AD   AE    sith5.cluster.ics.forth.gr:6060
-4  AE   AF    sith5.cluster.ics.forth.gr:6060
-5  AF   AG    sith5.cluster.ics.forth.gr:6060
-6  AG   AH    sith5.cluster.ics.forth.gr:6060
-7  AH   +oo   sith5.cluster.ics.forth.gr:6060
+0  -oo  +oo   sith3.cluster.ics.forth.gr:8080

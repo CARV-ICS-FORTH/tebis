@@ -81,4 +81,6 @@ extern char *get_msg_get_key_offset(msg_header *msg);
   * @param msg_header: the header of the msg
 */
 extern void put_msg_print_msg(msg_header *msg);
+
+extern char *get_msg_get_key_slice_t(msg_header *msg);
 #endif //MSG_FACTORY_H

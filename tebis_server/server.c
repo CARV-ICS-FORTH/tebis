@@ -1484,10 +1484,9 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	get_rep = (msg_get_rep *)((uint64_t)task->reply_msg + sizeof(struct msg_header));
 
 	par_handle par_hd = (par_handle)task->r_desc->db;
-	struct par_key lookup_key = { .size = key_size, .data = key };
-	struct par_value lookup_value = { .val_buffer = NULL };
+	struct par_value lookup_value = { 0 };
 	const char *error_message = NULL;
-	par_get(par_hd, &lookup_key, &lookup_value, &error_message);
+	par_get_serialized(par_hd, get_msg_get_key_slice_t(task->msg), &lookup_value, &error_message);
 	krm_leave_kreon(r_desc);
 
 	if (error_message) {
@@ -1498,39 +1497,36 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 		get_rep->value_size = 0;
 		get_rep->offset_too_large = 0;
 		goto exit;
-
-	} else {
-		uint32_t offset = get_msg_get_offset(task->msg);
-		uint32_t msg_bytes_to_read = get_msg_get_bytes_to_read(task->msg);
-		int32_t fetch_value = get_msg_get_fetch_value(task->msg);
-		get_rep->key_found = 1;
-		// tranlate now
-		if (offset > lookup_value.val_size) {
-			get_rep->offset_too_large = 1;
-			get_rep->value_size = 0;
-			get_rep->bytes_remaining = lookup_value.val_size;
-			goto exit;
-		} else
-			get_rep->offset_too_large = 0;
-		if (!fetch_value) {
-			get_rep->bytes_remaining = lookup_value.val_size - offset;
-			get_rep->value_size = 0;
-			goto exit;
-		}
-		uint32_t value_bytes_remaining = lookup_value.val_size - offset;
-		uint32_t bytes_to_read = 0;
-		if (msg_bytes_to_read <= value_bytes_remaining) {
-			bytes_to_read = msg_bytes_to_read;
-			get_rep->bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
-		} else {
-			bytes_to_read = value_bytes_remaining;
-			get_rep->bytes_remaining = 0;
-		}
-		get_rep->value_size = bytes_to_read;
-		// log_info("Client wants to read %u will read
-		// %u",get_req->bytes_to_read,bytes_to_read);
-		memcpy(get_rep->value, lookup_value.val_buffer, bytes_to_read);
 	}
+	uint32_t offset = get_msg_get_offset(task->msg);
+	uint32_t msg_bytes_to_read = get_msg_get_bytes_to_read(task->msg);
+	int32_t fetch_value = get_msg_get_fetch_value(task->msg);
+	get_rep->key_found = 1;
+	// tranlate now
+	get_rep->offset_too_large = 0;
+	if (offset > lookup_value.val_size) {
+		get_rep->offset_too_large = 1;
+		get_rep->value_size = 0;
+		get_rep->bytes_remaining = lookup_value.val_size;
+		goto exit;
+	}
+
+	if (!fetch_value) {
+		get_rep->bytes_remaining = lookup_value.val_size - offset;
+		get_rep->value_size = 0;
+		goto exit;
+	}
+	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
+	uint32_t bytes_to_read = value_bytes_remaining;
+	bytes_to_read = value_bytes_remaining;
+	get_rep->bytes_remaining = 0;
+	if (msg_bytes_to_read <= value_bytes_remaining) {
+		bytes_to_read = msg_bytes_to_read;
+		get_rep->bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
+	}
+
+	get_rep->value_size = bytes_to_read;
+	memcpy(get_rep->value, lookup_value.val_buffer, bytes_to_read);
 
 exit:;
 	//finally fix the header

@@ -71,6 +71,12 @@ void create_get_msg(int32_t key_size, char *key, int32_t reply_size, char *msg_p
 	memcpy(get_msg->key, key, key_size);
 }
 
+char *get_msg_get_key_slice_t(msg_header *msg)
+{
+	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
+	return (char *)&msg_payload->key_size;
+}
+
 char *get_msg_get_key_offset(msg_header *msg)
 {
 	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));

@@ -77,7 +77,7 @@ else()
   FetchContent_Declare(
     parallax
     GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-    GIT_TAG tebis_kv_format)
+    GIT_TAG teboparallax)
 
 endif(USE_FORKED_PARALLAX)
 unset(USE_FORKED_PARALLAX CACHE)
