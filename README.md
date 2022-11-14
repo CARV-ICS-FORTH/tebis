@@ -1,30 +1,31 @@
 # Tebis
-Tebis is a persistent LSM key value store desinged for fast storage devices and RDMA networks. Tebis uses two main technologies 1) Key Value (KV) separation vis its [Kreon](https://github.com/CARV-ICS-FORTH/kreon/graphs/traffic) open source storage engine and 2) RDMA networking. The idea in Tebis is that due to KV separation the compaction I/O traffic is reduced.
-Second, RDMA communication is cheap in terms of CPU cycles and provides high throughput.
-Based on these two observations, Tebis instead of repeating the compaction process in the cluster performs the compaction once and send its results via the network.
+Tebis is a persistent LSM key value (KV) store desinged for fast storage devices and RDMA networks. Tebis uses two main technologies :
+ 1.  Hybrid KV placement via its [Parallax](https://github.com/CARV-ICS-FORTH/parallax) LSM KV store to reduce I/O amplification and increase CPU efficiency.
+  2.  Index shipping via CPU efficient RDMA bulk network transfers to reduce the compaction overhead in replicas. Instead of repeating the compaction in replicas primary ships the index which replicas rewrite to be valid for their storage address space.
+
+More details can be found in the Eurosys '22 paper [Tebis: Index Shipping for Efficient Replication in LSM Key-Value Stores](https://dl.acm.org/doi/abs/10.1145/3492321.3519572).
 
 # Project structure
 ## The following folders contain
-- YCSB-CXX contains the C++ version of the YCSB benchmark along with the driver to run YCSB-CXX
-- kreon_lib contains a fork with some modification of the Kreon storage engine
-- kreon_rdma contains code rdma utilities used in the project
-- kreon_server contains all the server related code
-- kreon_rdma_client contains the client side code of Tebis
-- File  kreon_rdma_client/kreon_rdma_client.h  contains the public API of the client API
+- YCSB-CXX contains the C++ version of the YCSB benchmark along with a Tebis driver
+- tebis_rdma contains code rdma utilities used in the project
+- tebis_server contains all the server related code
+- tebis_rdma_client contains the client side code of Tebis
+- File  tebis_rdma_client/tebis_rdma_client.h  contains the public API of the client API
 
 # Building Tebis
 **Note: It has been tested with gcc 10.1.0**
 
 ## Build Dependencies
 
-To build Kreon, the following libraries have to be installed on your system:
+To build Tebis, the following libraries have to be installed on your system:
 * `libnuma` - Allocations with NUMA policy
 * `libibverbs` - Infiniband verbs
 * `librdmacm` - RDMA Connection Manager
 * `libzookeeper_mt` - Zookeeper client bindings for C
 
 For Mellanox cards, the Infiniband and RDMA libraries are included in the software package provided by the vendor.
-Additionally, Kreon uses cmake for its build system and the gcc and g++ compilers for its compilation.
+Additionally, Tebis uses cmake for its build system and the gcc and g++ compilers for its compilation.
 
 ### Installing Dependencies on Ubuntu 18.04 LTS
 
@@ -45,17 +46,16 @@ For the build tools and compiler:
 
 ### Installing Depedencies on Centos/RHEL 7
 
-Kreon requires CMake version >= 3.11.0. On Centos/RHEL this is supplied from the
+Tebis requires CMake version >= 3.11.0. On Centos/RHEL this is supplied from the
 EPEL repository and can be installed with:
 
 	sudo yum install cmake3 kernel-devel gcc-c++
 
 
-#### Dependencies for Single Node Kreon
+#### Dependencies for Single Node Tebis
 
 	sudo yum install numactl-devel boost-devel
 
-#### Additional Dependencies for Distributed Kreon
 
 For RDMA:
 
@@ -72,7 +72,7 @@ Cloudera.
 ## Build Configuration
 
 Compilation is done using the clang compiler, provided by the clang package in
-most Linux distributions. To configure Kreon's build systems and build it run
+most Linux distributions. To configure the build system of Tebis and build it run
 the commands:
 
 	mkdir build
@@ -90,38 +90,17 @@ The CMake scripts provided support two build configurations; "Release" and
 allow debugging. The build configuration can be defined as a parameter to the
 cmake call as follows:
 
-	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release" .
+	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release"  -DUSE_FORKED_PARALLAX=ON
 
 The default build configuration is "Debug".
 
 The "Release" build disables warnings and enables optimizations.
 
 ## Build Targets
+* build/tebis_server/libtebis_client.a - Client library for applications to interact with Tebis
+* build/tebis_server/tebis_server - The executable of Tebis server
+* build/YCSB-CXXX/ycsb-async-tebis - YCSB that uses Tebis as its storage
 
-* build/kreon/libkreon.a - Kreon library (standalone version)
-* build/kreon/libkreonr.a - Kreon library with replication enabled
-	(distributed version)
-* build/TuRDMA/turdma.a - RDMA library used for applications and servers in the
-	distributed version
-* build/TucanaServer/libtuclient.a - Client library for applications talking to
-	a tucanaserver
-* build/TucanaServer/tucanaserver - Server
-* build/YCSB-CXX/ycsb-edb - Standalone kreon ycsb benchmark
-* build/YCSB-CXX/ycsb-kreon - Distributed kreon ycsb benchmark
-
-## Build Package
-
-You can install Kreon in your standard path using cmake.
-
-To enable packaging and installation support you need to define `KREON_BUILD_CPACK` when invoking cmake.
-
-Run `make package` inside the `build` folder to create an RPM file.
-
-Run `make install` inside the `build` folder to install the RPM file.
-
-Run `make uninstall` inside the `build` folder to remove files installed by `make install`. (Directories are not deleted)
-
-In case you want to link statically without using cmake check `scripts/pack-staticlib.py` to create a single binary called `libkreon2.a` and link with it.
 
 
 # Static Analyzer
@@ -171,7 +150,7 @@ To install shfmt run the command below in your shell:
 	GO111MODULE=on go get mvdan.cc/sh/v3/cmd/shfmt
 
 
-# Generating compile_commands.json for Single Node Kreon
+# Generating compile_commands.json for Tebis
 
 Install compdb for header awareness in compile_commands.json:
 
@@ -182,7 +161,7 @@ After running cmake .. in the build directory run:
 	cd ..
 	compdb -p build/ list > compile_commands.json
 	mv compile_commands.json build
-	cd kreon
+	cd tebis
 	ln -sf ../build/compile_commands.json
 
 # Pre commit hooks using pre-commit
@@ -207,7 +186,7 @@ Then try upgrading pre-commit:
 
 To install pre-commit hooks:
 
-	cd kreon
+	cd tebis
 	pre-commit install
     pre-commit install --hook-type commit-msg
 
@@ -219,8 +198,8 @@ If you want to run a specific hook with a specific file run:
 	pre-commit run hook-id --files filename
 	pre-commit run cmake-format --files CMakeLists.txt
 
-## Running Kreon
-Kreon uses RDMA for all network communication, which requires support from the
+## Running Tebis
+Tebis uses RDMA for all network communication, which requires support from the
 network interface to run. A software implementation (soft-RoCE) exists and can
 run on all network interfaces.
 
@@ -337,15 +316,10 @@ the memory available to a command (including pages in the buffer cache) to 16GB.
 First we need a Zookeeper server. For simplicity we assume that the Zookeeper service runs at zoo:2181. Then we
 need to initialize Tebis metadata. This can be done through the command
 <tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
-<<<<<<< HEAD
+
 - **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections> <role leader or empty>
  Example:
 - sith2.cluster.ics.forth.gr:8080 leader (so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)
-=======
-- **Hosts_file:** Contains the servers of the cluster
-- <host1:port_for_incoming_rdma_connections> <role leader or empty> example:
-- sith2.cluster.ics.forth.gr:8080 leader, so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system
->>>>>>> 5f2c8b01fbc484aa1e5a5c62b5eaafd7eaf5559e
 - sith3.cluter.ics.forth.gr:8080
 - sith6.cluster.ics.forth.gr:8080
 -**Regions file** Contains the region info in which we split the key space
@@ -362,10 +336,10 @@ Example
 fallocate -l 100G /path/to/file
 
 Then we need to boot first the leader of the Tebis rack
-<tebis_build_root folder>/kreon_server/kreon_server <path to tebis file> <zk_host:zk_port> <RDMA IP subnet> <LSM L0 size in keys>
+<tebis_build_root folder>/tebis_server/tebis_server <path to tebis file> <zk_host:zk_port> <RDMA IP subnet> <LSM L0 size in keys>
 <growth factor> <server RDMA port, worker core 0, worker core 1,...,worker core N>
 
-example: build/kreon_server/kreon_server /nvme/par1.dat sith2:2181 192.168.4 128000 8 "8080,0,1,2,3,4"
+example: build/tebis_server/tebis_server /nvme/par1.dat sith2:2181 192.168.4 128000 8 "8080,0,1,2,3,4"
 
 # Tests
 cd into folder <BUILD_ROOT_FOLDER>/tests/ and type
