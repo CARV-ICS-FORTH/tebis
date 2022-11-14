@@ -71,40 +71,21 @@ void create_get_msg(int32_t key_size, char *key, int32_t reply_size, char *msg_p
 	memcpy(get_msg->key, key, key_size);
 }
 
+struct get_req_msg_data get_request_get_msg_data(msg_header *msg)
+{
+	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
+	struct get_req_msg_data req_data = { .bytes_to_read = msg_payload->bytes_to_read,
+					     .fetch_value = msg_payload->fetch_value,
+					     .key = msg_payload->key,
+					     .key_size = msg_payload->key_size,
+					     .offset = msg_payload->offset };
+	return req_data;
+}
+
 char *get_msg_get_key_slice_t(msg_header *msg)
 {
 	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
 	return (char *)&msg_payload->key_size;
-}
-
-char *get_msg_get_key_offset(msg_header *msg)
-{
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	return msg_payload->key;
-}
-
-int32_t get_msg_get_key_size(msg_header *msg)
-{
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	return msg_payload->key_size;
-}
-
-int32_t get_msg_get_offset(msg_header *msg)
-{
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	return msg_payload->offset;
-}
-
-int32_t get_msg_get_bytes_to_read(msg_header *msg)
-{
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	return msg_payload->bytes_to_read;
-}
-
-int32_t get_msg_get_fetch_value(msg_header *msg)
-{
-	struct get_msg_data *msg_payload = (struct get_msg_data *)((char *)msg + sizeof(msg_header));
-	return msg_payload->fetch_value;
 }
 
 void put_msg_print_msg(msg_header *msg)

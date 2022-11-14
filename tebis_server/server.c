@@ -1464,12 +1464,11 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 {
 	msg_get_rep *get_rep = NULL;
 	assert(task->msg->msg_type == GET_REQUEST);
-	char *key = get_msg_get_key_offset(task->msg);
-	int32_t key_size = get_msg_get_key_size(task->msg);
-	struct krm_region_desc *r_desc = krm_get_region(mydesc, key, key_size);
+	struct get_req_msg_data request_data = get_request_get_msg_data(task->msg);
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, request_data.key, request_data.key_size);
 
 	if (r_desc == NULL) {
-		log_fatal("Region not found for key %s", key);
+		log_fatal("Region not found for key %s", request_data.key);
 		_exit(EXIT_FAILURE);
 	}
 
@@ -1490,7 +1489,7 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	krm_leave_kreon(r_desc);
 
 	if (error_message) {
-		log_warn("key not found key %s : length %u", key, key_size);
+		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
 
 		get_rep->key_found = 0;
 		get_rep->bytes_remaining = 0;
@@ -1498,9 +1497,9 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 		get_rep->offset_too_large = 0;
 		goto exit;
 	}
-	uint32_t offset = get_msg_get_offset(task->msg);
-	uint32_t msg_bytes_to_read = get_msg_get_bytes_to_read(task->msg);
-	int32_t fetch_value = get_msg_get_fetch_value(task->msg);
+	uint32_t offset = request_data.offset;
+	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
+	int32_t fetch_value = request_data.fetch_value;
 	get_rep->key_found = 1;
 	// tranlate now
 	get_rep->offset_too_large = 0;

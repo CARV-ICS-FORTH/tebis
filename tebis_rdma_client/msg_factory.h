@@ -10,6 +10,14 @@ struct put_msg_data {
 	char *value;
 };
 
+struct get_req_msg_data {
+	int32_t offset;
+	int32_t bytes_to_read;
+	int32_t fetch_value;
+	int32_t key_size;
+	char *key;
+};
+
 /** returns the msg size of a put msg
   * @param key_size: the size of the key to be placed in the put msg
   * @param value_size: the size of the value to be placed in the put msg
@@ -42,7 +50,6 @@ extern struct lsn *put_msg_get_lsn_offset(msg_header *msg);
 */
 extern int32_t put_msg_get_payload_size(msg_header *msg);
 
-//TODO (@geostyl) create a get_msg_data accordingly to the put_msg_data
 /** fills a get msg based on the parameters provided
   * @param key_size: the size of the key given
   * @param key: the key to be retrieved
@@ -51,31 +58,10 @@ extern int32_t put_msg_get_payload_size(msg_header *msg);
 */
 extern void create_get_msg(int32_t key_size, char *key, int32_t reply_size, char *msg_payload_offt);
 
-/** Retrieve the fetch_value information in the get_msg
-  * @param msg_header: the header of the msg
-*/
-extern int32_t get_msg_get_fetch_value(msg_header *msg);
-
-/** Retrieve the bytes to read information in the get_msg
-  * @param msg_header: the header of the msg
-*/
-extern int32_t get_msg_get_bytes_to_read(msg_header *msg);
-
-/** Retrieve the offset information in the get_msg
-  * @param msg_header: the header of the msg
-*/
-extern int32_t get_msg_get_offset(msg_header *msg);
-
-/** Retrieve the key size in the get_msg
-  * @param msg_header: the header of the msg
-*/
-extern int32_t get_msg_get_key_size(msg_header *msg);
-
-/** Retrieve the key offset in the get_msg
-  * @param msg_header: the header of the msg
-*/
-extern char *get_msg_get_key_offset(msg_header *msg);
-
+/** fills a get_req_msg_data struct with information from the internals of a get request msg
+ * @param msg: pointer to the msg_header of a get request msg
+ */
+extern struct get_req_msg_data get_request_get_msg_data(msg_header *msg);
 // TODO: (@geostyl) remove this function
 /** For debugging purposes
   * @param msg_header: the header of the msg
