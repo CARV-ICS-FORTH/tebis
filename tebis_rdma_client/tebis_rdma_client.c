@@ -1119,7 +1119,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, seed);
 
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
-	uint32_t req_size = calculate_put_msg_size(key_size, val_size);
+	uint32_t req_size = calculate_put_request_msg_size(key_size, val_size);
 	//log_debug("key_size val_size is <%u,%u>, total put_msg size is %u", key_size, val_size, req_size);
 	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 

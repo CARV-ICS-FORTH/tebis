@@ -30,7 +30,7 @@ struct msg_data_get_reply {
   * @param key_size: the size of the key to be placed in the put msg
   * @param value_size: the size of the value to be placed in the put msg
 */
-extern int32_t calculate_put_msg_size(int32_t key_size, int32_t value_size);
+extern int32_t calculate_put_request_msg_size(int32_t key_size, int32_t value_size);
 
 /** returns the msg size of a get request msg
   * @param key_size: the size of the key to be placed in the put msg

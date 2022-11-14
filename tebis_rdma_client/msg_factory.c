@@ -22,7 +22,7 @@ struct get_reply_data {
 	char value[];
 } __attribute__((packed));
 
-inline int32_t calculate_put_msg_size(int32_t key_size, int32_t value_size)
+inline int32_t calculate_put_request_msg_size(int32_t key_size, int32_t value_size)
 {
 	int32_t kv_size = get_kv_metadata_size() + key_size + value_size + get_tail_size();
 	int32_t lsn_size = get_lsn_size();
