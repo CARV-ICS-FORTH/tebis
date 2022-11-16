@@ -1,8 +1,23 @@
 # File: tcp_client/CMakeLists.txt
 # Author: Orestis Chiotakis <orchiot@ics.forth.gr>
 
-cmake_minumum_required(VERSION 3.11.0)
+set(tcp_client_LIB "tcp-client")
 
-add_library(tcp-client-lib tcp_client.c)
+add_library(
+    tcp-client STATIC
+    tcp_client.c
+    tcp_client.h
+)
 
-add_executable(tcp-client client.c tcp_client.c)
+install(
+    TARGETS ${tcp_client_LIB}
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
+
+set_target_properties(
+    ${LIB} PROPERTIES
+    OUTPUT_NAME ${tcp_client_LIB}
+)
