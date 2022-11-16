@@ -2,12 +2,12 @@
 #define YCSB_C_TCP_DB_H
 
 #include "../../tcp_client/tcp_client.h"
-#include "../core/db.h"
+#include "../core/ycsbdb.h"
 
 namespace ycsbc
 {
 
-class tcpDB : public DB {
+class tcpDB : public YCSBDB {
     public:
 	tcpDB(cHandle __restrict__ *__restrict__ chandle, const char *__restrict__ addr, const char *__restrict__ port);
 

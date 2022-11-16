@@ -49,3 +49,4 @@ docs/xml/*
 .ccls-cache
 remote_build/
 compile_commands.txt
+.vscode

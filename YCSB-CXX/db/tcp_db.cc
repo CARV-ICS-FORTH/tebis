@@ -64,7 +64,7 @@ int tcpDB::Read(const std::string &table, const std::string &key, const std::vec
 
 	if (!__key) {
 		perror("c_tcp_req_expose_key() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	/* my client implementation has no need for this copy bellow! */
@@ -87,7 +87,7 @@ int tcpDB::Read(const std::string &table, const std::string &key, const std::vec
 
 	c_tcp_rep_pop_value(rep, &val); // "saloustros"
 
-	return DB::kOK;
+	return YCSBDB::kOK;
 }
 
 int tcpDB::Scan(const std::string &table, const std::string &key, int len, const std::vector<std::string> *fields,
@@ -99,14 +99,14 @@ int tcpDB::Scan(const std::string &table, const std::string &key, int len, const
 
 	if (!__key) {
 		perror("c_tcp_req_expose_key() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req);
 
 	if (!__pay) {
 		perror("c_tcp_req_expose_payload() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	/* my client implementation has no need for this copy bellow! */
@@ -130,7 +130,7 @@ int tcpDB::Scan(const std::string &table, const std::string &key, int len, const
 
 	c_tcp_rep_pop_value(rep, &val); // "saloustros"
 
-	return DB::kOK;
+	return YCSBDB::kOK;
 }
 
 int tcpDB::Update(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
@@ -141,14 +141,14 @@ int tcpDB::Update(const std::string &table, const std::string &key, std::vector<
 
 	if (!__key) {
 		perror("c_tcp_req_expose_key() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req);
 
 	if (!__pay) {
 		perror("c_tcp_req_expose_payload() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	memcpy(__key, key.c_str(), key.size());
@@ -159,7 +159,7 @@ int tcpDB::Update(const std::string &table, const std::string &key, std::vector<
 		return -(EXIT_FAILURE);
 	}
 
-	return DB::kOK;
+	return YCSBDB::kOK;
 }
 
 int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
@@ -170,14 +170,14 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 
 	if (!__key) {
 		perror("c_tcp_req_expose_key() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req);
 
 	if (!__pay) {
 		perror("c_tcp_req_expose_payload() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	memcpy(__key, key.c_str(), key.size());
@@ -188,7 +188,7 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 		return -(EXIT_FAILURE);
 	}
 
-	return DB::kOK;
+	return YCSBDB::kOK;
 }
 
 int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
@@ -199,7 +199,7 @@ int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
 
 	if (!__key) {
 		perror("c_tcp_req_expose_key() failed >");
-		return DB::kErrorNoData;
+		return YCSBDB::kErrorNoData;
 	}
 
 	/* my client implementation has no need for this copy below! */
@@ -211,5 +211,5 @@ int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
 		return -(EXIT_FAILURE);
 	}
 
-	return DB::kOK;
+	return YCSBDB::kOK;
 }
