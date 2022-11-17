@@ -1,29 +1,40 @@
 #ifndef YCSB_C_TCP_DB_H
 #define YCSB_C_TCP_DB_H
 
-#include "../../tcp_client/tcp_client.h"
-#include "../core/ycsbdb.h"
+extern "C" {
+#include "tcp_client.h"
+}
+
+#include "ycsbdb.h"
 
 namespace ycsbc
 {
 
 class tcpDB : public YCSBDB {
     public:
-	tcpDB(cHandle __restrict__ *__restrict__ chandle, const char *__restrict__ addr, const char *__restrict__ port);
+	tcpDB(int num);
 
 	~tcpDB();
 
-	int Read(const std::string &table, const std::string &key, const std::vector<std::string> *fields,
-		 std::vector<KVPair> &result);
+	int Read(int id, const std::string &table, const std::string &key,
+             const std::vector<std::string> *fields,
+             std::vector<KVPair> &result) override;
 
-	int Scan(const std::string &table, const std::string &key, int len, const std::vector<std::string> *fields,
-		 std::vector<std::vector<KVPair> > &result);
+	int Scan(int id, const std::string &table, const std::string &key,
+		 	 int record_count, const std::vector<std::string> *fields,
+		 	 std::vector<KVPair> &result) override;
 
-	int Update(const std::string &table, const std::string &key, std::vector<KVPair> &values);
+	int Update(int id, const std::string &table, const std::string &key,
+			   std::vector<KVPair> &values) override;
 
-	int Insert(const std::string &table, const std::string &key, std::vector<KVPair> &values);
+	int Insert(int id, const std::string &table, const std::string &key,
+		 	   std::vector<KVPair> &values) override;
 
-	int Delete(const std::string &table, const std::string &key);
+	int Delete(int id, const std::string &table, const std::string &key) override;
+
+	void Init(void) override {return;};
+
+	void Close(void) override {return;};
 
     private:
 	cHandle chandle;

@@ -4,7 +4,7 @@
 set(tcp_client_LIB "tcp-client")
 
 add_library(
-    tcp-client STATIC
+    ${tcp_client_LIB} STATIC
     tcp_client.c
     tcp_client.h
 )
@@ -18,6 +18,6 @@ install(
 )
 
 set_target_properties(
-    ${LIB} PROPERTIES
+    ${tcp_client_LIB} PROPERTIES
     OUTPUT_NAME ${tcp_client_LIB}
 )

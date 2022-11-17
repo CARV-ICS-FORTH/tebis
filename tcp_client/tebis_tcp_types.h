@@ -16,9 +16,6 @@
 #define TT_REQ_SUCC 0
 #define TT_ERR_CONN_DROP -2
 
-#define req_in_get_family(req) ((req->type) <= REQ_SCAN)
-#define is_req_init_conn_type(req) ((req.type) == REQ_INIT_CONN)
-
 struct buffer {
 	uint64_t bytes;
 	char *mem;

@@ -7,7 +7,7 @@ if(Zookeeper_LIBRARY)
  # FIXME  fix the include directive paths in ycsb's subfolders
 
  add_executable(
-      ycsb-tcp db/tcp_db.cc core/core_workload.cc driver/ycsbc.cc
+      ycsb-tcp db/tcp_db.cc db/db_factory_tcpdb.cc core/core_workload.cc driver/ycsbc.cc
   )
 
  target_link_libraries(

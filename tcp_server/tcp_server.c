@@ -268,6 +268,7 @@ static void *thread_routine(void *arg)
 					/* tebis_handle_request(); */
 
 					/** temp response **/
+
 					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 10UL);
 					char *tptr = s_tcp_rep_expose_payload(rep);
 					*((uint64_t *)(tptr)) = 10UL;

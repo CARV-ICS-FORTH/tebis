@@ -20,8 +20,8 @@
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
+#define req_uses_payload(rtype) (rtype >= REQ_SCAN)
 #define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
-#define req_uses_payload(rtype) ((uint32_t)(rtype) >= REQ_SCAN)
 
 struct internal_tcp_rep {
 	uint32_t retc;
@@ -49,8 +49,8 @@ struct client_handle {
 	uint16_t flags1;
 	uint16_t flags2;
 
-#define MAGIC_INIT_NUM (0xCAFE)
-#define CLHF_SND_REQ (1 << 0)
+	#define MAGIC_INIT_NUM (0xCAFE)
+	#define CLHF_SND_REQ (1 << 0)
 
 	int sock;
 };
@@ -184,10 +184,10 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 		return NULL;
 	}
 
-	if (!req_uses_payload(rtype))
+	if (!req_uses_payload(rtype)) // [PUT,  PUT_IF_EXIST]
 		paysz = 0UL;
 
-	if (req) /* update() */
+	if (req) /* update() existed request */
 	{
 		ireq = *req;
 
@@ -212,7 +212,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 			ireq = tmp;
 			ireq->buf.bytes = tsize - sizeof(*ireq);
 		}
-	} else /* new() */
+	} else /* create() new request */
 	{
 		tsize = ((TT_REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
 
@@ -291,7 +291,10 @@ void *c_tcp_req_expose_payload(c_tcp_req req)
 		return NULL;
 	}
 
-	if (ireq->type < REQ_SCAN) {
+	// do not allow the exposure of payload's buffer (write) for
+	// requests [REQ_GET, REQ_DEL, REQ_EXISTS, REQ_SCAN]
+
+	if (ireq->type <= REQ_SCAN) {
 		errno = ENODATA;
 		return NULL;
 	}
@@ -392,7 +395,11 @@ int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val)
 		return -(EXIT_FAILURE);
 	}
 
-	/** TODO: add guard value!!! */
+	if ( irep->bindex >= irep->size )
+	{
+		errno = ENODATA;
+		return -(EXIT_FAILURE);
+	}
 
 	/** END OF ERROR HANDLING **/
 
@@ -477,6 +484,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 
 	if (irep->retc != TT_REQ_SUCC) {
 		/// TODO: return a custom error-code or set an appropriate errno (?)
+		errno = ECANCELED;
 		ch->flags2 |= CLHF_SND_REQ;
 		return -(EXIT_FAILURE);
 	}

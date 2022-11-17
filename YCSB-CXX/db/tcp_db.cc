@@ -1,4 +1,5 @@
 #include "tcp_db.hpp"
+#include "db_factory.h"
 #include <cstring>
 
 using namespace ycsbc;
@@ -30,10 +31,9 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 
 /** PUBLIC **/
 
-tcpDB::tcpDB(cHandle __restrict__ *__restrict__ chandle, const char *__restrict__ addr,
-	     const char *__restrict__ port) /* OK */
+tcpDB::tcpDB(int num) /* OK */
 {
-	chandle_init(chandle, addr, port);
+	chandle_init(&this->chandle, "localhost", "25565");
 
 	if (!(this->req = c_tcp_req_factory(NULL, REQ_GET, TT_DEF_KEYSZ, TT_DEF_PAYSZ))) {
 		perror("c_tcp_req_new() failed >");
@@ -53,10 +53,9 @@ tcpDB::~tcpDB() /* OK */
 	c_tcp_rep_destroy(this->rep);
 }
 
-/** TODO: lots of duplicate code, fix that! */
-
-int tcpDB::Read(const std::string &table, const std::string &key, const std::vector<std::string> *fields,
-		std::vector<KVPair> &result) /* OK */
+int tcpDB::Read(int id, const std::string &table, const std::string &key,
+				const std::vector<std::string> *fields,
+				std::vector<KVPair> &result) /* OK */
 {
 	c_tcp_req_factory(&this->req, REQ_GET, key.size(), 0UL);
 
@@ -85,15 +84,16 @@ int tcpDB::Read(const std::string &table, const std::string &key, const std::vec
 
 	generic_data_t val;
 
-	c_tcp_rep_pop_value(rep, &val); // "saloustros"
+	c_tcp_rep_pop_value(rep, &val); // value="saloustros"
 
 	return YCSBDB::kOK;
 }
 
-int tcpDB::Scan(const std::string &table, const std::string &key, int len, const std::vector<std::string> *fields,
-		std::vector<std::vector<KVPair> > &result) /* Under Construction */
+int tcpDB::Scan(int id,const std::string &table, const std::string &key,
+				int record_count, const std::vector<std::string> *fields,
+				std::vector<KVPair> &result) /* Under Construction */
 {
-	c_tcp_req_factory(&this->req, REQ_SCAN, key.size(), sizeof(len));
+	c_tcp_req_factory(&this->req, REQ_SCAN, key.size(), record_count);
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req);
 
@@ -112,7 +112,7 @@ int tcpDB::Scan(const std::string &table, const std::string &key, int len, const
 	/* my client implementation has no need for this copy bellow! */
 
 	memcpy(__key, key.c_str(), key.size());
-	memcpy(__pay, &len, sizeof(len));
+	memcpy(__pay, &record_count, sizeof(record_count));
 
 	if (c_tcp_send_req(this->chandle, this->req) < 0) {
 		perror("c_tcp_send_req() failed >");
@@ -133,7 +133,8 @@ int tcpDB::Scan(const std::string &table, const std::string &key, int len, const
 	return YCSBDB::kOK;
 }
 
-int tcpDB::Update(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
+int tcpDB::Update(int id, const std::string &table, const std::string &key,
+				  std::vector<KVPair> &values) /* OK */
 {
 	c_tcp_req_factory(&this->req, REQ_PUT_IFEX, key.size(), this->values_size(values));
 
@@ -159,10 +160,18 @@ int tcpDB::Update(const std::string &table, const std::string &key, std::vector<
 		return -(EXIT_FAILURE);
 	}
 
+	/* wait for the reply from the server */
+
+	if (c_tcp_recv_rep(this->chandle, this->rep) < 0) {
+		perror("c_tcp_recv_rep() failed >");
+		return -(EXIT_FAILURE);
+	}
+
 	return YCSBDB::kOK;
 }
 
-int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
+int tcpDB::Insert(int id, const std::string &table, const std::string &key,
+				  std::vector<KVPair> &values) /* OK */
 {
 	c_tcp_req_factory(&this->req, REQ_PUT, key.size(), this->values_size(values));
 
@@ -180,6 +189,8 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 		return YCSBDB::kErrorNoData;
 	}
 
+	// extra copy below happens only in YCSB
+
 	memcpy(__key, key.c_str(), key.size());
 	this->serialize_values(values, __pay);
 
@@ -188,10 +199,17 @@ int tcpDB::Insert(const std::string &table, const std::string &key, std::vector<
 		return -(EXIT_FAILURE);
 	}
 
+	/* wait for the reply from the server */
+
+	if (c_tcp_recv_rep(this->chandle, this->rep) < 0) {
+		perror("c_tcp_recv_rep() failed >");
+		return -(EXIT_FAILURE);
+	}
+
 	return YCSBDB::kOK;
 }
 
-int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
+int tcpDB::Delete(int id, const std::string &table, const std::string &key) /* OK */
 {
 	c_tcp_req_factory(&this->req, REQ_DEL, key.size(), 0UL);
 
@@ -208,6 +226,13 @@ int tcpDB::Delete(const std::string &table, const std::string &key) /* OK */
 
 	if (c_tcp_send_req(this->chandle, this->req) < 0) {
 		perror("c_tcp_send_req() failed >");
+		return -(EXIT_FAILURE);
+	}
+
+	/* wait for the reply from the server */
+
+	if (c_tcp_recv_rep(this->chandle, this->rep) < 0) {
+		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
 
