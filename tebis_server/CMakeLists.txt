@@ -20,7 +20,7 @@ add_executable(
   server.c
   metadata_server.c
   build_index/build_index.c
-  rdma_buffer_iterator.c
+  rdma_buffer_iterator/rdma_buffer_iterator.c
   remote_compaction.c
   deserialize_index.c
   zk_utils.c
