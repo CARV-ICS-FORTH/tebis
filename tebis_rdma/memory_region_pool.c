@@ -19,7 +19,7 @@
 
 #define ALLOC_LOCAL 1 // if true use numa_alloc_local, otherwise use posix_memalign
 
-const size_t MEM_REGION_BASE_SIZE = (8 * 1024);
+const size_t MEM_REGION_BASE_SIZE = (128 * 1024);
 //const size_t MEM_REGION_BASE_SIZE = 8 * 1024 * 1024;
 const size_t MR_PREALLOCATE_COUNT = 128; // FIXME unused
 

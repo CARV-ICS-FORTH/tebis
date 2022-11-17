@@ -1021,7 +1021,7 @@ static int init_replica_connections(struct krm_server_desc const *server, struct
 	}
 }
 
-static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task *task)
+static int krm_enter_parallax(struct krm_region_desc *r_desc, struct krm_work_task *task)
 {
 	if (r_desc == NULL) {
 		log_fatal("NULL region?");
@@ -1079,7 +1079,7 @@ static int krm_enter_kreon(struct krm_region_desc *r_desc, struct krm_work_task 
 	}
 }
 
-static void krm_leave_kreon(struct krm_region_desc *r_desc)
+static void krm_leave_parallax(struct krm_region_desc *r_desc)
 {
 	if (r_desc->region->num_of_backup == 0)
 		return;
@@ -1152,7 +1152,7 @@ void insert_kv_to_store(struct krm_work_task *task)
 	const char *error_message = NULL;
 	struct par_put_metadata metadata = par_put_serialized(task->r_desc->db, (char *)task->kv, &error_message);
 	if (error_message) {
-		krm_leave_kreon(task->r_desc);
+		krm_leave_parallax(task->r_desc);
 		return;
 	}
 	/*replication path*/
@@ -1436,11 +1436,11 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	if (!init_replica_connections(mydesc, task))
 		return;
 
-	if (!krm_enter_kreon(task->r_desc, task))
+	if (!krm_enter_parallax(task->r_desc, task))
 		return;
 	insert_kv_pair(mydesc, task);
 	if (task->kreon_operation_status == TASK_COMPLETE) {
-		krm_leave_kreon(task->r_desc);
+		krm_leave_parallax(task->r_desc);
 
 		/*prepare the reply*/
 		task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1473,7 +1473,7 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 	task->kreon_operation_status = TASK_GET_KEY;
 	task->r_desc = r_desc;
-	if (!krm_enter_kreon(r_desc, task)) {
+	if (!krm_enter_parallax(r_desc, task)) {
 		// later...
 		return;
 	}
@@ -1481,10 +1481,11 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
 	par_handle par_hd = (par_handle)task->r_desc->db;
-	struct par_value lookup_value = { 0 };
+	struct par_value lookup_value = { .val_buffer = get_reply_get_kv_offset(task->reply_msg),
+					  .val_buffer_size = request_data.bytes_to_read };
 	const char *error_message = NULL;
 	par_get_serialized(par_hd, get_msg_get_key_slice_t(task->msg), &lookup_value, &error_message);
-	krm_leave_kreon(r_desc);
+	krm_leave_parallax(r_desc);
 
 	if (error_message) {
 		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
@@ -1528,7 +1529,7 @@ static void execute_get_req(struct krm_server_desc const *mydesc, struct krm_wor
 	struct msg_data_get_reply reply_data = { .key_found = 1,
 						 .offset_too_large = 0,
 						 .value_size = bytes_to_read,
-						 .value = lookup_value.val_buffer,
+						 .value = NULL,
 						 .bytes_remaining = bytes_remaining };
 	create_get_reply_msg(reply_data, task->reply_msg);
 

@@ -138,3 +138,9 @@ void put_msg_print_msg(msg_header *msg)
 	struct kv_splice *kv = put_msg_get_kv_offset(msg);
 	log_debug("< lsn %ld - key %s key_size %u>", lsn->id, get_key_offset_in_kv(kv), get_key_size(kv));
 }
+
+extern char *get_reply_get_kv_offset(msg_header *msg)
+{
+	struct get_reply_data *msg_paylaod = (struct get_reply_data *)((char *)msg + sizeof(msg_header));
+	return msg_paylaod->value;
+}
