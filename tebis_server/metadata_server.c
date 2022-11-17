@@ -21,12 +21,12 @@
 
 uint64_t ds_hash_key;
 
-par_handle open_db(const char *path)
+par_handle open_db(const char *path, const char *db_name)
 {
 	disable_gc();
-	par_db_options db_options = { .volume_name = (char *)path,
+	par_db_options db_options = { .volume_name = strdup(path),
 				      .create_flag = PAR_CREATE_DB,
-				      .db_name = "tebis_storage_engine",
+				      .db_name = strdup(db_name),
 				      .options = par_get_default_options() };
 	const char *error_message = NULL;
 	par_handle handle = par_open(&db_options, &error_message);
@@ -776,7 +776,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 #endif
 			/*open the db*/
 			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
-			r_desc->db = open_db(globals_get_dev());
+			r_desc->db = open_db(globals_get_dev(), r_desc->region->id);
 
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
@@ -1286,7 +1286,7 @@ void *krm_metadata_server(void *args)
 
 				// open the db
 				// TODO replace db_open with custom db open as should be
-				r_desc->db = open_db(globals_get_dev());
+				r_desc->db = open_db(globals_get_dev(), r_desc->region->id);
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
