@@ -1,6 +1,6 @@
 #ifndef REMOTE_COMPACTION_H_
 #define REMOTE_COMPACTION_H_
-#include "metadata.h"
+#include "../metadata.h"
 #include <stdbool.h>
 #include <stdint.h>
 

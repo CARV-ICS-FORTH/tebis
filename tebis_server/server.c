@@ -40,7 +40,7 @@
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/queue.h"
 #include "../utilities/spin_loop.h"
-#include "build_index.h"
+#include "build_index/build_index.h"
 #include "djb2.h"
 #include "globals.h"
 #include "messages.h"

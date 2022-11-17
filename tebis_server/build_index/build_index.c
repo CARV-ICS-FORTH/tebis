@@ -2,10 +2,9 @@
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
 #include "log.h"
-#include "metadata.h"
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
-#include "rdma_buffer_iterator.h"
+#include "../rdma_buffer_iterator.h"
 #include <stdlib.h>
 #include <unistd.h>
 
