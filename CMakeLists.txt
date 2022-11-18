@@ -206,6 +206,7 @@ add_subdirectory(tebis_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
+file(COPY "benches" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 if(tebis_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR
