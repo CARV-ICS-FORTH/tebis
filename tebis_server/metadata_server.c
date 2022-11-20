@@ -28,6 +28,8 @@ par_handle open_db(const char *path, const char *db_name)
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = strdup(db_name),
 				      .options = par_get_default_options() };
+	db_options.options[LEVEL0_SIZE].value = KB(globals_get_l0_size());
+	db_options.options[GROWTH_FACTOR].value = globals_get_growth_factor();
 	const char *error_message = NULL;
 	par_handle handle = par_open(&db_options, &error_message);
 	if (error_message) {
