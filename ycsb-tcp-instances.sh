@@ -8,7 +8,6 @@ YCSB_LOG_FILE="ops.txt"
 
 echo "ycsb-dir = $YCSB_DIR"
 cd $YCSB_DIR || exit
-pwd
 
 if [ $# -eq 0 ]; then
 	printf "no number of ycsb-tcp instances provided, choosing default (%d)\n\n" $INSTANCES
@@ -17,8 +16,15 @@ else
 	echo "new-INSTANCES = $INSTANCES"
 fi
 
+pwd
+
 for i in $(seq "$INSTANCES"); do
-	YCSB_LOG_FILE="ops_$i.txt"
-	echo -e "run: \033[1m$DRIVER\033[0;3m $YCSB_ARGS\033[0m" &&
-		$DRIVER "$YCSB_ARGS" "$YCSB_LOG_FILE" &
+	YCSB_LOG_FILE="ops_"$i.txt
+	EXEC="$DRIVER" "$YCSB_ARGS" "$YCSB_LOG_FILE"
+	echo -e "run: ./$DRIVER $YCSB_ARGS $YCSB_LOG_FILE"
+	./$DRIVER "$YCSB_ARGS" "$YCSB_LOG_FILE"
 done
+#
+#
+#
+#

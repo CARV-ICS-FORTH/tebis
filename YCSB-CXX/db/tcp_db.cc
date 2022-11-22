@@ -1,6 +1,7 @@
 #include "tcp_db.hpp"
 #include "db_factory.h"
 #include <cstring>
+#include <stdlib.h>
 
 using namespace ycsbc;
 
@@ -33,7 +34,11 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 
 tcpDB::tcpDB(int num) /* OK */
 {
-	chandle_init(&this->chandle, "localhost", "25565");
+	if ( chandle_init(&this->chandle, "sith5.cluster.ics.forth.gr", "25565") < 0 )
+	{
+		printf("FAILURE!\n");
+		exit(EXIT_FAILURE);
+	}
 
 	if (!(this->req = c_tcp_req_factory(NULL, REQ_GET, TT_DEF_KEYSZ, TT_DEF_PAYSZ))) {
 		perror("c_tcp_req_new() failed >");

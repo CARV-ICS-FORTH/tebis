@@ -121,12 +121,16 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	hints.ai_flags = AI_ADDRCONFIG | AI_NUMERICSERV;
 
 	if ((retc = getaddrinfo(addr, port, &hints, &res))) {
+		printf("FUCK0\n");
 		gai_strerror(retc); // debug only, set errno ?
 		return -(EXIT_FAILURE);
 	}
 
 	if (!res)
+	{
+		printf("FUCK1\n");
 		return -(EXIT_FAILURE); // set errno
+	}
 
 	for (rp = res; rp; rp = rp->ai_next) {
 		if ((ch->sock = socket(rp->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {

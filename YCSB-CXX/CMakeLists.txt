@@ -15,6 +15,12 @@ if(Zookeeper_LIBRARY)
     tcp-client
  )
 
+set_target_properties(
+	ycsb-tcp
+	PROPERTIES LINK_FLAGS
+		"-pthread"
+)
+
  add_executable(
      ycsb-blocking-tebis db/db_factory_blocking_tebis.cc core/core_workload.cc
                          driver/ycsbc.cc ../tebis_server/globals.c)

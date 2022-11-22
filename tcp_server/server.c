@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, "127.0.0.1", 25565, 8)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, "192.168.2.125", 25565, 8)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}

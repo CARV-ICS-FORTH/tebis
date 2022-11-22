@@ -299,7 +299,7 @@ static void *thread_routine(void *arg)
 				}
 			} else if (eventbits & EPOLLERR) /** error **/
 			{
-				log_warn("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
+				//log_warn("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
 				/** TODO: error handling */
 				continue;
 			}
