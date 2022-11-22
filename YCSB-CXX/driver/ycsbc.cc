@@ -346,7 +346,7 @@ int main(const int argc, const char *argv[])
 			std::cerr << "ERROR: Failed to open output file " << outfilename << std::endl;
 			exit(-1);
 		}
-#ifndef KREON_DISTRIBUTED
+#if 0
 		tmp = start_stats + results_directory + slash + a;
 		system(tmp.c_str());
 		system("date");
@@ -391,8 +391,8 @@ int main(const int argc, const char *argv[])
 #endif
 		ofil << "End time: " << timestring << std::endl;
 #else
-		tmp = stop_stats + results_directory + slash + a;
-		system(tmp.c_str());
+			// tmp = stop_stats + results_directory + slash + a;
+			// system(tmp.c_str());
 #endif
 		system("date");
 		ofil.close();

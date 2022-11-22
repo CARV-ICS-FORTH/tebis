@@ -17,6 +17,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#include <ucontext.h>
+
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
@@ -49,8 +51,11 @@ struct client_handle {
 	uint16_t flags1;
 	uint16_t flags2;
 
-	#define MAGIC_INIT_NUM (0xCAFE)
-	#define CLHF_SND_REQ (1 << 0)
+#define MAGIC_INIT_NUM (0xCAFE)
+#define CLHF_SND_REQ (1 << 0)
+
+	//{ int (*destroy)(void)}
+	// uint64_t x = &((struct client_handle *)(0)->destroy)
 
 	int sock;
 };
@@ -395,8 +400,7 @@ int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val)
 		return -(EXIT_FAILURE);
 	}
 
-	if ( irep->bindex >= irep->size )
-	{
+	if (irep->bindex >= irep->size) {
 		errno = ENODATA;
 		return -(EXIT_FAILURE);
 	}

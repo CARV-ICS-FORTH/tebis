@@ -7,11 +7,12 @@
 
 int main(int argc, char **argv)
 {
+	printf("%s(%d)\n\n", *argv, argc);
 	printf("this.process.pid = %d\n", getpid());
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, "127.0.0.1", 25565, 4)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, "127.0.0.1", 25565, 8)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}

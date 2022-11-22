@@ -7,7 +7,9 @@
 
 #include <endian.h>
 #include <errno.h>
+#include <log.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +24,7 @@
 
 typedef struct {
 	pthread_t tid;
+	uint64_t task_counter;
 
 	int32_t sock;
 	int32_t epfd;
@@ -37,6 +40,7 @@ typedef struct {
 	int32_t sock;
 	int32_t epfd;
 
+	uint32_t num_of_workers;
 	worker_t *workers;
 
 } server_handle;
@@ -53,9 +57,12 @@ typedef struct {
 
 	struct buffer buf;
 
-	// linked list?
+	// linked list ---> do we know how big each small SCAN request is?
 
 } tcp_rep;
+
+server_handle *g_sh; // debug
+char g_dummy_responce[1000];
 
 #define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
 #define is_req_init_conn_type(req) (((req).type) == REQ_INIT_CONN)
@@ -96,13 +103,15 @@ static int client_version_check(int clifd, worker_t *worker)
 {
 	uint32_t version = be32toh(*((uint8_t *)(worker->buf.mem) + 1UL));
 
+	/** TODO: send a respond to client that uses an outdated version */
+
 	if (version != TT_VERSION) {
 		errno = ECONNREFUSED;
 		return -(EXIT_FAILURE);
 	}
 
 	if (send(clifd, &version, sizeof(version), 0) < 0) {
-		perror("client_version_check::send()\n");
+		log_error("client_version_check::send()\n");
 
 		errno = ECONNABORTED;
 		return -(EXIT_FAILURE);
@@ -111,7 +120,7 @@ static int client_version_check(int clifd, worker_t *worker)
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = clifd };
 
 	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, clifd, &epev) < 0) {
-		perror("client_version_check::epoll_ctl(MOD)");
+		log_error("client_version_check::epoll_ctl(MOD)");
 		exit(EXIT_FAILURE);
 	}
 
@@ -126,13 +135,13 @@ static int client_version_check(int clifd, worker_t *worker)
  */
 static int handle_new_connection(worker_t *this)
 {
+	struct sockaddr_storage caddr;
+	struct epoll_event epev;
+
+	socklen_t socklen;
+	int tmpfd;
+
 	for (;;) {
-		struct sockaddr_storage caddr;
-		struct epoll_event epev;
-
-		socklen_t socklen;
-		int tmpfd;
-
 		if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) <
 		    0) {
 			if (errno == EAGAIN ||
@@ -140,7 +149,7 @@ static int handle_new_connection(worker_t *this)
 				    EWOULDBLOCK) /** TODO: is this ever going to happen? I don't think so, remove that? */
 				break;
 
-			perror("handle_new_connection::accept4()");
+			log_error("handle_new_connection::accept4()");
 			continue; // replace with "return -(EXIT_FAILURE)" ? EPOLLET
 		}
 
@@ -148,17 +157,16 @@ static int handle_new_connection(worker_t *this)
 		epev.events = EPOLLIN | EPOLLONESHOT;
 
 		if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
-			perror("handle_new_connection::epoll_ctl(ADD)");
+			log_error("handle_new_connection::epoll_ctl(ADD)");
 			close(tmpfd);
+
+			return -(EXIT_FAILURE);
 		}
 
 		epev.events = EPOLLIN | EPOLLONESHOT;
 		epev.data.fd = this->sock;
 
-		if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev) < 0) {
-			perror("handle_new_connection::epoll_ctl(MOD)");
-			exit(EXIT_FAILURE); // Will this ever happen ?
-		}
+		epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev); // always successfull
 	}
 
 	return EXIT_SUCCESS;
@@ -167,7 +175,7 @@ static int handle_new_connection(worker_t *this)
 s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz);
 static void *s_tcp_rep_expose_payload(s_tcp_rep rep);
 static int tcp_recv_req(worker_t *restrict worker, int clifd, tcp_req *restrict req);
-static int tcp_send_rep(worker_t *restrict worker, int clifd, s_tcp_rep restrict rep);
+static int tcp_send_rep(int clifd, s_tcp_rep rep);
 static int get_req_hdr(worker_t *restrict worker, int clifd, tcp_req *restrict req);
 
 static void *thread_routine(void *arg)
@@ -175,19 +183,19 @@ static void *thread_routine(void *arg)
 	worker_t *this = arg;
 	tcp_req req;
 
+	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT };
+
 	// pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 	// push cleanup function (like at_exit())
 
 	for (;;) {
 		struct epoll_event events[EPOLL_MAX_EVENTS];
-		struct epoll_event epev;
-
 		int norfds;
 
 		norfds = epoll_wait(this->epfd, events, EPOLL_MAX_EVENTS, -1);
 
 		if (norfds < 0) {
-			perror("epoll()");
+			log_error("epoll()");
 			continue;
 		}
 
@@ -200,7 +208,7 @@ static void *thread_routine(void *arg)
 			clifd = events[fdindex].data.fd;
 			eventbits = events[fdindex].events;
 
-			printf("t[%lu]: events = 0x%x\n", this->tid, eventbits);
+			// printf("t[%d]: events = 0x%x\n", getpid(), eventbits);
 
 			if (eventbits & EPOLLHUP) /** connection closed by peer **/
 			{
@@ -218,6 +226,7 @@ static void *thread_routine(void *arg)
 					handle_new_connection(this);
 				} else { /** request **/
 
+					++this->task_counter; // get info about load balancing (temp)
 					tmp = get_req_hdr(this, clifd, &req);
 
 					if (tmp < 0) /** errors **/
@@ -225,7 +234,7 @@ static void *thread_routine(void *arg)
 						if (tmp == TT_ERR_CONN_DROP)
 							printf("conenction was closed by peer\n");
 						else
-							perror("thread_routine::get_req_hdr()");
+							log_error("thread_routine::get_req_hdr()");
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 						close(clifd);
@@ -235,7 +244,7 @@ static void *thread_routine(void *arg)
 
 					if (is_req_init_conn_type(req)) {
 						if (client_version_check(clifd, this) < 0) {
-							perror("thread_routine::client_version_check()");
+							log_warn("thread_routine::client_version_check()");
 							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
 								  NULL); // kernel 2.6+
 							close(clifd);
@@ -245,9 +254,9 @@ static void *thread_routine(void *arg)
 					}
 
 					if (is_req_invalid(req.type)) {
-						printf("\e[91minvalid request\e[0m\n");
+						log_warn("invalid request");
 
-						/** TODO: send() retcode + discard receive buffer */
+						/** TODO: send() retcode + discard receive buffer instead of CTL_DEL */
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL);
 						close(clifd);
@@ -255,15 +264,15 @@ static void *thread_routine(void *arg)
 					}
 
 					if (tcp_recv_req(this, clifd, &req) < 0) {
-						dprint("tcp_recv_req() failed!");
+						log_error("tcp_recv_req()");
+
+						/** TODO: respond with an error message, insted of just close(clifd) */
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 						close(clifd);
 
 						continue;
 					}
-
-					s_tcp_print_req(&req);
 
 					/* tebis_handle_request(); */
 
@@ -271,22 +280,26 @@ static void *thread_routine(void *arg)
 
 					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 10UL);
 					char *tptr = s_tcp_rep_expose_payload(rep);
-					*((uint64_t *)(tptr)) = 10UL;
-					memcpy(tptr + sizeof(uint64_t), "saloustros", 10UL);
+					*((uint64_t *)(tptr)) = 1000UL;
+					memcpy(tptr + sizeof(uint64_t), g_dummy_responce, 10UL);
 
-					if (tcp_send_rep(this, clifd, rep) < 0) {
-						dprint("tcp_send_rep() failed!");
-						perror("errno: ");
+					if (tcp_send_rep(clifd, rep) < 0) {
+						log_error("tcp_send_rep()");
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 						close(clifd);
 
 						continue;
 					}
+
+					/* re-enable getting INPUT-events from coresponding client */
+
+					epev.data.fd = clifd;
+					epoll_ctl(this->epfd, EPOLL_CTL_MOD, clifd, &epev);
 				}
 			} else if (eventbits & EPOLLERR) /** error **/
 			{
-				printf("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
+				log_warn("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
 				/** TODO: error handling */
 				continue;
 			}
@@ -298,7 +311,7 @@ static void *thread_routine(void *arg)
 
 static int spawn_workers(server_handle *sh, uint32_t workers)
 {
-	int32_t index;
+	uint32_t index;
 
 	if ((sh->workers[0].buf.mem = mmap(NULL, workers * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
 					   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
@@ -311,7 +324,7 @@ static int spawn_workers(server_handle *sh, uint32_t workers)
 		sh->workers[index].buf.mem = sh->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 
 		if (pthread_create(&sh->workers[index].tid, NULL, thread_routine, sh->workers + index)) {
-			int32_t tmp;
+			uint32_t tmp;
 
 			for (tmp = 0; tmp < index; ++tmp)
 				pthread_cancel(sh->workers[tmp].tid);
@@ -329,6 +342,8 @@ static int spawn_workers(server_handle *sh, uint32_t workers)
 }
 
 /*******************************************************************/
+
+void sig_handler_SIGINT(int signum);
 
 int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *restrict addr, unsigned short port,
 		 unsigned nothreads)
@@ -371,12 +386,15 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	/** END OF ERROR HANDLING **/
 
+	signal(SIGINT, sig_handler_SIGINT);
+
 	if (!(*shandle = malloc(sizeof(server_handle) + (nothreads * sizeof(worker_t)))))
 		return -(EXIT_FAILURE);
 
 	server_handle *sh = *shandle;
 
 	sh->workers = (worker_t *)((uint8_t *)(sh) + sizeof(server_handle));
+	sh->num_of_workers = nothreads;
 	sh->sock = -1;
 	sh->epfd = -1;
 
@@ -399,6 +417,14 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	if (epoll_ctl(sh->epfd, EPOLL_CTL_ADD, sh->sock, &epev) < 0)
 		goto cleanup;
+
+	/** temp **/
+
+	g_sh = sh;
+	for (uint64_t i = 0UL; i < 100UL; ++i)
+		memcpy(g_dummy_responce + i * 10, "saloustros", 10UL);
+
+	/**********/
 
 	if (spawn_workers(sh, nothreads) < 0)
 		goto cleanup;
@@ -436,11 +462,6 @@ int shandle_destroy(sHandle shandle)
 
 s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 {
-	if (!this) {
-		errno = EINVAL;
-		return NULL;
-	}
-
 	tcp_rep *trep = (void *)(this->buf.mem);
 	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
 
@@ -449,13 +470,14 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 	else
 		paysz = 0UL; // failure-reply has 0-length payload
 
-	if (this->buf.bytes < tsize) {
+	trep->buf.bytes = this->buf.bytes - sizeof(*trep);
+
+	if (trep->buf.bytes < tsize) {
 		errno = ENOMEM;
 		return NULL;
 	}
 
 	trep->buf.mem = (char *)(this->buf.mem) + sizeof(*trep);
-	trep->buf.bytes = this->buf.bytes - sizeof(*trep);
 	trep->retc = retcode;
 	trep->paysz = paysz;
 
@@ -469,11 +491,6 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 
 static void *s_tcp_rep_expose_payload(s_tcp_rep rep)
 {
-	if (!rep) {
-		errno = EINVAL;
-		return NULL;
-	}
-
 	return ((tcp_rep *)(rep))->buf.mem;
 }
 
@@ -491,39 +508,11 @@ static int tcp_recv_req(worker_t *restrict this, int clifd, tcp_req *restrict re
 	uint64_t req_total_size = keysz + paysz;
 	int64_t bytes_read;
 
-	/** TODO: respond with an error message, insted of just close(clifd) */
-
-	if ((bytes_read = recv(clifd, this->buf.mem, req_total_size, 0)) < 0) {
-		perror("tcp_recv_req::read()");
-		epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
-		close(clifd);
-
+	if ((bytes_read = recv(clifd, this->buf.mem, req_total_size, 0)) < 0)
 		return -(EXIT_FAILURE);
-	}
 
-	char *tmp = malloc(req_total_size);
-
-	if (!tmp) {
-		perror("tcp_recv_req::epoll_ctl(MOD)");
-		close(clifd);
-
-		return -(EXIT_FAILURE);
-	}
-
-	req->kv.key.data = tmp;
-	req->kv.value.data = tmp + keysz;
-
-	memcpy(req->kv.key.data, this->buf.mem, keysz);
-	memcpy(req->kv.value.data, this->buf.mem + keysz, paysz);
-
-	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = clifd };
-
-	if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, clifd, &epev) < 0) {
-		perror("tcp_recv_req::epoll_ctl(MOD)");
-		close(clifd);
-
-		return -(EXIT_FAILURE);
-	}
+	req->kv.key.data = this->buf.mem;
+	req->kv.value.data = this->buf.mem + keysz;
 
 	return EXIT_SUCCESS;
 }
@@ -545,15 +534,12 @@ static int get_req_hdr(worker_t *restrict worker, int clifd, tcp_req *restrict r
 	if (req->type != REQ_INIT_CONN) {
 		req->kv.key.size = be64toh(*((uint64_t *)(worker->buf.mem + 1UL)));
 		req->kv.value.size = be64toh(*((uint64_t *)(worker->buf.mem + 9UL)));
-
-		printf("hdr: req->type = %d\n", req->type);
-		printf("hdr: req->keysz = %lu\n", req->kv.key.size);
 	}
 
 	return EXIT_SUCCESS;
 }
 
-static int tcp_send_rep(worker_t *restrict worker, int clifd, s_tcp_rep restrict rep)
+static int tcp_send_rep(int clifd, s_tcp_rep rep)
 {
 	tcp_rep *trep = rep;
 	uint64_t tsize = trep->paysz + sizeof(uint64_t) + TT_REPHDR_SIZE;
@@ -572,10 +558,23 @@ void s_tcp_print_req(s_tcp_req req)
 	tcp_req *treq = req;
 	kv_t *kv = &treq->kv;
 
-	printf("\e[1;91m%s\e[0m\n", printable_req(treq->type));
+	printf("\033[1;91m%s\033[0m\n", printable_req(treq->type));
 
 	printf("  - key.size = %lu (0x%lx)\n", kv->key.size, *((uint64_t *)(kv->key.data)));
 
 	if (!req_in_get_family(treq))
 		printf("  - val.size = %lu (0x%lx)\n\n", kv->value.size, *((uint64_t *)(kv->value.data)));
+}
+
+/*******************************************************************/
+
+void sig_handler_SIGINT(int signum)
+{
+	printf("received \033[1;31mSIGINT (%d)\033[0m --- printing thread-stats\n", signum);
+
+	for (uint i = 0, lim = g_sh->num_of_workers; i < lim; ++i)
+		printf("worker[%u] completed %lu tasks\n", i, g_sh->workers[i].task_counter);
+
+	printf("\n");
+	_Exit(EXIT_SUCCESS);
 }

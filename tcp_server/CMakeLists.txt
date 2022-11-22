@@ -1,3 +1,18 @@
-cmake_minumum_required(VERSION 3.2)
+# File: tcp_client/CMakeLists.txt Author: Orestis Chiotakis
+# <orchiot@ics.forth.gr>
 
-add_executable(tcp-server server.c tcp_server.c)
+set(tcp_server_EXEC "tcp-server")
+
+add_executable(${tcp_server_EXEC} server.c tcp_server.c)
+
+target_link_libraries(${tcp_server_EXEC} log)
+
+install(
+  TARGETS ${tcp_server_EXEC}
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+  PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+set_target_properties(${tcp_server_EXEC} PROPERTIES OUTPUT_NAME
+                                                    ${tcp_server_EXEC})

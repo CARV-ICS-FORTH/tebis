@@ -43,7 +43,7 @@ int chandle_destroy(cHandle chandle);
  * @par ERRORS
  * @b EINVAL  The request object @a req is not initialized, in case of an update
  * @b ENOTSUP The request object's type @a rtype is not supported
- * 
+ *
  * @param req request object
  * @param rtype type of request
  * @param keysz size of key
@@ -59,7 +59,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
  *
  * @par ERRORS
  * @b EINVAL The request object @a req is either equal to NULL, or not initialized
- * 
+ *
  * @param req request object
  * @return int
  */
@@ -72,7 +72,7 @@ int c_tcp_req_destroy(c_tcp_req req);
  *
  * @par ERRORS
  * @b EINVAL  The request object @a req is either NULL, or not initialized
- * 
+ *
  * @param req
  * @return void*
  */
@@ -83,7 +83,7 @@ void *c_tcp_req_expose_key(c_tcp_req req);
  * ( as stated in @b c_tcp_req_factory() ) to that buffer causes undefined behavior. In case of a SCAN request ( set with
  * @b c_tcp_req_factory) ),(only the) @a length (int) of the SCAN request must be stored to the internal payload-buffer.
  * On failure, NULL is returned and @b errno is set to indicate the error.
- * 
+ *
  * @par ERRORS
  * @b EINVAL  The request object @a req is either NULL, or not initialized
  * @b ENODATA The request object @a req is [GET | DEL | EXISTS], thus no there is no need to use payload
@@ -96,10 +96,10 @@ void *c_tcp_req_expose_payload(c_tcp_req req);
 c_tcp_rep c_tcp_rep_new(size_t size);
 
 /**
- * @brief 
- * 
- * @param rep 
- * @return int 
+ * @brief
+ *
+ * @param rep
+ * @return int
  */
 int c_tcp_rep_destroy(c_tcp_rep rep);
 
@@ -107,16 +107,16 @@ int c_tcp_rep_destroy(c_tcp_rep rep);
  * @brief Pops a value from the reply object @a rep. Calling this function more than once on a reply object, makes sense
  * only when the object is a response from a SCAN request. Other requests will respond/reply only with a single value.
  * On success, 0 is returned and @a val will be updated. On failure, -1 is returned and @b errno is set to indicate the error.
- * 
+ *
  * @par ERRORS
- * 
+ *
  * @b EINVAL  The reply object @a rep is either NULL or not initialized
  * @b EINVAL  The value @a val is NULL
  * @b ENODATA All available values have been poped
- * 
- * @param rep 
- * @param val 
- * @return int 
+ *
+ * @param rep
+ * @param val
+ * @return int
  */
 int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val);
 
