@@ -20,7 +20,7 @@ workload_type=$2
 WORKING_DIR=$(pwd)
 
 TEBIS_HOME=/home1/public/geostyl/tebis
-BARRIER=$(WORKING_DIR)/barrier.sh
+BARRIER=$WORKING_DIR/barrier.sh
 rm /tmp/cli*
 
 host=$(hostname)
@@ -42,7 +42,7 @@ rm -rf .barrier
 
 for i in $(seq ${#execution_plans[@]}); do
 	for j in $(seq ${#tebis_hosts[@]}); do
-		#ssh ${tebis_hosts[$j]} nohup $SCRIPTS_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]} ${net_iface[$j]}
+		ssh ${tebis_hosts[$j]} nohup $WORKING_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 	done
 	$TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 4 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host -w $workload_type  &
 	$TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[2]} -threads 4 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-2 -zookeeper $zk_host -w $workload_type  &
@@ -53,11 +53,11 @@ for i in $(seq ${#execution_plans[@]}); do
 	$BARRIER 2 1
 	echo "Cleared the barrier"
 	for tebis_host in ${tebis_hosts[@]}; do
-		#ssh $tebis_host $SCRIPTS_DIR/stop_statistics.sh $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}
+		ssh $tebis_host $WORKING_DIR/stop_statistics.sh $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}
 	done
 done
-for tebis_host in ${tebis_hosts[@]}; do
-	ssh $tebis_host sudo pkill --signal SIGINT tebis_server
-done
+#for tebis_host in ${tebis_hosts[@]}; do
+#	ssh $tebis_host sudo pkill --signal SIGINT tebis_server
+#done
 
 printf "\a" # Ring the bell

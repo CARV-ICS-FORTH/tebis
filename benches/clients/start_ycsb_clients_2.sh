@@ -26,7 +26,7 @@ workload_type=$2
 
 WORKING_DIR=$(pwd)
 TEBIS_HOME=/home1/public/geostyl/tebis
-BARRIER=$(WORKING_DIR)/barrier.sh
+BARRIER=$WORKING_DIR/barrier.sh
 
 
 host=$(hostname)
