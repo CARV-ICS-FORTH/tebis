@@ -1493,8 +1493,6 @@ retry:
 				      server_desc->ds_regions->r_desc[middle]->region->min_key, key_size, key);
 
 		if (ret < 0 || ret == 0) {
-			/*log_info("got 0 checking with max key %s",
-* desc->ds_regions->r_desc[middle].region->max_key);*/
 			start_idx = middle + 1;
 			if (zku_key_cmp(server_desc->ds_regions->r_desc[middle]->region->max_key_size,
 					server_desc->ds_regions->r_desc[middle]->region->max_key, key_size, key) > 0) {

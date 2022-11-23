@@ -1085,26 +1085,22 @@ static void krm_leave_parallax(struct krm_region_desc *r_desc)
 		return;
 	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
 }
-/*XXX TODO XXX FIX this unused staff*/
+
 static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
 			       struct krm_work_task *task)
 {
-	(void)r_desc;
-	(void)flush_request;
 	(void)task;
-#if 0
 	//where primary has stored its segment
-	flush_request->is_partial = UINT32_MAX; /*unused..*/
-	flush_request->log_buffer_id = task->seg_id_to_flush; /*unused*/
-	flush_request->master_segment = task->ins_req.metadata.log_segment_addr; /*unused*/
+	//flush_request->is_partial = UINT32_MAX; /*unused..*/
+	//flush_request->log_buffer_id = task->seg_id_to_flush; /*unused*/
+	//flush_request->master_segment = task->ins_req.metadata.log_segment_addr; /*unused*/
 	// log_info("Sending flush command for segment %llu",
 	// flush_request->master_segment);
-	flush_request->segment_id = task->ins_req.metadata.segment_id; /*unused*/
-	flush_request->end_of_log = task->ins_req.metadata.end_of_log; /*unused*/
-	flush_request->log_padding = task->ins_req.metadata.log_padding; /*unused*/
+	//flush_request->segment_id = task->ins_req.metadata.segment_id; /*unused*/
+	//flush_request->end_of_log = task->ins_req.metadata.end_of_log; /*unused*/
+	//flush_request->log_padding = task->ins_req.metadata.log_padding; /*unused*/
 	flush_request->region_key_size = r_desc->region->min_key_size;
 	strcpy(flush_request->region_key, r_desc->region->min_key);
-#endif
 }
 
 /** Fills the replication fields of a put msg. Only put msgs need to be replicated.
