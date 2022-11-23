@@ -1,5 +1,4 @@
 #include "circular_buffer.h"
-#include "macros.h"
 #include <assert.h>
 #include <log.h>
 #include <pthread.h>

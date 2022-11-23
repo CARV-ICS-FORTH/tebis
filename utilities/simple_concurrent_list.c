@@ -1,11 +1,11 @@
 #include <assert.h>
+#include <log.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "../tebis_server/conf.h"
-#include "../utilities/macros.h"
 #include "simple_concurrent_list.h"
 
 SIMPLE_CONCURRENT_LIST *init_simple_concurrent_list(void)
@@ -55,14 +55,14 @@ void add_last_in_simple_concurrent_list(SIMPLE_CONCURRENT_LIST *list, void *data
 
 int mark_element_for_deletion_from_simple_concurrent_list(SIMPLE_CONCURRENT_LIST *list, void *data)
 {
-	DPRINT("\t deletion\n");
+	log_debug("\t deletion\n");
 
 	SIMPLE_CONCURRENT_LIST_NODE *node;
 	node = list->first;
 	while (node != NULL) {
 		if (node->data == data) {
 			node->marked_for_deletion = 1;
-			DPRINT("\t marked connection\n");
+			log_debug("\t marked connection\n");
 			return 1;
 		}
 		node = node->next;
@@ -80,7 +80,7 @@ void remove_element_from_simple_concurrent_list(SIMPLE_CONCURRENT_LIST *list,
 			list->last = previous_node;
 		}
 		assert(list->size > 0);
-		//DPRINT("Nodes now are %d\n",list->size);
+		//log_debug("Nodes now are %d\n",list->size);
 		--list->size;
 	} else if (previous_node == NULL) {
 		if (list->size > 1) {
@@ -88,13 +88,13 @@ void remove_element_from_simple_concurrent_list(SIMPLE_CONCURRENT_LIST *list,
 			list->first = node->next;
 			assert(list->size > 0);
 			assert(list->first != NULL);
-			//DPRINT("Nodes now are %d\n",list->size);
+			//log_debug("Nodes now are %d\n",list->size);
 			--list->size;
 		} else {
 			list->first = NULL;
 			list->last = NULL;
 			assert(list->size > 0);
-			//DPRINT("Nodes now are %d\n",list->size);
+			//log_debug("Nodes now are %d\n",list->size);
 			--list->size;
 		}
 	}

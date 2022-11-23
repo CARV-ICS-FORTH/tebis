@@ -13,7 +13,6 @@
 
 #include "../tebis_server/conf.h" // FIXME only included for the priority macros
 #include "../utilities/list.h"
-#include "../utilities/macros.h"
 #include "memory_region_pool.h"
 #include <log.h>
 
@@ -40,7 +39,7 @@ memory_region_pool *mrpool_create(struct ibv_pd *pd, size_t max_allocated_memory
 	assert(pd);
 	memory_region_pool *pool = (memory_region_pool *)malloc(sizeof(memory_region_pool));
 	if (!pool) {
-		ERRPRINT("Allocation of new memory region pool failed\n");
+		log_fatal("Allocation of new memory region pool failed\n");
 		return NULL;
 	}
 	pool->max_allocated_memory = max_allocated_memory;
@@ -56,7 +55,7 @@ memory_region_pool *mrpool_create(struct ibv_pd *pd, size_t max_allocated_memory
 		pool->free_mrs = NULL;
 		pool->default_allocation_size = allocation_size;
 	} else {
-		ERRPRINT("Bad pool type\n");
+		log_fatal("Bad pool type\n");
 		exit(EXIT_FAILURE);
 	}
 	return pool;
@@ -119,10 +118,10 @@ void mrpool_free_memory_region(memory_region **mr)
 		// FIXME decrement allocated memory
 	} else {
 		if (rdma_dereg_mr((*mr)->local_memory_region)) {
-			ERRPRINT("ibv_dereg_mr failed: %s\n", strerror(errno));
+			log_fatal("ibv_dereg_mr failed: %s\n", strerror(errno));
 		}
 		if (rdma_dereg_mr((*mr)->remote_memory_region)) {
-			DPRINT("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
+			log_fatal("ERROR: ibv_dereg_mr failed: %s\n", strerror(errno));
 		}
 #if ALLOC_LOCAL
 		numa_free((*mr)->local_memory_buffer, (*mr)->memory_region_length);
@@ -155,7 +154,7 @@ static int _mrpool_preallocate_mr(memory_region_pool *pool)
 	for (i = 0; i < count; i++) {
 		memory_region *mr = (memory_region *)malloc(sizeof(memory_region));
 		if (!mr) {
-			ERRPRINT("Preallocation of new memory region failed\n");
+			log_fatal("Preallocation of new memory region failed\n");
 			return 1;
 		}
 		_mrpool_initialize_mem_region(mr, pool->pd, MEM_REGION_BASE_SIZE);
@@ -184,12 +183,12 @@ static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, 
 	mr->memory_region_length = memory_region_size;
 #if ALLOC_LOCAL
 	if ((mr->local_memory_buffer = numa_alloc_local(mr->memory_region_length)) == NULL) {
-		ERRPRINT("FATAL Allocation for local memory region failed\n");
+		log_fatal("Allocation for local memory region failed\n");
 		exit(EXIT_FAILURE);
 	}
 #else
 	if (posix_memalign(&mr->local_memory_buffer, 4096, mr->memory_region_length) != 0) {
-		ERRPRINT("FATAL Allocation for local memory region failed\n");
+		log_fatal("FATAL Allocation for local memory region failed\n");
 		exit(EXIT_FAILURE);
 	}
 #endif
@@ -197,12 +196,12 @@ static void _mrpool_initialize_mem_region(memory_region *mr, struct ibv_pd *pd, 
 
 #if ALLOC_LOCAL
 	if ((mr->remote_memory_buffer = numa_alloc_local(mr->memory_region_length)) == NULL) {
-		ERRPRINT("FATAL Allocation for remote memory region failed\n");
+		log_fatal("Allocation for remote memory region failed\n");
 		exit(EXIT_FAILURE);
 	}
 #else
 	if (posix_memalign(&mr->remote_memory_buffer, 4096, mr->memory_region_length) != 0) {
-		ERRPRINT("FATAL Allocation for local memory region failed\n");
+		log_fatal("Allocation for local memory region failed\n");
 		exit(EXIT_FAILURE);
 	}
 #endif

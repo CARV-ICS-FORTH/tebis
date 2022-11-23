@@ -716,7 +716,7 @@ void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connect
 	/*remove connection from its corresponding list*/
 	pthread_mutex_lock(&channel->spin_list_conn_lock[conn->responsible_spinning_thread_id]);
 	mark_element_for_deletion_from_simple_concurrent_list(conn->responsible_spin_list, conn);
-	DPRINT("\t * Removed connection form list successfully :-) \n");
+	log_debug("\t * Removed connection form list successfully :-) \n");
 	channel->nconn--;
 	channel->nused--;
 	pthread_mutex_unlock(&channel->spin_list_conn_lock[conn->responsible_spinning_thread_id]);
@@ -726,7 +726,7 @@ void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connect
 	rdma_destroy_id(conn->rdma_cm_id);
 
 	free(conn);
-	DPRINT("\t*Destroyed RDMA connection successfully\n");
+	log_debug("\t*Destroyed RDMA connection successfully\n");
 }
 
 void client_rdma_init_message_context(struct rdma_message_context *msg_ctx, struct msg_header *msg)

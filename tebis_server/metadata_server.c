@@ -36,6 +36,7 @@ par_handle open_db(const char *path, const char *db_name)
 		log_fatal("Error uppon opening the DB, error %s", error_message);
 		_exit(EXIT_FAILURE);
 	}
+
 	return handle;
 }
 

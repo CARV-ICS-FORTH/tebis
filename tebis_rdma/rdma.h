@@ -24,7 +24,6 @@
 #include "../tebis_server/conf.h"
 #include "../tebis_server/messages.h"
 #include "../utilities/circular_buffer.h"
-#include "../utilities/macros.h"
 #include "../utilities/queue.h"
 #include "../utilities/simple_concurrent_list.h"
 #include "memory_region_pool.h"
