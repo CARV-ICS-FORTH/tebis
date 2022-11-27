@@ -270,6 +270,7 @@ struct krm_region_desc {
 		struct ru_replica_state *r_state;
 	};
 	volatile int64_t pending_region_tasks;
+	int64_t next_lsn_to_be_replicated;
 	enum krm_replica_buf_status replica_buf_status;
 	enum krm_region_status status;
 };

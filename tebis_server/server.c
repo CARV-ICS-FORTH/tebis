@@ -1131,7 +1131,6 @@ inline static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_bu
 	return 0;
 }
 
-int64_t lsn_to_be_replicated = 1;
 void insert_kv_to_store(struct krm_work_task *task)
 {
 #if CREATE_TRACE_FILE
@@ -1166,7 +1165,7 @@ void insert_kv_to_store(struct krm_work_task *task)
 
 void send_flush_commands(struct krm_server_desc const *server, struct krm_work_task *task)
 {
-	log_debug("Send flush commands");
+	//log_debug("Send flush commands");
 	struct krm_region_desc *r_desc = task->r_desc;
 
 	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
@@ -1270,7 +1269,7 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 	}
 
 	r_buf->segment.curr_end += task->msg_payload_size;
-	__sync_fetch_and_add(&lsn_to_be_replicated, 1);
+	__sync_fetch_and_add(&task->r_desc->next_lsn_to_be_replicated, 1);
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 }
 
@@ -1288,13 +1287,13 @@ void wait_for_replication_completion(struct krm_work_task *task)
 		}
 	}
 	/*count bytes replicated for this segment*/
-	__sync_fetch_and_add(task->replicated_bytes, task->msg_payload_size);
+	// __sync_fetch_and_add(task->replicated_bytes, task->msg_payload_size);
 	//log_debug("replicated bytes %lu", *task->replicated_bytes[i]);
 	//log_info(" key is %u:%s Bytes now %llu i =%u kv size was %u full event? %u",
 	//	 *(uint32_t *)task->ins_req.key_value_buf, task->ins_req.key_value_buf + 4,
 	//	 *task->replicated_bytes[i], i, task->kv_size,
 	//	 task->ins_req.metadata.segment_full_event);
-	assert(*task->replicated_bytes <= SEGMENT_SIZE);
+	// assert(*task->replicated_bytes <= SEGMENT_SIZE);
 
 	task->kreon_operation_status = ALL_REPLICAS_ACKED;
 }
@@ -1303,7 +1302,7 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 {
 	assert(task);
 	int64_t lsn = get_lsn_id(put_msg_get_lsn_offset(task->msg));
-	if (lsn != lsn_to_be_replicated)
+	if (lsn != task->r_desc->next_lsn_to_be_replicated)
 		return; /*its not my turn yet*/
 
 	/*only 1 threads enters this region at a time*/
@@ -1714,7 +1713,7 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
-	log_debug("Primary orders a flush!");
+	//log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
@@ -1753,7 +1752,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
-	log_debug("Responded to server!");
+	// log_debug("Responded to server!");
 
 	/*
 	// log_info("Master orders a flush, obey your master!");
@@ -2235,7 +2234,7 @@ static void sigint_handler(int signo)
 	(void)signo;
 	/*pid_t tid = syscall(__NR_gettid);*/
 	log_warn("caught signal closing server, sorry gracefull shutdown not yet "
-		 "supported. Contace <gesalous,mvard>@ics.forth.gr");
+		 "supported. Contace <gesalous,geostyl>@ics.forth.gr");
 	stats_notify_stop_reporter_thread();
 	sem_post(&exit_main);
 }

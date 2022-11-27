@@ -773,6 +773,7 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			pthread_rwlock_init(&r_desc->replica_log_map_lock, NULL);
 			r_desc->status = KRM_OPEN;
 			r_desc->replica_log_map = NULL;
+			r_desc->next_lsn_to_be_replicated = 1;
 #if 0
 			for (int i = 0; i < MAX_LEVELS; i++)
 				r_desc->replica_index_map[i] = NULL;
@@ -1293,6 +1294,7 @@ void *krm_metadata_server(void *args)
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;
+				r_desc->next_lsn_to_be_replicated = 1;
 #if 0
 				for (int i = 0; i < MAX_LEVELS; i++)
 					r_desc->replica_index_map[i] = NULL;
