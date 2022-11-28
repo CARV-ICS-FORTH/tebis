@@ -18,7 +18,6 @@ fi
 workload_type=$2
 
 WORKING_DIR=$(pwd)
-
 TEBIS_HOME=/home1/public/geostyl/tebis
 BARRIER=$WORKING_DIR/barrier.sh
 rm /tmp/cli*
@@ -42,8 +41,12 @@ rm -rf .barrier
 
 for i in $(seq ${#execution_plans[@]}); do
 	for j in $(seq ${#tebis_hosts[@]}); do
+		#Required for the servers STATS
 		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}
 		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
+		#Required for the network traffic
+		ethtool -S ens10d1 > $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}/counters_start
+		#ssh to server and start the statistics
 		ssh ${tebis_hosts[$j]} nohup $WORKING_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 	done
 	$TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 4 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host -w $workload_type  &
@@ -56,6 +59,8 @@ for i in $(seq ${#execution_plans[@]}); do
 	echo "Cleared the barrier"
 	for tebis_host in ${tebis_hosts[@]}; do
 		ssh $tebis_host $WORKING_DIR/stop_statistics.sh $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}
+		#measure the network counters again
+		ethtool -S ens10d1 > $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}/counters_end
 	done
 done
 
