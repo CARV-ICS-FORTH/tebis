@@ -2246,6 +2246,16 @@ int main(int argc, char *argv[])
 	globals_open_trace_file("tracefile.txt");
 #endif
 
+#ifdef DEBUG_BUILD_TYPE
+	log_set_level(LOG_DEBUG);
+#elif RELEASE_BUILD_TYPE
+	log_set_level(LOG_INFO);
+#else
+	log_fatal(
+		"Build must be in release or debug mode, if not please update the corresponding flags in /path/to/tebis/CMakeLists.txt");
+	_exit(EXIT_FAILURE);
+#endif
+
 	int num_of_numa_servers = 1;
 	int next_argv;
 	if (argc != 8) {

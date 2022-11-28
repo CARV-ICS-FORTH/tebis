@@ -41,6 +41,15 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
                                                "MinSizeRel" "RelWithDebInfo")
 endif()
 
+
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+  add_definitions(-DRELEASE_BUILD_TYPE)
+else()
+  add_definitions(-DDEBUG_BUILD_TYPE)
+endif()
+
+add_definitions( -DBUILD_TYPE=${default_build_type} )
+
 include(GNUInstallDirs)
 include(cmake_utils/mkfs.cmake.in)
 include(cmake_utils/ycsb.cmake.in)
