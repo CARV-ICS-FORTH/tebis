@@ -24,7 +24,7 @@ BARRIER=$WORKING_DIR/barrier.sh
 rm /tmp/cli*
 
 host=$(hostname)
-zk_host=sith3.cluster.ics.forth.gr:2181
+zk_host=sith6.cluster.ics.forth.gr:2181
 
 # YCSB parameters
 workload_folder=( load_a run_a run_b run_c run_d )
@@ -39,9 +39,13 @@ tebis_hosts=( sith2.cluster.ics.forth.gr sith3.cluster.ics.forth.gr )
 net_iface=( ens10 ens10 ens10 )
 
 rm -rf .barrier
+rm -rf RESULTS_*
+rm -rf STATS-*
 
 for i in $(seq ${#execution_plans[@]}); do
 	for j in $(seq ${#tebis_hosts[@]}); do
+		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}
+		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 		ssh ${tebis_hosts[$j]} nohup $WORKING_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 	done
 	$TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 4 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host -w $workload_type  &
@@ -56,8 +60,5 @@ for i in $(seq ${#execution_plans[@]}); do
 		ssh $tebis_host $WORKING_DIR/stop_statistics.sh $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}
 	done
 done
-#for tebis_host in ${tebis_hosts[@]}; do
-#	ssh $tebis_host sudo pkill --signal SIGINT tebis_server
-#done
 
 printf "\a" # Ring the bell
