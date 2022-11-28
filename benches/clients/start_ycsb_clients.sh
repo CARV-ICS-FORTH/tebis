@@ -39,8 +39,6 @@ tebis_hosts=( sith2.cluster.ics.forth.gr sith3.cluster.ics.forth.gr )
 net_iface=( ens10 ens10 ens10 )
 
 rm -rf .barrier
-rm -rf RESULTS_*
-rm -rf STATS-*
 
 for i in $(seq ${#execution_plans[@]}); do
 	for j in $(seq ${#tebis_hosts[@]}); do

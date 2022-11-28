@@ -14,7 +14,7 @@ fi
 execution_plans=( execution_plan_la.txt execution_plan_ra.txt )
 if [ "$1" = "a" ]
 then
-	execution_plans=( execution_plan_la.txt execution_plan_ra.txt )
+	execution_plans=( execution_plan_la.txt ) #execution_plan_ra.txt )
 elif [ "$1" = "a2d" ]
 then
 	execution_plans=( execution_plan_la.txt execution_plan_ra.txt execution_plan_rb.txt execution_plan_rc.txt execution_plan_rd.txt )
