@@ -1,8 +1,14 @@
-# network output calculator
-# By providing 2 files containing the ethtool -s ${RDMA_NIC} output, this scripts calculates
-# and produces the diff on ethtool counters. If the diff between two counters is 0, the counter is skipped
-# and not shown in the output
 import argparse
+import os
+
+class colors:
+    RED = "\033[31m"
+    ENDC = "\033[m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    PURPLE = "\033[35m"
+    LIGHT_BLUE = "\033[36m"
 
 def calculate_diff_in_counters(starting_counters_list, ending_counters_list):
     #its asserted that the lists have the same size
@@ -12,7 +18,7 @@ def calculate_diff_in_counters(starting_counters_list, ending_counters_list):
             i+=1
             continue
         diff_in_counters = int(ending_counters_list[i][1]) - int(counter_value)
-        print(counter_name + " " + str(diff_in_counters))
+        print(colors.GREEN + counter_name + " " + str(diff_in_counters) + colors.ENDC)
         i+=1
 
 def fetch_counter_name(line):
@@ -52,8 +58,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Execute calculator with appropriate parameters"
     )
-    parser.add_argument("counters_before", type=str, help="starting ethtool output file to be parsed")
-    parser.add_argument("counters_after", type=str, help="ending ethtool output file to be parsed")
+    parser.add_argument("workload", type=str, help="workload to acquire the network traffic (load_a, run_a, run_b, run_c, run_d")
     return parser.parse_args()
 
 def count_lines(filename):
@@ -67,17 +72,30 @@ def count_lines(filename):
     file_with_counters.close()
     return count
 
+#function returning the path for 2 files named counters_start and counters_end for a specific workload
+#these files contain the output of the eth tool before and after the workload, which is equavalent to the network traffic
+# we only calculate the network traffic for one server because we make sure that all servers serve equal load, so the overall traffic can be calculated by multiplying 1 server's traffic with the number of servers
+def fetch_network_files_for_workload(workload):
+    dir = "./"
+    for file in os.listdir(dir):
+        if file.startswith("STATS"):
+            print(colors.YELLOW + file + colors.ENDC)
+            counters_start = file + "/" + workload + "/counters_start"
+            counters_end = file + "/" + workload + "/counters_end"
+            return counters_start,counters_end
+
 
 def main():
     args = parse_arguments()
-    num_of_lines_starting_counters_file = count_lines(args.counters_before)
-    num_of_lines_ending_counters_file = count_lines(args.counters_after)
+    counters_start,counters_end = fetch_network_files_for_workload(args.workload)
+    num_of_lines_starting_counters_file = count_lines(counters_start)
+    num_of_lines_ending_counters_file = count_lines(counters_end)
     if num_of_lines_starting_counters_file != num_of_lines_ending_counters_file:
         print("Ethtool outputs must be the same across the input files")
         exit()
 
-    starting_counters_list = retrieve_counters(args.counters_before, num_of_lines_starting_counters_file)
-    ending_counters_list = retrieve_counters(args.counters_after, num_of_lines_ending_counters_file)
+    starting_counters_list = retrieve_counters(counters_start, num_of_lines_starting_counters_file)
+    ending_counters_list = retrieve_counters(counters_end, num_of_lines_ending_counters_file)
     calculate_diff_in_counters(starting_counters_list, ending_counters_list)
 
 if __name__ == "__main__":
