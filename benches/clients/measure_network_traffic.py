@@ -62,14 +62,14 @@ def parse_arguments():
     return parser.parse_args()
 
 def count_lines(filename):
-    file_with_counters = open(filename, "r")
+    file = open(filename, "r")
     count = 0
-    line = file_with_counters.readline()
+    line = file.readline()
     while line:
         count +=1
-        line = file_with_counters.readline()
+        line = file.readline()
 
-    file_with_counters.close()
+    file.close()
     return count
 
 #function returning the path for 2 files named counters_start and counters_end for a specific workload
