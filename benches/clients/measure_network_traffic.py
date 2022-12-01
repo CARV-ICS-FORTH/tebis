@@ -72,31 +72,23 @@ def count_lines(filename):
     file.close()
     return count
 
-#function returning the path for 2 files named counters_start and counters_end for a specific workload
-#these files contain the output of the eth tool before and after the workload, which is equavalent to the network traffic
-# we only calculate the network traffic for one server because we make sure that all servers serve equal load, so the overall traffic can be calculated by multiplying 1 server's traffic with the number of servers
-def fetch_network_files_for_workload(workload):
-    dir = "./"
-    for file in os.listdir(dir):
-        if file.startswith("STATS"):
-            print(colors.YELLOW + file + colors.ENDC)
-            counters_start = file + "/" + workload + "/counters_start"
-            counters_end = file + "/" + workload + "/counters_end"
-            return counters_start,counters_end
-
-
 def main():
     args = parse_arguments()
-    counters_start,counters_end = fetch_network_files_for_workload(args.workload)
-    num_of_lines_starting_counters_file = count_lines(counters_start)
-    num_of_lines_ending_counters_file = count_lines(counters_end)
-    if num_of_lines_starting_counters_file != num_of_lines_ending_counters_file:
-        print("Ethtool outputs must be the same across the input files")
-        exit()
+    dir = "./"
+    for file in os.listdir(dir):
+        if file.startswith("STATS") or file.startswith("clients_group"):
+            print(colors.YELLOW + file + colors.ENDC)
+            counters_start = file + "/" + args.workload + "/counters_start"
+            counters_end = file + "/" + args.workload + "/counters_end"
+            num_of_lines_starting_counters_file = count_lines(counters_start)
+            num_of_lines_ending_counters_file = count_lines(counters_end)
+            if num_of_lines_starting_counters_file != num_of_lines_ending_counters_file:
+                print("Ethtool outputs must be the same across the input files")
+                exit()
 
-    starting_counters_list = retrieve_counters(counters_start, num_of_lines_starting_counters_file)
-    ending_counters_list = retrieve_counters(counters_end, num_of_lines_ending_counters_file)
-    calculate_diff_in_counters(starting_counters_list, ending_counters_list)
+            starting_counters_list = retrieve_counters(counters_start, num_of_lines_starting_counters_file)
+            ending_counters_list = retrieve_counters(counters_end, num_of_lines_ending_counters_file)
+            calculate_diff_in_counters(starting_counters_list, ending_counters_list)
 
 if __name__ == "__main__":
     main()

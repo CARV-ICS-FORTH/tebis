@@ -31,13 +31,13 @@ BARRIER=$WORKING_DIR/barrier.sh
 
 host=$(hostname)
 zk_host=sith3.cluster.ics.forth.gr
+workload_folder=( load_a run_a run_b run_c run_d )
 # 2 NODES
 #insertstart=( 8000000 10000000 12000000 14000000 )
 #insertstart=( 25000000 31250000 37500000 43750000 ) # 50M 2 clients
 insertstart=( 50000000 62500000 75000000 87500000 ) # 100M 2 clients
 #insertstart=( 100000000 125000000 150000000 175000000 ) # 200M 2 clients
 #insertstart=( 200000000 250000000 300000000 350000000 ) # 400M 2 clients
-
 
 for i in $(seq ${#execution_plans[@]}); do
   $TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 4 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host:2181 -w $workload_type &

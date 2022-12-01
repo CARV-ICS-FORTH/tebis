@@ -38,14 +38,17 @@ tebis_hosts=( sith2.cluster.ics.forth.gr sith3.cluster.ics.forth.gr )
 net_iface=( ens10 ens10 ens10 )
 
 rm -rf .barrier
-
+rm -rf $WORKING_DIR/clients_group1_network_traffic
+mkdir $WORKING_DIR/clients_group1_network_traffic
 for i in $(seq ${#execution_plans[@]}); do
+	mkdir $WORKING_DIR/clients_group1_network_traffic/${workload_folder[$i]}
+	ethtool -S ens10d1 > $WORKING_DIR/clients_group1_network_traffic/${workload_folder[$i]}/counters_start
 	for j in $(seq ${#tebis_hosts[@]}); do
 		#Required for the servers STATS
 		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}
 		mkdir $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
-		#Required for the network traffic
-		ethtool -S ens10d1 > $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}/counters_start
+		#Acquire the network counters for all the servers
+		ssh ${tebis_hosts[$j]} /usr/sbin/ethtool -S ens10d1 > $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}/counters_start
 		#ssh to server and start the statistics
 		ssh ${tebis_hosts[$j]} nohup $WORKING_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 	done
@@ -59,9 +62,10 @@ for i in $(seq ${#execution_plans[@]}); do
 	echo "Cleared the barrier"
 	for tebis_host in ${tebis_hosts[@]}; do
 		ssh $tebis_host $WORKING_DIR/stop_statistics.sh $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}
-		#measure the network counters again
-		ethtool -S ens10d1 > $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}/counters_end
+		#measure the network counters again for the servers
+		ssh $tebis_host /usr/sbin/ethtool -S ens10d1 > $WORKING_DIR/STATS-$tebis_host/${workload_folder[$i]}/counters_end
 	done
+	ethtool -S ens10d1 > $WORKING_DIR/clients_group1_network_traffic/${workload_folder[$i]}/counters_end
 done
 
 printf "\a" # Ring the bell
