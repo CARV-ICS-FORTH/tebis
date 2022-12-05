@@ -114,7 +114,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	struct addrinfo *res;
 	struct addrinfo *rp;
 
-	bzero(&hints, sizeof(hints));
+	memset(&hints, 0, sizeof(hints));
 
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;

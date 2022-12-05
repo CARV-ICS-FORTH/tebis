@@ -1,8 +1,8 @@
 #!/bin/bash
 
-YCSB_DIR=build/YCSB-CXX
+YCSB_DIR=./build/YCSB-CXX
 YCSB_ARGS="-e ./execution_plan.txt -threads 1 -dbnum 1 -w s -outFile "
-DRIVER=ycsb-tcp
+DRIVER=$YCSB_DIR/ycsb-tcp
 INSTANCES=2
 YCSB_LOG_FILE="ops.txt"
 
@@ -19,6 +19,6 @@ fi
 
 for i in $(seq "$INSTANCES"); do
 	YCSB_LOG_FILE="ops_$i.txt"
-	echo "run: \e[1m$DRIVER\e[0;3m $YCSB_ARGS\e[0m" &&
-		./$DRIVER "$YCSB_ARGS" "$YCSB_LOG_FILE" &
+	echo -e "run: \033[1m$DRIVER\033[0;3m $YCSB_ARGS\033[0m" &&
+		$DRIVER "$YCSB_ARGS" "$YCSB_LOG_FILE" &
 done
