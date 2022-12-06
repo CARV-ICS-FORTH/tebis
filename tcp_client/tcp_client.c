@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 
 #include <errno.h>
+#include <log.h>
 #include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +18,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#include <ucontext.h>
 
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
@@ -51,8 +51,8 @@ struct client_handle {
 	uint16_t flags1;
 	uint16_t flags2;
 
-#define MAGIC_INIT_NUM (0xCAFE)
-#define CLHF_SND_REQ (1 << 0)
+	#define MAGIC_INIT_NUM (0xCAFE)
+	#define CLHF_SND_REQ (1 << 0)
 
 	//{ int (*destroy)(void)}
 	// uint64_t x = &((struct client_handle *)(0)->destroy)
@@ -121,16 +121,12 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	hints.ai_flags = AI_ADDRCONFIG | AI_NUMERICSERV;
 
 	if ((retc = getaddrinfo(addr, port, &hints, &res))) {
-		printf("FUCK0\n");
-		gai_strerror(retc); // debug only, set errno ?
+		gai_strerror(retc);
 		return -(EXIT_FAILURE);
 	}
 
 	if (!res)
-	{
-		printf("FUCK1\n");
-		return -(EXIT_FAILURE); // set errno
-	}
+		return -(EXIT_FAILURE);
 
 	for (rp = res; rp; rp = rp->ai_next) {
 		if ((ch->sock = socket(rp->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {
@@ -156,7 +152,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	freeaddrinfo(res);
 
 	errno = ECONNREFUSED;
-	return -(EXIT_FAILURE); // set errno ?
+	return -(EXIT_FAILURE);
 }
 
 int chandle_destroy(cHandle chandle)
@@ -347,13 +343,20 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 	if (tsize <= irep->buf.bytes)
 		irep->buf.mem = (char *)(irep) + sizeof(*irep);
 	else {
-		if (munmap(irep->buf.mem, irep->buf.bytes + sizeof(*irep)) < 0)
+		if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0)
+		{
+			log_error("munmap() failed");
 			return -(EXIT_FAILURE);
+		}
 
 		tsize = ((tsize + sizeof(*irep)) | 0xfffUL) + 1UL;
 
 		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
+		{
+			log_error("mmap() failed");
+			printf("mmap-size = 0x%lx [size=0x%lx]\n", tsize, size);
 			return -(EXIT_FAILURE);
+		}
 
 		irep = *rep;
 		irep->buf.mem = (char *)(irep) + sizeof(*irep);
@@ -438,11 +441,11 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 		return -(EXIT_FAILURE);
 	}
 
-	if (!(ch->flags2 & CLHF_SND_REQ)) // client waits for a 'reply' (not a 'request')
+	/* if (!(ch->flags2 & CLHF_SND_REQ)) // client waits for a 'reply' (not a 'request')
 	{
 		errno = EPERM;
 		return -(EXIT_FAILURE);
-	}
+	} */
 
 	/** END OF ERROR HANDLING **/
 
@@ -456,7 +459,7 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 	return EXIT_SUCCESS;
 }
 
-int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
+int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 {
 	if (!chandle || !rep) {
 		errno = EINVAL;
@@ -464,25 +467,24 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 	}
 
 	struct client_handle *ch = chandle;
-	struct internal_tcp_rep *irep = rep;
+	struct internal_tcp_rep *irep = *rep;
 
 	if (ch->flags1 != MAGIC_INIT_NUM) {
 		errno = EINVAL;
 		return -(EXIT_FAILURE);
 	}
 
-	if (ch->flags2 & CLHF_SND_REQ) {
+	/* if (ch->flags2 & CLHF_SND_REQ) { // per-thread flag
 		errno = EPERM;
 		return -(EXIT_FAILURE);
-	}
+	} */
 
 	/** END OF ERROR HANDLING **/
 
 	int64_t bytes_read;
 
 	if ((bytes_read = read(ch->sock, irep->buf.mem, TT_REPHDR_SIZE)) < 0) {
-		dprint("read() failed!");
-		printf("read() returned: %ld\n", bytes_read);
+		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}
 
@@ -497,15 +499,13 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep restrict rep)
 		return -(EXIT_FAILURE);
 	}
 
-	if (c_tcp_rep_update((void **)&rep, irep->retc, irep->size, irep->count) < 0) {
-		dprint("c_tcp_rep_update() failed!");
+	if (c_tcp_rep_update(rep, irep->retc, irep->size, irep->count) < 0) {
+		log_error("c_tcp_rep_update() failed! (s:%lu, c:%lu)\n", irep->size, irep->count);
 		return -(EXIT_FAILURE);
 	}
 
 	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
-		/// TODO: ask again (irep->size > kernel-recv-buf ????)
-		dprint("read() failed!");
-		printf("read() returned: %ld\n", bytes_read);
+		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}
 

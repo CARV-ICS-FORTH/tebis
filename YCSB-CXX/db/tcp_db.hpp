@@ -1,6 +1,8 @@
 #ifndef YCSB_C_TCP_DB_H
 #define YCSB_C_TCP_DB_H
 
+#define NUM_OF_THR 8
+
 extern "C" {
 #include "tcp_client.h"
 }
@@ -37,9 +39,9 @@ class tcpDB : public YCSBDB {
 	void Close(void) override {return;};
 
     private:
-	cHandle chandle;
-	c_tcp_req req;
-	c_tcp_rep rep;
+	cHandle chandle[NUM_OF_THR];
+	c_tcp_req req[NUM_OF_THR];
+	c_tcp_rep rep[NUM_OF_THR];
 
 	size_t values_size(std::vector<KVPair> &values);
 	int serialize_values(std::vector<KVPair> &values, char *buf);

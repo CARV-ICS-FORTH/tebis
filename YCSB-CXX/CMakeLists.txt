@@ -13,6 +13,7 @@ if(Zookeeper_LIBRARY)
  target_link_libraries(
     ycsb-tcp
     tcp-client
+    log
  )
 
 set_target_properties(

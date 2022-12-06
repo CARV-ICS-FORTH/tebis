@@ -3,7 +3,7 @@
 
 #include "tebis_tcp_types.h"
 
-typedef void *c_tcp_req;
+typedef void *c_tcp_req; /// TODO: change to 'struct internal_tcp_req *' instead of 'void *' (safe coding)
 typedef void *c_tcp_rep;
 typedef void *cHandle;
 
@@ -136,6 +136,6 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req);
  * @param rep
  * @return ssize_t
  */
-int c_tcp_recv_rep(cHandle __restrict__ chandle, c_tcp_rep __restrict__ rep);
+int c_tcp_recv_rep(cHandle __restrict__ chandle, c_tcp_rep * rep); /** TODO: put 'restrict' again */
 
 #endif /** TEBIS_TCP_CLIENT_H **/

@@ -123,9 +123,9 @@ uint64_t DelegateLoadClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, 
 	for (uint64_t i = 0; ((i < num_ops) && (!cancelled)); ++i) {
 		oks += client.DoInsert(&tmp);
 		ops_data[id] = oks;
-#ifdef COMPUTE_TAIL
+	#ifdef COMPUTE_TAIL
 		tail->addLatency(id, LOAD, tmp);
-#endif
+	#endif
 	}
 	*finished = 1;
 	return oks;
@@ -142,7 +142,7 @@ uint64_t DelegateRunClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, u
 	for (uint64_t i = 0; ((i < num_ops) && (!cancelled)); ++i) {
 		oks += client.DoTransaction(&tmp, &op);
 		ops_data[id] = oks;
-#ifdef COMPUTE_TAIL
+	#ifdef COMPUTE_TAIL
 		Op _op;
 
 		if (op == 0)
@@ -159,7 +159,7 @@ uint64_t DelegateRunClient(ycsbc::YCSBDB *db, ycsbc::CoreWorkload *wl, int id, u
 			std::cerr << "ERROR WRONG OP!" << std::endl;
 
 		tail->addLatency(id, _op, tmp);
-#endif
+	#endif
 	}
 	*finished = 1;
 	return oks;
@@ -174,10 +174,10 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 	std::atomic_bool cancellation_token(false);
 	std::vector<uint64_t> ops_data;
 
-#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
+	#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail = new Measurements(num_threads);
 	tail->ResetStatistics();
-#endif
+	#endif
 
 	vector<future<uint64_t> > actual_ops;
 	std::vector<uint64_t> finished;
@@ -220,11 +220,11 @@ void execute_load(utils::Properties &props, ycsbc::YCSBDB *db)
 		while (finished[i] == 0)
 			;
 
-#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
+	#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);
 	//delete tail;
 	tail = nullptr;
-#endif
+	#endif
 }
 
 void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
@@ -240,10 +240,10 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 	ops_data.reserve(num_threads);
 	finished.reserve(num_threads);
 
-#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
+	#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail = new Measurements(num_threads);
 	tail->ResetStatistics();
-#endif
+	#endif
 
 	vector<future<uint64_t> > actual_ops;
 	uint64_t total_ops = std::stoull(props[ycsbc::CoreWorkload::OPERATION_COUNT_PROPERTY]);
@@ -281,11 +281,11 @@ void execute_run(utils::Properties &props, ycsbc::YCSBDB *db)
 		while (finished[i] == 0)
 			;
 
-#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
+	#if defined COMPUTE_TAIL || defined COMPUTE_TAIL_ASYNC
 	tail->printStatistics(ofil);
 	//delete tail;
 	tail = nullptr;
-#endif
+	#endif
 }
 
 int main(const int argc, const char *argv[])

@@ -62,7 +62,7 @@ typedef struct {
 } tcp_rep;
 
 server_handle *g_sh; // debug
-char g_dummy_responce[1000];
+char g_dummy_responce[40];
 
 #define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
 #define is_req_init_conn_type(req) (((req).type) == REQ_INIT_CONN)
@@ -222,7 +222,7 @@ static void *thread_routine(void *arg)
 			{
 				if (clifd == this->sock) /** new connection **/
 				{
-					printf("new connection!\n");
+					log_info("new connection!\n");
 					handle_new_connection(this);
 				} else { /** request **/
 
@@ -244,7 +244,7 @@ static void *thread_routine(void *arg)
 
 					if (is_req_init_conn_type(req)) {
 						if (client_version_check(clifd, this) < 0) {
-							log_warn("thread_routine::client_version_check()");
+							log_error("thread_routine::client_version_check()");
 							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
 								  NULL); // kernel 2.6+
 							close(clifd);
@@ -276,12 +276,12 @@ static void *thread_routine(void *arg)
 
 					/* tebis_handle_request(); */
 
-					/** temp response (solution) **/
+					/** temp response **/
 
-					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 10UL);
+					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 40UL);
 					char *tptr = s_tcp_rep_expose_payload(rep);
-					*((uint64_t *)(tptr)) = 1000UL;
-					memcpy(tptr + sizeof(uint64_t), g_dummy_responce, 10UL);
+					*((uint64_t *)(tptr)) = 40UL;
+					memcpy(tptr + sizeof(uint64_t), g_dummy_responce, 40UL);
 
 					if (tcp_send_rep(clifd, rep) < 0) {
 						log_error("tcp_send_rep()");
@@ -299,7 +299,7 @@ static void *thread_routine(void *arg)
 				}
 			} else if (eventbits & EPOLLERR) /** error **/
 			{
-				//log_warn("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
+				log_error("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
 				/** TODO: error handling */
 				continue;
 			}
@@ -433,7 +433,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-cleanup:
+	cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);
