@@ -1,6 +1,6 @@
 XFS
 
-mkfs.xfs -K /dev/sdx 
+mkfs.xfs -K /dev/sdx
 
 EXT4
 

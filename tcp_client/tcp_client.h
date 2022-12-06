@@ -136,6 +136,6 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req);
  * @param rep
  * @return ssize_t
  */
-int c_tcp_recv_rep(cHandle __restrict__ chandle, c_tcp_rep * rep); /** TODO: put 'restrict' again */
+int c_tcp_recv_rep(cHandle __restrict__ chandle, c_tcp_rep *rep); /** TODO: put 'restrict' again */
 
 #endif /** TEBIS_TCP_CLIENT_H **/

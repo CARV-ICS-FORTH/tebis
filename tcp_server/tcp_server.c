@@ -433,7 +433,7 @@ int shandle_init(sHandle restrict *restrict shandle, int afamily, const char *re
 
 	return EXIT_SUCCESS;
 
-	cleanup:
+cleanup:
 	close(sh->sock);
 	close(sh->epfd);
 	free(*shandle);

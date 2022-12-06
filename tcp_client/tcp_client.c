@@ -18,7 +18,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
@@ -51,8 +50,8 @@ struct client_handle {
 	uint16_t flags1;
 	uint16_t flags2;
 
-	#define MAGIC_INIT_NUM (0xCAFE)
-	#define CLHF_SND_REQ (1 << 0)
+#define MAGIC_INIT_NUM (0xCAFE)
+#define CLHF_SND_REQ (1 << 0)
 
 	//{ int (*destroy)(void)}
 	// uint64_t x = &((struct client_handle *)(0)->destroy)
@@ -343,16 +342,14 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 	if (tsize <= irep->buf.bytes)
 		irep->buf.mem = (char *)(irep) + sizeof(*irep);
 	else {
-		if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0)
-		{
+		if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0) {
 			log_error("munmap() failed");
 			return -(EXIT_FAILURE);
 		}
 
 		tsize = ((tsize + sizeof(*irep)) | 0xfffUL) + 1UL;
 
-		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
-		{
+		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED) {
 			log_error("mmap() failed");
 			printf("mmap-size = 0x%lx [size=0x%lx]\n", tsize, size);
 			return -(EXIT_FAILURE);

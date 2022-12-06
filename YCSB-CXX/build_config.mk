@@ -38,5 +38,5 @@ TUCDB_LIBS=-lpthread -lm  -lzookeeper_mt -lrdmacm -libverbs   -D_GNU_SOURCE
 TUCDB_LFLAGS=-lpthread -lm -lzookeeper_mt -lrdmacm -libverbs -D_GNU_SOURCE
 
 
-#INCLUDES=-I../ -I/root/tbb44_20150728oss/include 
+#INCLUDES=-I../ -I/root/tbb44_20150728oss/include
 #LDFLAGS=-Wl,-rpath,/root/tbb44_20150728oss/build/linux_intel64_gcc_cc4.4.7_libc2.12_kernel3.12.43_release -L/root/tbb44_20150728oss/build/linux_intel64_gcc_cc4.4.7_libc2.12_kernel3.12.43_release/ -lpthread -ltbb
