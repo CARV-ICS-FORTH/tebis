@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
 #define SITH4_IP_56G
 #define SITH5_IP_56G "192.168.2.125"
@@ -17,7 +18,7 @@ int main(int argc, char **argv)
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, "139.91.92.134", 25565, 8)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, SITH5_IP_56G, 25565, 16)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}

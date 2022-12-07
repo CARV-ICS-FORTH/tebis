@@ -9,6 +9,7 @@ extern "C" {
 #include <log.h>
 }
 
+#define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
 #define SITH4_IP_56G
 #define SITH5_IP_56G "192.168.2.125"
@@ -46,7 +47,7 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 tcpDB::tcpDB(int num) /* OK */
 {
 	for (uint i = 0U; i < NUM_OF_THR; ++i) {
-		if (chandle_init(this->chandle + i, "139.91.92.134", "25565") < 0) {
+		if (chandle_init(this->chandle + i, SITH5_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
