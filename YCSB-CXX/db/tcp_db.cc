@@ -46,18 +46,18 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 tcpDB::tcpDB(int num) /* OK */
 {
 	for (uint i = 0U; i < NUM_OF_THR; ++i) {
-		if (chandle_init(this->chandle + i, SITH5_IP_56G, "25565") < 0) {
-			log_error("chandle_init()");
+		if (chandle_init(this->chandle + i, "139.91.92.134", "25565") < 0) {
+			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
 
 		if (!(this->req[i] = c_tcp_req_factory(NULL, REQ_GET, TT_DEF_KEYSZ, TT_DEF_PAYSZ))) {
-			log_error("c_tcp_req_new() failed >");
+			perror("c_tcp_req_new() failed >");
 			exit(EXIT_FAILURE);
 		}
 
 		if (!(this->rep[i] = c_tcp_rep_new(TT_DEF_REPSZ))) {
-			log_error("c_tcp_rep_new() failed >");
+			perror("c_tcp_rep_new() failed >");
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -80,7 +80,7 @@ int tcpDB::Read(int id, const std::string &table, const std::string &key, const 
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 
 	if (!__key) {
-		log_error("c_tcp_req_expose_key() failed >");
+		perror("c_tcp_req_expose_key() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
@@ -89,14 +89,14 @@ int tcpDB::Read(int id, const std::string &table, const std::string &key, const 
 	memcpy(__key, key.c_str(), key.size());
 
 	if (c_tcp_send_req(this->chandle[id], this->req[id]) < 0) {
-		log_error("c_tcp_send_req() failed >");
+		perror("c_tcp_send_req() failed >");
 		return -(EXIT_FAILURE);
 	}
 
 	/* wait for the reply from the server */
 
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
-		log_error("c_tcp_recv_rep() failed >");
+		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
 
@@ -110,19 +110,21 @@ int tcpDB::Read(int id, const std::string &table, const std::string &key, const 
 int tcpDB::Scan(int id, const std::string &table, const std::string &key, int record_count,
 		const std::vector<std::string> *fields, std::vector<KVPair> &result) /* Under Construction */
 {
+	throw "not supported!";
+
 	c_tcp_req_factory(&this->req[id], REQ_SCAN, key.size(), record_count);
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 
 	if (!__key) {
-		log_error("c_tcp_req_expose_key() failed >");
+		perror("c_tcp_req_expose_key() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req[id]);
 
 	if (!__pay) {
-		log_error("c_tcp_req_expose_payload() failed >");
+		perror("c_tcp_req_expose_payload() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
@@ -132,14 +134,14 @@ int tcpDB::Scan(int id, const std::string &table, const std::string &key, int re
 	memcpy(__pay, &record_count, sizeof(record_count));
 
 	if (c_tcp_send_req(this->chandle[id], this->req[id]) < 0) {
-		log_error("c_tcp_send_req() failed >");
+		perror("c_tcp_send_req() failed >");
 		return -(EXIT_FAILURE);
 	}
 
 	/* wait for the reply from the server */
 
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
-		log_error("c_tcp_recv_rep() failed >");
+		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
 
@@ -157,14 +159,14 @@ int tcpDB::Update(int id, const std::string &table, const std::string &key, std:
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 
 	if (!__key) {
-		log_error("c_tcp_req_expose_key() failed >");
+		perror("c_tcp_req_expose_key() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req[id]);
 
 	if (!__pay) {
-		log_error("c_tcp_req_expose_payload() failed >");
+		perror("c_tcp_req_expose_payload() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
@@ -172,14 +174,14 @@ int tcpDB::Update(int id, const std::string &table, const std::string &key, std:
 	this->serialize_values(values, __pay);
 
 	if (c_tcp_send_req(this->chandle[id], this->req[id]) < 0) {
-		log_error("c_tcp_send_req() failed >");
+		perror("c_tcp_send_req() failed >");
 		return -(EXIT_FAILURE);
 	}
 
 	/* wait for the reply from the server */
 
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
-		log_error("c_tcp_recv_rep() failed >");
+		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
 
@@ -193,14 +195,14 @@ int tcpDB::Insert(int id, const std::string &table, const std::string &key, std:
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 
 	if (!__key) {
-		log_error("c_tcp_req_expose_key() failed >");
+		perror("c_tcp_req_expose_key() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
 	char *__pay = (char *)c_tcp_req_expose_payload(this->req[id]);
 
 	if (!__pay) {
-		log_error("c_tcp_req_expose_payload() failed >");
+		perror("c_tcp_req_expose_payload() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
@@ -217,7 +219,7 @@ int tcpDB::Insert(int id, const std::string &table, const std::string &key, std:
 	/* wait for the reply from the server */
 
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
-		log_error("c_tcp_recv_rep(%d) failed", id);
+		log_error("c_tcp_recv_rep(%d) failed\n", id);
 		perror("recv_rep()");
 		return -(EXIT_FAILURE);
 	}
@@ -232,7 +234,7 @@ int tcpDB::Delete(int id, const std::string &table, const std::string &key) /* O
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 
 	if (!__key) {
-		log_error("c_tcp_req_expose_key() failed >");
+		perror("c_tcp_req_expose_key() failed >");
 		return YCSBDB::kErrorNoData;
 	}
 
@@ -241,14 +243,14 @@ int tcpDB::Delete(int id, const std::string &table, const std::string &key) /* O
 	memcpy(__key, key.c_str(), key.size());
 
 	if (c_tcp_send_req(this->chandle, this->req[id]) < 0) {
-		log_error("c_tcp_send_req() failed >");
+		perror("c_tcp_send_req() failed >");
 		return -(EXIT_FAILURE);
 	}
 
 	/* wait for the reply from the server */
 
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
-		log_error("c_tcp_recv_rep() failed >");
+		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
 

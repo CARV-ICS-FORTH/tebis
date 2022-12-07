@@ -69,14 +69,14 @@ static int server_version_check(int ssock)
 	*(tbuf + 1UL) = htobe32(TT_VERSION);
 
 	if (send(ssock, tbuf, 5UL, 0) < 0) {
-		dprint("send()");
+		log_error("send()");
 		return -(EXIT_FAILURE);
 	}
 
 	int64_t ret = recv(ssock, tbuf, 4UL, 0);
 
 	if (ret < 0) {
-		dprint("recv()");
+		log_error("recv()");
 		return -(EXIT_FAILURE);
 	} else if (!ret) {
 		fprintf(stderr, "server has been shut down!\n");
@@ -96,7 +96,7 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	}
 
 	if (!(*chandle = malloc(sizeof(struct client_handle)))) {
-		dprint("malloc()");
+		log_error("malloc()");
 		return -(EXIT_FAILURE);
 	}
 
@@ -351,6 +351,7 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 
 		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED) {
 			log_error("mmap() failed");
+			perror("mmap()");
 			printf("mmap-size = 0x%lx [size=0x%lx]\n", tsize, size);
 			return -(EXIT_FAILURE);
 		}
@@ -501,7 +502,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 		return -(EXIT_FAILURE);
 	}
 
-	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
+	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size - TT_REPHDR_SIZE)) < 0) {
 		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}

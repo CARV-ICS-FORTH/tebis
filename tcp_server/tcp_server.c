@@ -62,7 +62,7 @@ typedef struct {
 } tcp_rep;
 
 server_handle *g_sh; // debug
-char g_dummy_responce[40];
+char g_dummy_responce[1000];
 
 #define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
 #define is_req_init_conn_type(req) (((req).type) == REQ_INIT_CONN)
@@ -111,7 +111,7 @@ static int client_version_check(int clifd, worker_t *worker)
 	}
 
 	if (send(clifd, &version, sizeof(version), 0) < 0) {
-		log_error("client_version_check::send()\n");
+		perror("client_version_check::send()\n");
 
 		errno = ECONNABORTED;
 		return -(EXIT_FAILURE);
@@ -120,7 +120,7 @@ static int client_version_check(int clifd, worker_t *worker)
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = clifd };
 
 	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, clifd, &epev) < 0) {
-		log_error("client_version_check::epoll_ctl(MOD)");
+		perror("client_version_check::epoll_ctl(MOD)");
 		exit(EXIT_FAILURE);
 	}
 
@@ -149,7 +149,7 @@ static int handle_new_connection(worker_t *this)
 				    EWOULDBLOCK) /** TODO: is this ever going to happen? I don't think so, remove that? */
 				break;
 
-			log_error("handle_new_connection::accept4()");
+			perror("handle_new_connection::accept4()");
 			continue; // replace with "return -(EXIT_FAILURE)" ? EPOLLET
 		}
 
@@ -157,7 +157,7 @@ static int handle_new_connection(worker_t *this)
 		epev.events = EPOLLIN | EPOLLONESHOT;
 
 		if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
-			log_error("handle_new_connection::epoll_ctl(ADD)");
+			perror("handle_new_connection::epoll_ctl(ADD)");
 			close(tmpfd);
 
 			return -(EXIT_FAILURE);
@@ -195,7 +195,7 @@ static void *thread_routine(void *arg)
 		norfds = epoll_wait(this->epfd, events, EPOLL_MAX_EVENTS, -1);
 
 		if (norfds < 0) {
-			log_error("epoll()");
+			perror("epoll()");
 			continue;
 		}
 
@@ -214,7 +214,7 @@ static void *thread_routine(void *arg)
 			{
 				/** terminate connection with client **/
 
-				printf("terminating connection...\n");
+				log_error("terminating connection...\n");
 
 				epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 				close(clifd);
@@ -222,7 +222,7 @@ static void *thread_routine(void *arg)
 			{
 				if (clifd == this->sock) /** new connection **/
 				{
-					log_info("new connection!\n");
+					log_info("new connection\n");
 					handle_new_connection(this);
 				} else { /** request **/
 
@@ -232,7 +232,7 @@ static void *thread_routine(void *arg)
 					if (tmp < 0) /** errors **/
 					{
 						if (tmp == TT_ERR_CONN_DROP)
-							printf("conenction was closed by peer\n");
+							log_info("conenction was closed by peer\n");
 						else
 							log_error("thread_routine::get_req_hdr()");
 
@@ -244,7 +244,7 @@ static void *thread_routine(void *arg)
 
 					if (is_req_init_conn_type(req)) {
 						if (client_version_check(clifd, this) < 0) {
-							log_error("thread_routine::client_version_check()");
+							log_error("thread_routine::client_version_check(): %s", strerror(errno));
 							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
 								  NULL); // kernel 2.6+
 							close(clifd);
@@ -254,7 +254,7 @@ static void *thread_routine(void *arg)
 					}
 
 					if (is_req_invalid(req.type)) {
-						log_warn("invalid request");
+						log_warn("invalid request, terminating connection...");
 
 						/** TODO: send() retcode + discard receive buffer instead of CTL_DEL */
 
@@ -264,7 +264,7 @@ static void *thread_routine(void *arg)
 					}
 
 					if (tcp_recv_req(this, clifd, &req) < 0) {
-						log_error("tcp_recv_req()");
+						log_error("tcp_recv_req(): %s", strerror(errno));
 
 						/** TODO: respond with an error message, insted of just close(clifd) */
 
@@ -276,7 +276,7 @@ static void *thread_routine(void *arg)
 
 					/* tebis_handle_request(); */
 
-					/** temp response **/
+					/** temp response (SCAN not supported) **/
 
 					s_tcp_rep *rep = s_tcp_rep_new(this, TT_REQ_SUCC, 40UL);
 					char *tptr = s_tcp_rep_expose_payload(rep);
@@ -284,7 +284,7 @@ static void *thread_routine(void *arg)
 					memcpy(tptr + sizeof(uint64_t), g_dummy_responce, 40UL);
 
 					if (tcp_send_rep(clifd, rep) < 0) {
-						log_error("tcp_send_rep()");
+						log_error("tcp_send_rep(): %s", strerror(errno));
 
 						epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd, NULL); // kernel 2.6+
 						close(clifd);
@@ -299,7 +299,7 @@ static void *thread_routine(void *arg)
 				}
 			} else if (eventbits & EPOLLERR) /** error **/
 			{
-				log_error("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
+				// perror("t%d events[%d] = EPOLLER\n", gettid(), fdindex);
 				/** TODO: error handling */
 				continue;
 			}
@@ -462,11 +462,13 @@ int shandle_destroy(sHandle shandle)
 
 s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 {
+	/** TODO: make that work for Scan request too */
+
 	tcp_rep *trep = (void *)(this->buf.mem);
 	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
 
 	if (retcode == TT_REQ_SUCC)
-		tsize += paysz; // extra page for future use!
+		tsize += paysz + 8UL;  //temp
 	else
 		paysz = 0UL; // failure-reply has 0-length payload
 
@@ -483,7 +485,7 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 
 	*((char *)(trep->buf.mem)) = retcode;
 	*((uint64_t *)(trep->buf.mem + 1UL)) = htobe64(1UL); // count
-	*((uint64_t *)(trep->buf.mem + 9UL)) = htobe64(8UL + 10UL); // total-size
+	*((uint64_t *)(trep->buf.mem + 9UL)) = htobe64(paysz + 8UL); // total-size
 	trep->buf.mem += TT_REPHDR_SIZE;
 
 	return trep;
