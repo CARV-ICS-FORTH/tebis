@@ -1,10 +1,11 @@
 #include "build_index.h"
+#include "../rdma_buffer_iterator/rdma_buffer_iterator.h"
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
+#include "build_index_callbacks.h"
 #include "log.h"
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
-#include "../rdma_buffer_iterator/rdma_buffer_iterator.h"
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -54,4 +55,16 @@ void rco_build_index(struct rco_build_index_task *task)
 		insert_kv(unterminated_iterator, task->r_desc);
 		rdma_buffer_iterator_next(unterminated_iterator);
 	}
+}
+
+struct parallax_callback_funcs get_build_index_callbacks(void)
+{
+	struct parallax_callback_funcs build_index_callbacks = { 0 };
+	build_index_callbacks.segment_is_full_cb = build_index_segment_is_full_callback;
+	return build_index_callbacks;
+}
+
+void *build_index_get_context(void)
+{
+	return NULL;
 }

@@ -86,7 +86,7 @@ else()
   FetchContent_Declare(
     parallax
     GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-    GIT_TAG teboparallax)
+    GIT_TAG teboparallax_synced)
 
 endif(USE_FORKED_PARALLAX)
 unset(USE_FORKED_PARALLAX CACHE)
