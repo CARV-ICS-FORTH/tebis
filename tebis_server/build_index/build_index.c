@@ -57,7 +57,7 @@ void rco_build_index(struct rco_build_index_task *task)
 	}
 }
 
-struct parallax_callback_funcs get_build_index_callbacks(void)
+struct parallax_callback_funcs build_index_get_callbacks(void)
 {
 	struct parallax_callback_funcs build_index_callbacks = { 0 };
 	build_index_callbacks.segment_is_full_cb = build_index_segment_is_full_callback;
