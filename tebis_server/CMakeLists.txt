@@ -9,6 +9,7 @@ add_library(
   ../tebis_rdma_client/msg_factory.c
   ../tebis_rdma_client/tebis_rdma_client.c
   ../tebis_server/globals.c
+  ../common/common.c
   zk_utils.c
   djb2.c)
 add_dependencies(tebis_client cjson)

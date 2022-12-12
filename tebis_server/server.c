@@ -536,7 +536,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		} else {
 			if (spinner->num_of_outstanding_client_req > MAX_OUTSTANDING_REQUESTS) {
 				//log_debug("I am full, can not serve more");
-				return KREON_FAILURE;
+				return TEBIS_FAILURE;
 			}
 			__sync_fetch_and_add(&spinner->num_of_outstanding_client_req, 1);
 			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
@@ -624,7 +624,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		sem_post(&spinner->worker[worker_id].sem);
 	}
 
-	return KREON_SUCCESS;
+	return TEBIS_SUCCESS;
 }
 
 static void ds_check_idle_workers(struct ds_spinning_thread *spinner)
@@ -663,7 +663,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 
 		++total_halted_tasks;
 		int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
-		if (rc == KREON_FAILURE) {
+		if (rc == TEBIS_FAILURE) {
 			log_fatal("Failed to reschedule task");
 			_exit(EXIT_FAILURE);
 		}
@@ -777,7 +777,7 @@ static void *server_spinning_thread_kernel(void *args)
 				/*normal messages*/
 				hdr->receive = 0;
 				rc = assign_job_to_worker(spinner, conn, hdr, NULL);
-				if (rc == KREON_FAILURE) {
+				if (rc == TEBIS_FAILURE) {
 					// all workers are busy let's see messages from other connections
 					// Caution! message not consumed leave the rendezvous points as is
 					hdr->receive = recv;
@@ -942,7 +942,7 @@ static uint32_t got_all_get_rdma_buffers_replies(struct krm_region_desc *r_desc)
 				(struct s2s_msg_get_rdma_buffer_rep *)(((char *)r_desc->m_state->primary_to_backup[i]
 										.msg_pair.reply) +
 								       sizeof(struct msg_header));
-			assert(rep->status == KREON_SUCCESS);
+			assert(rep->status == TEBIS_SUCCESS);
 
 			initialize_rdma_buf_metadata(&r_desc->m_state->l0_recovery_rdma_buf, i, rep,
 						     L0_RECOVERY_RDMA_BUF);
@@ -1419,7 +1419,7 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
 			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
 			msg_put_rep *put_rep = (msg_put_rep *)((char *)task->reply_msg + sizeof(msg_header));
-			put_rep->status = KREON_SUCCESS;
+			put_rep->status = TEBIS_SUCCESS;
 			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 		} else {
 			log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
@@ -1578,7 +1578,7 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 		int rc = msg_push_to_multiget_buf(key, value, buf);
 		done_with_kv_pointer(sc);
 
-		if (rc == KREON_SUCCESS) {
+		if (rc == TEBIS_SUCCESS) {
 			while (buf->num_entries <= multi_get->max_num_entries) {
 				if (getNext(sc) == END_OF_DATABASE) {
 					buf->end_of_region = 1;
@@ -1596,7 +1596,7 @@ static void execute_multi_get_req(struct krm_server_desc const *mydesc, struct k
 
 				rc = msg_push_to_multiget_buf(key, value, buf);
 				done_with_kv_pointer(sc);
-				if (rc == KREON_FAILURE) {
+				if (rc == TEBIS_FAILURE) {
 					break;
 				}
 			}
@@ -1675,10 +1675,10 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 	task->kreon_operation_status = TASK_COMPLETE;
 	// caution delete key needs KV_FORMAT!
 	if (delete_key(r_desc->db, &del_req->key_size) == SUCCESS) {
-		del_rep->status = KREON_SUCCESS;
+		del_rep->status = TEBIS_SUCCESS;
 		// log_info("Deleted key %s successfully", del_req->key);
 	} else {
-		del_rep->status = KREON_FAILURE;
+		del_rep->status = TEBIS_FAILURE;
 		// log_info("Deleted key %s not found!", del_req->key);
 	}
 */
@@ -1795,7 +1795,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 
 	struct s2s_msg_flush_cmd_rep *flush_rep =
 		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	flush_rep->status = KREON_SUCCESS;
+	flush_rep->status = TEBIS_SUCCESS;
 
 	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
@@ -1965,7 +1965,7 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 				   task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_get_rdma_buffer_rep *rep =
 		(struct s2s_msg_get_rdma_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	rep->status = KREON_SUCCESS;
+	rep->status = TEBIS_SUCCESS;
 	rep->l0_recovery_mr = *r_desc->r_state->l0_recovery_rdma_buf.mr;
 	rep->big_recovery_mr = *r_desc->r_state->big_recovery_rdma_buf.mr;
 
@@ -2023,7 +2023,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *g_rep =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	g_rep->status = KREON_SUCCESS;
+	g_rep->status = TEBIS_SUCCESS;
 	g_rep->num_buffers = g_req->num_buffers;
 	for (int i = 0; i < g_rep->num_buffers; i++)
 		g_rep->mr = *r_desc->r_state->index_buffers[g_req->level_id][i];
@@ -2175,7 +2175,7 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 
 	struct s2s_msg_replica_index_flush_rep *rep =
 		(struct s2s_msg_replica_index_flush_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
-	rep->status = KREON_SUCCESS;
+	rep->status = TEBIS_SUCCESS;
 	//GESALOUS check this
 	rep->seg_id = f_req->seg_id;
 

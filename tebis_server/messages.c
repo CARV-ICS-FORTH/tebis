@@ -10,7 +10,7 @@ int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *bu
 {
 	uint32_t total_size = key->size + val->size + sizeof(msg_key) + sizeof(msg_value);
 	if (buf->remaining < total_size) {
-		return KREON_FAILURE;
+		return TEBIS_FAILURE;
 	}
 	memcpy(buf->kv_buffer + buf->pos, key, sizeof(msg_key) + key->size);
 	//log_info("key %s", buf->kv_buffer + buf->pos+4);
@@ -24,5 +24,5 @@ int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *bu
 	++buf->num_entries;
 	//log_info("entries %u",buf->num_entries);
 	//log_info("added key %u:%s and val size %u",key->size, key->key,val->size);
-	return KREON_SUCCESS;
+	return TEBIS_SUCCESS;
 }

@@ -196,9 +196,9 @@ int client_send_rdma_message(struct connection_rdma *conn, struct msg_header *ms
 	client_rdma_init_message_context(&msg_ctx, msg);
 	msg_ctx.on_completion_callback = on_completion_client;
 	int ret = __send_rdma_message(conn, msg, &msg_ctx);
-	if (ret == KREON_SUCCESS) {
+	if (ret == TEBIS_SUCCESS) {
 		if (!client_rdma_send_message_success(&msg_ctx))
-			ret = KREON_FAILURE;
+			ret = TEBIS_FAILURE;
 	}
 	return ret;
 }
@@ -271,7 +271,7 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		}
 	}
 
-	return KREON_SUCCESS;
+	return TEBIS_SUCCESS;
 }
 
 void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply)
@@ -881,7 +881,7 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 		log_fatal("conn type is %d %s\n", conn->type, ibv_wc_status_str(wc->status));
 		conn->status = CONNECTION_ERROR;
 		/*raise(SIGINT);*/
-		_exit(KREON_FAILURE);
+		_exit(TEBIS_FAILURE);
 	}
 
 	free(msg_ctx);

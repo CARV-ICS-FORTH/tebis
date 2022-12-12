@@ -350,7 +350,7 @@ void cu_close_open_connections(void)
 			req_header->offset_reply_in_recv_buffer = UINT32_MAX;
 			req_header->reply_length_in_recv_buffer = 0;
 
-			if (client_send_rdma_message(current->connections[i], req_header) != KREON_SUCCESS) {
+			if (client_send_rdma_message(current->connections[i], req_header) != TEBIS_SUCCESS) {
 				log_warn("failed to send message");
 				_exit(EXIT_FAILURE);
 			}
