@@ -46,15 +46,6 @@ par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_
 		_exit(EXIT_FAILURE);
 	}
 
-	// assign the tebis callbacks into Parallax
-	struct parallax_callback_funcs tebis_callbacks = build_index_get_callbacks();
-	void *tebis_callbacks_context = build_index_get_context();
-	if (globals_get_send_index()) {
-		log_fatal("Tebis send index functions are not yet implemented");
-		_exit(EXIT_FAILURE);
-	}
-	parallax_init_callbacks(handle, &tebis_callbacks, tebis_callbacks_context);
-
 	return handle;
 }
 
@@ -1308,7 +1299,7 @@ void *krm_metadata_server(void *args)
 
 				// open the db
 				// TODO replace db_open with custom db open as should be
-				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_PRIMARY);
+				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_BACKUP);
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;

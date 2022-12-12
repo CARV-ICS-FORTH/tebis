@@ -2,14 +2,16 @@
 * Created by Pilar Gonzalez-Ferez on 28/07/16.
  * Copyright (c) 2016 Pilar Gonzalez Ferez <pilar@ics.forth.gr>.
 */
-
-#pragma once
+#ifndef TEBIS_MESSAGES_H
+#define TEBIS_MESSAGES_H
 #include "conf.h"
+#include "include/parallax/parallax.h"
 #include <assert.h>
 #include <infiniband/verbs.h>
 #include <inttypes.h>
 #include <semaphore.h>
 #include <time.h>
+
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
 #define NUMBER_OF_TASKS 11
@@ -147,15 +149,10 @@ struct s2s_msg_get_rdma_buffer_rep {
 /*flush command pair*/
 struct s2s_msg_flush_cmd_req {
 	/*where primary has stored its segment*/
-	uint64_t master_segment;
-	uint64_t segment_id;
-	uint64_t end_of_log;
-	uint64_t log_padding;
-	uint64_t tail;
+	uint64_t primary_segment_offt;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
-	uint32_t is_partial;
-	uint32_t log_buffer_id;
 	uint32_t region_key_size;
+	enum log_category log_type;
 };
 
 struct s2s_msg_flush_cmd_rep {
@@ -197,3 +194,5 @@ struct s2s_msg_replica_index_flush_rep {
 };
 
 int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *buf);
+
+#endif // TEBIS_MESSAGES_H

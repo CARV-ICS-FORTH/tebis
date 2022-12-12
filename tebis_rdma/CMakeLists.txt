@@ -13,7 +13,7 @@ add_library(
   ../utilities/circular_buffer.c
   ../tebis_server/list.c)
 
-target_link_libraries(tebis_rdma ${Zookeeper_LIBRARY})
+target_link_libraries(tebis_rdma ${Zookeeper_LIBRARY} parallax)
 
 if(tebis_BUILD_CPACK)
   install(

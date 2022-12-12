@@ -86,7 +86,7 @@ enum krm_work_task_status {
 	TASK_NO_OP
 };
 
-enum tb_kv_category { SMALLORMEDIUM = 0, BIG };
+enum tb_kv_category { SMALLORMEDIUM_KV_CAT = 0, BIG_KV_CAT };
 
 enum tb_rdma_buf_category { L0_RECOVERY_RDMA_BUF, BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
@@ -104,6 +104,7 @@ struct krm_work_task {
 	/*from client*/
 	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
 	volatile uint64_t *replicated_bytes;
+	struct par_put_metadata insert_metadata;
 	uint32_t last_replica_to_ack;
 	uint64_t msg_payload_size;
 	/*possible messages to other server generated from this task*/
@@ -209,8 +210,8 @@ struct krm_region {
 };
 
 struct krm_segment_entry {
-	uint64_t master_seg;
-	uint64_t my_seg;
+	uint64_t primary_segment_offt;
+	uint64_t replica_segment_offt;
 	UT_hash_handle hh;
 };
 

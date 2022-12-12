@@ -13,6 +13,7 @@
 // limitations under the License.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include "allocator/log_structures.h"
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
 #include "conf.h"
@@ -1089,16 +1090,8 @@ static void krm_leave_parallax(struct krm_region_desc *r_desc)
 static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
 			       struct krm_work_task *task)
 {
-	(void)task;
-	//where primary has stored its segment
-	//flush_request->is_partial = UINT32_MAX; /*unused..*/
-	//flush_request->log_buffer_id = task->seg_id_to_flush; /*unused*/
-	//flush_request->master_segment = task->ins_req.metadata.log_segment_addr; /*unused*/
-	// log_info("Sending flush command for segment %llu",
-	// flush_request->master_segment);
-	//flush_request->segment_id = task->ins_req.metadata.segment_id; /*unused*/
-	//flush_request->end_of_log = task->ins_req.metadata.end_of_log; /*unused*/
-	//flush_request->log_padding = task->ins_req.metadata.log_padding; /*unused*/
+	flush_request->primary_segment_offt = task->insert_metadata.flush_segment_offt;
+	flush_request->log_type = task->insert_metadata.log_type;
 	flush_request->region_key_size = r_desc->region->min_key_size;
 	strcpy(flush_request->region_key, r_desc->region->min_key);
 }
@@ -1106,7 +1099,7 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
 /** Fills the replication fields of a put msg. Only put msgs need to be replicated.
  *  The space of these fields is preallocated from the client in order to have zero copy transfer
  *  from primaries to backups
- *  The replications fields are |lsn|log_offt|sizes_tail|payload_tail|*/
+ *  The replications fields are |lsn|sizes_tail|payload_tail|*/
 static void fill_replication_fields(msg_header *msg, struct par_put_metadata metadata)
 {
 	assert(msg);
@@ -1115,20 +1108,6 @@ static void fill_replication_fields(msg_header *msg, struct par_put_metadata met
 	struct kv_splice *kv = put_msg_get_kv_offset(msg);
 	set_sizes_tail(kv, TU_RDMA_REPLICATION_MSG);
 	set_payload_tail(kv, TU_RDMA_REPLICATION_MSG);
-}
-
-inline static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
-{
-	/*if (task->kv_category == BIG)
-		log_debug("[current end of big buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
-	else
-		log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
-	put_msg_print_msg(task->msg);
-	*/
-	if (r_buf->segment.curr_end >= r_buf->segment.start &&
-	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
-		return 1;
-	return 0;
 }
 
 void insert_kv_to_store(struct krm_work_task *task)
@@ -1150,13 +1129,14 @@ void insert_kv_to_store(struct krm_work_task *task)
 		krm_leave_parallax(task->r_desc);
 		return;
 	}
+	task->insert_metadata = metadata;
+
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
-		/*this needs the Parallax support*/
 		fill_replication_fields(task->msg, metadata);
-		task->kv_category = SMALLORMEDIUM;
+		task->kv_category = SMALLORMEDIUM_KV_CAT;
 		if (metadata.key_value_category == BIG_INLOG)
-			task->kv_category = BIG;
+			task->kv_category = BIG_KV_CAT;
 
 		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
 	} else
@@ -1244,7 +1224,7 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 	struct krm_region_desc *r_desc = task->r_desc;
 	struct ru_master_state *primary = task->r_desc->m_state;
 	struct ru_master_log_buffer *r_buf = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == BIG)
+	if (task->kv_category == BIG_KV_CAT)
 		r_buf = &primary->big_recovery_rdma_buf;
 
 	uint32_t remote_offset = r_buf->segment.curr_end;
@@ -1306,13 +1286,7 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 		return; /*its not my turn yet*/
 
 	/*only 1 threads enters this region at a time*/
-	/*find which rdma_buffer must be appended*/
-	struct ru_master_state *primary = task->r_desc->m_state;
-	struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == BIG)
-		rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
-
-	if (!buffer_have_enough_space(rdma_buffer_to_fill, task))
+	if (task->insert_metadata.flush_segment_event)
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 	else
 		task->kreon_operation_status = REPLICATE;
@@ -1710,10 +1684,89 @@ static void execute_delete_req(struct krm_server_desc const *mydesc, struct krm_
 */
 }
 
+// TODO: geostyl move to build index dir
+/**
+ * Build index logic
+ * parse both RDMA buffers and insert all the kvs that reside in these buffers
+ * the inserts are being sorted in an increasing lsn wise order
+*/
+static void build_index_procedure(struct krm_region_desc *r_desc, enum log_category log_type)
+{
+	struct rco_build_index_task build_index_task;
+	build_index_task.rdma_buffer = r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
+	if (log_type == BIG)
+		build_index_task.rdma_buffer = r_desc->r_state->big_recovery_rdma_buf.mr->addr;
+
+	build_index_task.rdma_buffers_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
+	build_index_task.r_desc = r_desc;
+	rco_build_index(&build_index_task);
+}
+
+// TODO: geostyl move to send index dir
+/**
+ * Send index logic
+ * flush the overflown RDMA buffer in appropriate Parallax's log, and update the HashTable that holds the segment mappings
+ * 
+*/
+static uint64_t send_index_procedure(struct krm_region_desc *r_desc, enum log_category log_type)
+{
+	int64_t rdma_buffer_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
+	char *rdma_buffer = (char *)r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
+	if (log_type == BIG)
+		rdma_buffer = (char *)r_desc->r_state->big_recovery_rdma_buf.mr->addr;
+
+	const char *error_message = NULL;
+	/*persist the buffer*/
+	uint64_t replica_new_segment_offt =
+		par_flush_segment_in_log(r_desc->db, rdma_buffer, rdma_buffer_size, log_type, &error_message);
+	if (error_message) {
+		log_fatal("the flushing of the segment failed");
+		_exit(EXIT_FAILURE);
+	}
+
+	return replica_new_segment_offt;
+}
+
+/*zero both RDMA buffers*/
+static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
+{
+	if (log_type == L0_RECOVERY)
+		memset(r_desc->r_state->l0_recovery_rdma_buf.mr->addr, 0x00,
+		       r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size);
+	else
+		memset(r_desc->r_state->big_recovery_rdma_buf.mr->addr, 0x00,
+		       r_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
+}
+
+static int8_t is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt)
+{
+	struct krm_segment_entry *index_entry;
+
+	pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
+	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
+	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+
+	if (!index_entry)
+		return 0;
+	return 1;
+}
+
+static void add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+				uint64_t replica_segment_offt)
+{
+	log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
+	entry->primary_segment_offt = primary_segment_offt;
+	entry->replica_segment_offt = replica_segment_offt;
+	pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
+	HASH_ADD_PTR(r_desc->replica_log_map, primary_segment_offt, entry);
+	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+}
+
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
-	//log_debug("Primary orders a flush!");
+	log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
@@ -1722,25 +1775,20 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		_exit(EXIT_FAILURE);
 	}
 
+	enum log_category log_type_to_flush = flush_req->log_type;
+
 	if (!globals_get_send_index()) {
-		// build index logic
-		struct rco_build_index_task build_index_task;
-		build_index_task.l0_recovery_rdma_buffer = (char *)r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
-		build_index_task.big_recovery_rdma_buffer = (char *)r_desc->r_state->big_recovery_rdma_buf.mr->addr;
-		build_index_task.rdma_buffers_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
-		build_index_task.r_desc = r_desc;
-		rco_build_index(&build_index_task);
+		build_index_procedure(r_desc, log_type_to_flush);
+		zero_rdma_buffer(r_desc, log_type_to_flush);
 	} else {
-		log_fatal("Send index is not supported yet");
-		_exit(EXIT_FAILURE);
+		uint64_t replica_new_segment_offt = send_index_procedure(r_desc, log_type_to_flush);
+		int8_t segment_exist_in_HT = is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
+		if (!segment_exist_in_HT) {
+			add_segment_into_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
+			zero_rdma_buffer(r_desc, log_type_to_flush);
+		}
 	}
 
-	/*zero l0 recovery log rdma buffer*/
-	memset(r_desc->r_state->l0_recovery_rdma_buf.mr->addr, 0x00,
-	       r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size);
-	/*zero big recovery log rdma buffer*/
-	memset(r_desc->r_state->big_recovery_rdma_buf.mr->addr, 0x00,
-	       r_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
 	//time for reply :-)
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
