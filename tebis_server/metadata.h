@@ -83,7 +83,8 @@ enum krm_work_task_status {
 	TASK_GET_KEY,
 	TASK_MULTIGET,
 	TASK_DELETE_KEY,
-	TASK_NO_OP
+	TASK_NO_OP,
+	TASK_FLUSH_L0,
 };
 
 enum tb_kv_category { SMALLORMEDIUM_KV_CAT = 0, BIG_KV_CAT };

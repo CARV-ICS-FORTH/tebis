@@ -46,6 +46,7 @@
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
+#include "send_index/send_index.h"
 #include "stats.h"
 #include <btree/btree.h>
 #include <log.h>
@@ -147,10 +148,11 @@ struct channel_rdma *ds_get_channel(struct krm_server_desc const *my_desc)
 	return root_server->numa_servers[my_desc->root_server_id]->channel;
 }
 
-/** Function filling replies from server to clients
+/** Function filling reply headers from server to clients
  *  payload and msg_type must be provided as they defer from msg to msg
  *  */
-static void fill_reply_msg(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size, uint16_t msg_type)
+static void fill_reply_header(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size,
+			      uint16_t msg_type)
 {
 	uint32_t reply_size = sizeof(struct msg_header) + payload_size + TU_TAIL_SIZE;
 	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
@@ -1417,7 +1419,7 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 
 		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
 		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
-			fill_reply_msg(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
+			fill_reply_header(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
 			msg_put_rep *put_rep = (msg_put_rep *)((char *)task->reply_msg + sizeof(msg_header));
 			put_rep->status = TEBIS_SUCCESS;
 			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
@@ -1506,7 +1508,7 @@ exit:;
 	//finally fix the header
 	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
 
-	fill_reply_msg(task->reply_msg, task, payload_length, GET_REPLY);
+	fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
@@ -1702,31 +1704,6 @@ static void build_index_procedure(struct krm_region_desc *r_desc, enum log_categ
 	rco_build_index(&build_index_task);
 }
 
-// TODO: geostyl move to send index dir
-/**
- * Send index logic
- * flush the overflown RDMA buffer in appropriate Parallax's log, and update the HashTable that holds the segment mappings
- * 
-*/
-static uint64_t send_index_procedure(struct krm_region_desc *r_desc, enum log_category log_type)
-{
-	int64_t rdma_buffer_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
-	char *rdma_buffer = (char *)r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
-	if (log_type == BIG)
-		rdma_buffer = (char *)r_desc->r_state->big_recovery_rdma_buf.mr->addr;
-
-	const char *error_message = NULL;
-	/*persist the buffer*/
-	uint64_t replica_new_segment_offt =
-		par_flush_segment_in_log(r_desc->db, rdma_buffer, rdma_buffer_size, log_type, &error_message);
-	if (error_message) {
-		log_fatal("the flushing of the segment failed");
-		_exit(EXIT_FAILURE);
-	}
-
-	return replica_new_segment_offt;
-}
-
 /*zero both RDMA buffers*/
 static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
 {
@@ -1754,7 +1731,7 @@ static int8_t is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t
 static void add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
 				uint64_t replica_segment_offt)
 {
-	log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
 	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
 	entry->primary_segment_offt = primary_segment_offt;
 	entry->replica_segment_offt = replica_segment_offt;
@@ -1766,7 +1743,7 @@ static void add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
-	log_debug("Primary orders a flush!");
+	// log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
@@ -1781,7 +1758,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		build_index_procedure(r_desc, log_type_to_flush);
 		zero_rdma_buffer(r_desc, log_type_to_flush);
 	} else {
-		uint64_t replica_new_segment_offt = send_index_procedure(r_desc, log_type_to_flush);
+		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
 		int8_t segment_exist_in_HT = is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
 		if (!segment_exist_in_HT) {
 			add_segment_into_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
@@ -1797,7 +1774,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = TEBIS_SUCCESS;
 
-	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 	// log_debug("Responded to server!");
@@ -1969,8 +1946,8 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 	rep->l0_recovery_mr = *r_desc->r_state->l0_recovery_rdma_buf.mr;
 	rep->big_recovery_mr = *r_desc->r_state->big_recovery_rdma_buf.mr;
 
-	fill_reply_msg(task->reply_msg, task, sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
-		       GET_RDMA_BUFFER_REP);
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
+			  GET_RDMA_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	log_debug("Region master wants rdma buffers...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
@@ -2201,7 +2178,7 @@ static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_wo
 		_exit(EXIT_FAILURE);
 	}
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-	fill_reply_msg(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
+	fill_reply_header(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -2228,7 +2205,41 @@ void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *t
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
 				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
 
-	fill_reply_msg(task->reply_msg, task, 0, NO_OP_ACK);
+	fill_reply_header(task->reply_msg, task, 0, NO_OP_ACK);
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+{
+	assert(mydesc && task);
+	assert(task->msg->msg_type == FLUSH_L0_REQUEST);
+	assert(globals_get_send_index());
+	struct s2s_msg_flush_L0_req *flush_req =
+		(struct s2s_msg_flush_L0_req *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, flush_req->region_key, flush_req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+
+	task->kreon_operation_status = TASK_FLUSH_L0;
+	// persist the buffers
+	send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
+	send_index_flush_rdma_buffer(r_desc, BIG);
+	par_flush_superblock(r_desc->db);
+
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_L0_rep), FLUSH_L0_REPLY);
+
+	// for debugging purposes
+	struct s2s_msg_flush_L0_rep *reply_payload =
+		(struct s2s_msg_flush_L0_rep *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply_payload->uuid = flush_req->uuid;
 	if (task->reply_msg->payload_length != 0)
 		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
@@ -2247,7 +2258,8 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_multi_get_req,
 							 execute_test_req,
 							 execute_test_req_fetch_payload,
-							 execute_no_op };
+							 execute_no_op,
+							 execute_flush_L0_op };
 
 /*
    * KreonR main processing function of networkrequests.

@@ -6,6 +6,7 @@
 #include "list.h"
 #include "metadata.h"
 #include "parallax_callbacks/parallax_callbacks.h"
+#include "send_index/send_index_callbacks.h"
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
@@ -790,6 +791,8 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 			/*open the db*/
 			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
 			r_desc->db = open_db(globals_get_dev(), r_desc->region->id, msg->type);
+			if (globals_get_send_index())
+				send_index_init_callbacks(server, r_desc);
 
 			/*this copies r_desc struct to the regions array!*/
 			krm_insert_ds_region(server, r_desc, server->ds_regions);
@@ -1300,6 +1303,8 @@ void *krm_metadata_server(void *args)
 				// open the db
 				// TODO replace db_open with custom db open as should be
 				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_BACKUP);
+				if (globals_get_send_index())
+					send_index_init_callbacks(my_desc, r_desc);
 				r_desc->status = KRM_OPEN;
 				/*this copies r_desc struct to the regions array!*/
 				r_desc->replica_log_map = NULL;

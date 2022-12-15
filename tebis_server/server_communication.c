@@ -7,6 +7,7 @@
 #include "uthash.h"
 #include <infiniband/verbs.h>
 #include <log.h>
+#include <pthread.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
 #include <stdint.h>
@@ -105,6 +106,7 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 	}
 
 	pthread_mutex_lock(&conn->buffer_lock);
+	pthread_mutex_lock(&conn->allocation_lock);
 	switch (req_type) {
 	case GET_RDMA_BUFFER_REQ:
 		rep_type = GET_RDMA_BUFFER_REP;
@@ -117,6 +119,9 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 		break;
 	case REPLICA_INDEX_FLUSH_REQ:
 		rep_type = REPLICA_INDEX_FLUSH_REP;
+		break;
+	case FLUSH_L0_REQUEST:
+		rep_type = FLUSH_L0_REPLY;
 		break;
 	default:
 		log_fatal("Unsupported s2s message type %d", type);
@@ -173,6 +178,7 @@ retry_allocate_reply:
 	fill_request_msg(conn, msg_info);
 
 exit:
+	pthread_mutex_unlock(&conn->allocation_lock);
 	pthread_mutex_unlock(&conn->buffer_lock);
 	return rep;
 }
@@ -182,6 +188,9 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	msg_header *request = p->request;
 	msg_header *reply = p->reply;
 	assert(request->reply_length_in_recv_buffer != 0);
+	pthread_mutex_lock(&p->conn->buffer_lock);
+	pthread_mutex_lock(&p->conn->allocation_lock);
+
 	zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply,
 					request->reply_length_in_recv_buffer);
@@ -192,6 +201,8 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 
 	assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
+	pthread_mutex_unlock(&p->conn->allocation_lock);
+	pthread_mutex_unlock(&p->conn->buffer_lock);
 }
 
 extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,

@@ -231,6 +231,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case REPLICA_INDEX_GET_BUFFER_REP:
 		case REPLICA_INDEX_FLUSH_REQ:
 		case REPLICA_INDEX_FLUSH_REP:
+		case FLUSH_L0_REQUEST:
+		case FLUSH_L0_REPLY:
 		case PUT_REPLY:
 		case GET_REPLY:
 		case NO_OP:

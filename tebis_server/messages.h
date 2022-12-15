@@ -14,7 +14,7 @@
 
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
-#define NUMBER_OF_TASKS 11
+#define NUMBER_OF_TASKS 12
 
 enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REQ = 0,
@@ -28,6 +28,7 @@ enum message_type {
 	TEST_REQUEST,
 	TEST_REQUEST_FETCH_PAYLOAD,
 	NO_OP,
+	FLUSH_L0_REQUEST,
 	PUT_IF_EXISTS_REQUEST,
 	PUT_REPLY,
 	GET_REPLY,
@@ -36,6 +37,7 @@ enum message_type {
 	NO_OP_ACK,
 	/*server2server data replication*/
 	FLUSH_COMMAND_REP,
+	FLUSH_L0_REPLY,
 	GET_RDMA_BUFFER_REP,
 	/*server2server index transfer*/
 	REPLICA_INDEX_GET_BUFFER_REP,
@@ -157,6 +159,17 @@ struct s2s_msg_flush_cmd_req {
 
 struct s2s_msg_flush_cmd_rep {
 	uint32_t status;
+};
+
+/*flush L0 pair*/
+struct s2s_msg_flush_L0_req {
+	uint64_t uuid;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
+};
+
+struct s2s_msg_flush_L0_rep {
+	uint64_t uuid;
 };
 
 /*server2server index transfers*/
