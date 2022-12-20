@@ -70,7 +70,7 @@ void send_index_compaction_started_callback(void *context, uint32_t src_level_id
 	if (src_level_id)
 		send_index_flush_L0(send_index_cxt);
 
-	//allocate RDMA buffers in replicas
+	//allocate RDMA buffer in replicas
 }
 
 void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region_desc *r_desc)
