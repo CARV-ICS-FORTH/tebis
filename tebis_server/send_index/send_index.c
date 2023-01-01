@@ -1,5 +1,6 @@
 #include "send_index.h"
 #include <log.h>
+#include <rdma/rdma_verbs.h>
 
 uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
 {
@@ -18,4 +19,17 @@ uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_c
 	}
 
 	return replica_new_segment_offt;
+}
+
+struct ibv_mr *send_index_create_compactions_rdma_buffer(connection_rdma *conn)
+{
+	char *addr = NULL;
+	if (posix_memalign((void **)&addr, ALIGNMENT, SEGMENT_SIZE) != 0) {
+		log_fatal("Posix memalign failed");
+		perror("Reason: ");
+		_exit(EXIT_FAILURE);
+	}
+
+	struct ibv_mr *new_memory_region = rdma_reg_write(conn->rdma_cm_id, addr, SEGMENT_SIZE);
+	return new_memory_region;
 }

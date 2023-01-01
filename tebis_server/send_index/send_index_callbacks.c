@@ -14,6 +14,14 @@ static void send_index_fill_flush_L0_request(msg_header *request_header, struct 
 	req->uuid = (uint64_t)req;
 }
 
+static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, struct krm_region_desc *r_desc)
+{
+	struct s2s_msg_replica_index_get_buffer_req *req =
+		(struct s2s_msg_replica_index_get_buffer_req *)((char *)request_header + sizeof(struct msg_header));
+	req->region_key_size = r_desc->region->min_key_size;
+	strcpy(req->region_key, r_desc->region->min_key);
+}
+
 static void send_index_flush_L0(struct send_index_context *context)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
@@ -63,6 +71,50 @@ static void send_index_flush_L0(struct send_index_context *context)
 	}
 }
 
+static void allocate_rdma_buffer_in_replicas(struct send_index_context *context)
+{
+	struct krm_region_desc *r_desc = context->r_desc;
+	struct krm_server_desc *server = context->server;
+	assert(r_desc && server);
+
+	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
+		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
+		uint32_t get_buffer_request_size = sizeof(struct s2s_msg_replica_index_get_buffer_req);
+		uint32_t get_buffer_reply_size = sizeof(struct s2s_msg_replica_index_get_buffer_rep);
+
+		log_debug("Sending get rdma buffer for region %s", r_desc->region->id);
+		// allocate the request msg pair, retry until success
+		struct sc_msg_pair msg_pair = sc_allocate_rpc_pair(r_conn, get_buffer_request_size,
+								   get_buffer_reply_size, REPLICA_INDEX_GET_BUFFER_REQ);
+
+		while (msg_pair.stat != ALLOCATION_IS_SUCCESSFULL) {
+			msg_pair = sc_allocate_rpc_pair(r_conn, get_buffer_request_size, get_buffer_reply_size,
+							REPLICA_INDEX_GET_BUFFER_REQ);
+		}
+
+		msg_header *req_header = msg_pair.request;
+		send_index_fill_get_rdma_buffer_request(req_header, r_desc);
+
+		// send the msg
+		if (__send_rdma_message(r_conn, req_header, NULL) != TEBIS_SUCCESS) {
+			log_fatal("failed to send message");
+			_exit(EXIT_FAILURE);
+		}
+
+		// spin for the reply
+		teb_spin_for_message_reply(req_header, r_conn);
+
+		struct s2s_msg_replica_index_get_buffer_rep *get_buffer_reply =
+			(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)msg_pair.reply +
+									sizeof(struct msg_header));
+		r_desc->remote_mem_buf[i] = get_buffer_reply->mr;
+		log_debug("Newly registered memory region is at %lu", (uint64_t)get_buffer_reply->mr.addr);
+
+		// free msg space
+		sc_free_rpc_pair(&msg_pair);
+	}
+}
+
 void send_index_compaction_started_callback(void *context, uint32_t src_level_id)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
@@ -70,7 +122,7 @@ void send_index_compaction_started_callback(void *context, uint32_t src_level_id
 	if (src_level_id)
 		send_index_flush_L0(send_index_cxt);
 
-	//allocate RDMA buffer in replicas
+	allocate_rdma_buffer_in_replicas(send_index_cxt);
 }
 
 void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region_desc *r_desc)

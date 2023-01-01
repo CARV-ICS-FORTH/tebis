@@ -1563,11 +1563,9 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	//time for reply :-)
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-
 	struct s2s_msg_flush_cmd_rep *flush_rep =
 		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = TEBIS_SUCCESS;
-
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
@@ -1635,12 +1633,36 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 
 static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	(void)mydesc;
-	(void)task;
-	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
-	log_debug("Closing index_get_buffer req for parallax no replication porting");
-	assert(0);
-	_exit(EXIT_FAILURE);
+	struct s2s_msg_replica_index_get_buffer_req *req =
+		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	if (r_desc == NULL) {
+		log_fatal("no hosted region found for min key %s", req->region_key);
+		exit(EXIT_FAILURE);
+	}
+
+	if (r_desc->r_state->index_buffer == NULL) {
+		r_desc->r_state->index_buffer = send_index_create_compactions_rdma_buffer(task->conn);
+	} else {
+		log_fatal("Remote compaction for regions %s still pending", r_desc->region->id);
+		assert(0);
+		_exit(EXIT_FAILURE);
+	}
+
+	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+						task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_replica_index_get_buffer_rep *reply =
+		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
+	reply->mr = *r_desc->r_state->index_buffer;
+
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
+			  REPLICA_INDEX_GET_BUFFER_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
+		  (uint64_t)reply->mr.addr);
+	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
@@ -1689,7 +1711,6 @@ void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *t
 	assert(mydesc && task);
 	assert(task->msg->msg_type == NO_OP);
 
-	//log_info("A NO OP HAS COME");
 	task->kreon_operation_status = TASK_NO_OP;
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
 				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
@@ -1701,7 +1722,7 @@ void execute_no_op(struct krm_server_desc const *mydesc, struct krm_work_task *t
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+static void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(mydesc && task);
 	assert(task->msg->msg_type == FLUSH_L0_REQUEST);
@@ -1751,15 +1772,11 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_flush_L0_op };
 
 /*
-   * KreonR main processing function of networkrequests.
-   * Each network processing request must be resumable. For each message type
-   * KreonR process it via
-   * a specific data path. We treat all taks related to network  as paths that
-   * may
-   * fail, that we can resume later. The idea
-   * behind this
-   * */
-uint64_t requests_handled = 0;
+ * Tebis main processing function of networkrequests.
+ * Each network processing request must be resumable.
+ * For each message type Tebis process it via a specific data path.
+ * We treat all tasks related to network  as paths that may fail, and we can resume later.
+ */
 static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	enum message_type type;
@@ -1770,11 +1787,8 @@ static void handle_task(struct krm_server_desc const *mydesc, struct krm_work_ta
 
 	task_dispatcher[type](mydesc, task);
 
-	if (task->kreon_operation_status == TASK_COMPLETE) {
+	if (task->kreon_operation_status == TASK_COMPLETE)
 		stats_update(task->server_id, task->thread_id);
-		if (task->msg->msg_type == PUT_REQUEST)
-			__sync_fetch_and_add(&requests_handled, 1);
-	}
 }
 
 sem_t exit_main;

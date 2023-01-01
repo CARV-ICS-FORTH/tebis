@@ -142,10 +142,6 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 			(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)rpc_pair.request +
 									sizeof(struct msg_header));
 
-		g_req->buffer_size = SEGMENT_SIZE;
-		g_req->num_buffers = 1;
-		g_req->index_offset = 0; //for explicit IO compactions unused
-		g_req->level_id = level_id;
 		g_req->region_key_size = r_desc->region->min_key_size;
 		if (g_req->region_key_size > RU_REGION_KEY_SIZE) {
 			log_fatal("Max region key overflow");
@@ -161,10 +157,10 @@ int rco_init_index_transfer(uint64_t db_id, uint8_t level_id)
 		uint8_t tail = get_receive_field(reply);
 		field_spin_for_value(&tail, TU_RDMA_REGULAR_MSG);
 		/*unroll the reply*/
-		struct s2s_msg_replica_index_get_buffer_rep *g_rep =
-			(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
+		//struct s2s_msg_replica_index_get_buffer_rep *g_rep =
+		//	(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)reply + sizeof(struct msg_header));
 
-		r_desc->remote_mem_buf[i][level_id] = g_rep->mr;
+		//r_desc->remote_mem_buf[i][level_id] = g_rep->mr;
 		sc_free_rpc_pair(&rpc_pair);
 		memset(&rpc_pair, 0x00, sizeof(struct sc_msg_pair));
 	}

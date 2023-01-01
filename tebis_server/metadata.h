@@ -179,7 +179,7 @@ struct ru_replica_rdma_buffer {
 
 struct ru_replica_state {
 	/*for the index staff*/
-	//struct ibv_mr *index_buffers[MAX_LEVELS][MAX_REPLICA_INDEX_BUFFERS];
+	struct ibv_mr *index_buffer;
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	/*rdma buffer keeping small and medium kv categories*/
@@ -256,7 +256,7 @@ struct krm_region_desc {
 	struct krm_segment_entry *replica_log_map;
 	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
-	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
+	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS];
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];

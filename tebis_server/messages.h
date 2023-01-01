@@ -174,18 +174,12 @@ struct s2s_msg_flush_L0_rep {
 
 /*server2server index transfers*/
 struct s2s_msg_replica_index_get_buffer_req {
-	uint64_t index_offset;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
-	int level_id;
-	int buffer_size;
-	int num_buffers;
 };
 
 struct s2s_msg_replica_index_get_buffer_rep {
 	struct ibv_mr mr;
-	uint32_t status;
-	int num_buffers;
 };
 
 struct s2s_msg_replica_index_flush_req {
