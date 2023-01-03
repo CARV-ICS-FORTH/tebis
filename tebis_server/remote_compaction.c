@@ -82,7 +82,7 @@ struct rco_task {
 
 static void *rco_compaction_worker(void *args);
 //static int rco_add_compaction_task(struct rco_pool *pool, struct rco_task *compaction_task);
-
+#if 0
 static struct rco_db_map_entry *find_db_entry_in_db_map(uint64_t db_id)
 {
 	struct rco_db_map_entry *entry;
@@ -169,7 +169,8 @@ exit:
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
 }
-
+#endif
+#if 0
 int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 {
 	if (!globals_get_send_index())
@@ -184,7 +185,7 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id)
 		log_debug("Nothing to do for non-replicated region %s", r_desc->region->id);
 		goto exit;
 	}
-	char *addr = r_desc->local_buffer[level_id]->addr;
+	char *addr = r_desc->local_buffer]->addr;
 	if (rdma_dereg_mr(r_desc->local_buffer[level_id])) {
 		log_info("Failed to deregister buffer");
 		_exit(EXIT_FAILURE);
@@ -196,6 +197,7 @@ exit:
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	return ret;
 }
+#endif
 
 #if 0
 static void rco_wait_flush_reply(struct sc_msg_pair *rpc)

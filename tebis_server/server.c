@@ -496,7 +496,15 @@ static int ds_is_server2server_job(struct msg_header *msg)
 	case REPLICA_INDEX_FLUSH_REQ:
 	case REPLICA_INDEX_FLUSH_REP:
 	case FLUSH_COMMAND_REQ:
+	case FLUSH_COMMAND_REP:
+	case FLUSH_L0_REQUEST:
+	case FLUSH_L0_REPLY:
 	case GET_RDMA_BUFFER_REQ:
+	case GET_RDMA_BUFFER_REP:
+	case CLOSE_COMPACTION_REQUEST:
+	case CLOSE_COMPACTION_REPLY:
+	case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
+	case REPLICA_INDEX_SWAP_LEVELS_REPLY:
 		return 1;
 	default:
 		return 0;
@@ -550,11 +558,10 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 */
 
 	if (is_server_message) {
-		uint64_t hash = djb2_hash((unsigned char *)&msg->session_id, sizeof(uint64_t));
+		uint64_t hash = djb2_hash((unsigned char *)&msg->session_id, sizeof(msg->session_id));
 		int bound = spinner->num_workers / 2;
 		worker_id = (hash % bound) + bound;
-		// log_warn("fifo worker id %d chosen for session id %llu", worker_id,
-		// msg->session_id);
+		//log_warn("fifo worker id %d chosen for session id %u, %u", worker_id, msg->session_id, msg->msg_type);
 	} else {
 		// 1. Round robin with threshold
 		if (worker_queued_jobs(&spinner->worker[worker_id]) >= max_queued_jobs) {
@@ -1603,7 +1610,6 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
 	if (r_desc->r_state == NULL) {
 		r_desc->r_state = (struct ru_replica_state *)calloc(1, sizeof(struct ru_replica_state));
-
 		uint32_t size = get_log->buffer_size;
 		struct rdma_cm_id *rdma_cm_id = task->conn->rdma_cm_id;
 		/*initalize l0_recovery_buffer*/
@@ -1633,6 +1639,10 @@ static void execute_get_rdma_buffer_req(struct krm_server_desc const *mydesc, st
 
 static void execute_replica_index_get_buffer_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
+	assert(mydesc && task);
+	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
+	assert(globals_get_send_index());
+
 	struct s2s_msg_replica_index_get_buffer_req *req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
@@ -1642,8 +1652,10 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		exit(EXIT_FAILURE);
 	}
 
-	if (r_desc->r_state->index_buffer == NULL) {
-		r_desc->r_state->index_buffer = send_index_create_compactions_rdma_buffer(task->conn);
+	log_debug("Starting compaction for level %u", req->level_id);
+
+	if (r_desc->r_state->index_buffer[req->level_id] == NULL) {
+		r_desc->r_state->index_buffer[req->level_id] = send_index_create_compactions_rdma_buffer(task->conn);
 	} else {
 		log_fatal("Remote compaction for regions %s still pending", r_desc->region->id);
 		assert(0);
@@ -1654,14 +1666,14 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	reply->mr = *r_desc->r_state->index_buffer;
+	reply->mr = *r_desc->r_state->index_buffer[req->level_id];
 
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
 			  REPLICA_INDEX_GET_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
-	log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
-		  (uint64_t)reply->mr.addr);
+	//log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
+	//	  (uint64_t)reply->mr.addr);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -1756,6 +1768,81 @@ static void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
+static void execute_send_index_close_compaction(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+{
+	assert(mydesc && task);
+	assert(task->msg->msg_type == CLOSE_COMPACTION_REQUEST);
+	assert(globals_get_send_index());
+
+	// get the region descriptor
+	struct s2s_msg_close_compaction_request *req =
+		(struct s2s_msg_close_compaction_request *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
+
+	log_debug("Ending compaction for level %u", req->level_id);
+	//free index buffer that was allocated for sending the index for the specific level
+	free(r_desc->r_state->index_buffer[req->level_id]->addr);
+	if (rdma_dereg_mr(r_desc->r_state->index_buffer[req->level_id])) {
+		log_fatal("Failed to deregister rdma buffer");
+		_exit(EXIT_FAILURE);
+	}
+	r_desc->r_state->index_buffer[req->level_id] = NULL;
+
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_close_compaction_reply), CLOSE_COMPACTION_REPLY);
+
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+static void execute_replica_index_swap_levels(struct krm_server_desc const *mydesc, struct krm_work_task *task)
+{
+	assert(mydesc && task);
+	assert(task->msg->msg_type == REPLICA_INDEX_SWAP_LEVELS_REQUEST);
+	assert(globals_get_send_index());
+
+	// get the region descriptor
+	struct s2s_msg_swap_levels_request *req =
+		(struct s2s_msg_swap_levels_request *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
+
+	log_debug("Swap levels for level %u", req->level_id);
+
+	// free index buffer that was allocated for sending the index for the specific level
+	// compaction started is called before swap levels always
+	free(r_desc->r_state->index_buffer[req->level_id]->addr);
+	if (rdma_dereg_mr(r_desc->r_state->index_buffer[req->level_id])) {
+		log_fatal("Failed to deregister rdma buffer");
+		_exit(EXIT_FAILURE);
+	}
+	r_desc->r_state->index_buffer[req->level_id] = NULL;
+	
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_swap_levels_reply),
+			  REPLICA_INDEX_SWAP_LEVELS_REPLY);
+
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
 typedef void execute_task(struct krm_server_desc const *mydesc, struct krm_work_task *task);
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
@@ -1769,7 +1856,9 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_test_req,
 							 execute_test_req_fetch_payload,
 							 execute_no_op,
-							 execute_flush_L0_op };
+							 execute_flush_L0_op,
+							 execute_send_index_close_compaction,
+							 execute_replica_index_swap_levels };
 
 /*
  * Tebis main processing function of networkrequests.

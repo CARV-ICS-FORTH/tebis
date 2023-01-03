@@ -1,2 +1,3 @@
 #<region_id>  <min key> <max key>  <primary>  <Backup 1, Backup 2,... ,BackUp N>
-0  -oo  +oo   sith3.cluster.ics.forth.gr:8080 sith3.cluster.ics.forth.gr:8081
+0  -oo  AE   sith3.cluster.ics.forth.gr:8080 sith3.cluster.ics.forth.gr:8081
+1 AE +oo sith3.cluster.ics.forth.gr:8081 sith3.cluster.ics.forth.gr:8080

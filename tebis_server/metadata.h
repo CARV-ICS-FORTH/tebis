@@ -1,5 +1,7 @@
 #pragma once
 #include "messages.h"
+#include "send_index/send_index_callbacks.h"
+#include "send_index/send_index_reply_checker.h"
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 #include "../tebis_rdma/rdma.h"
@@ -85,6 +87,7 @@ enum krm_work_task_status {
 	TASK_DELETE_KEY,
 	TASK_NO_OP,
 	TASK_FLUSH_L0,
+	TASK_CLOSE_COMPACTION,
 };
 
 enum tb_kv_category { SMALLORMEDIUM_KV_CAT = 0, BIG_KV_CAT };
@@ -179,7 +182,7 @@ struct ru_replica_rdma_buffer {
 
 struct ru_replica_state {
 	/*for the index staff*/
-	struct ibv_mr *index_buffer;
+	struct ibv_mr *index_buffer[MAX_LEVELS];
 	/*for thr KV log*/
 	volatile uint64_t next_segment_id_to_flush;
 	/*rdma buffer keeping small and medium kv categories*/
@@ -257,16 +260,15 @@ struct krm_region_desc {
 	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS];
+	struct ibv_mr *local_buffer;
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
-	struct ibv_mr *local_buffer[MAX_LEVELS];
 	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
 	//Staff for deserializing the index at the replicas
 	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
-
+	send_index_reply_checker_t send_index_reply_checker;
 	enum krm_region_role role;
 	par_handle *db;
-	volatile uint64_t next_segment_to_flush;
 	union {
 		struct ru_master_state *m_state;
 		struct ru_replica_state *r_state;

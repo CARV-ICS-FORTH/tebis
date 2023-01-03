@@ -123,6 +123,12 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 	case FLUSH_L0_REQUEST:
 		rep_type = FLUSH_L0_REPLY;
 		break;
+	case CLOSE_COMPACTION_REQUEST:
+		rep_type = CLOSE_COMPACTION_REPLY;
+		break;
+	case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
+		rep_type = REPLICA_INDEX_SWAP_LEVELS_REPLY;
+		break;
 	default:
 		log_fatal("Unsupported s2s message type %d", type);
 		_exit(EXIT_FAILURE);

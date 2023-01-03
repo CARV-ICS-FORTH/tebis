@@ -14,7 +14,7 @@
 
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
-#define NUMBER_OF_TASKS 12
+#define NUMBER_OF_TASKS 14
 
 enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REQ = 0,
@@ -29,6 +29,8 @@ enum message_type {
 	TEST_REQUEST_FETCH_PAYLOAD,
 	NO_OP,
 	FLUSH_L0_REQUEST,
+	CLOSE_COMPACTION_REQUEST,
+	REPLICA_INDEX_SWAP_LEVELS_REQUEST,
 	PUT_IF_EXISTS_REQUEST,
 	PUT_REPLY,
 	GET_REPLY,
@@ -38,6 +40,8 @@ enum message_type {
 	/*server2server data replication*/
 	FLUSH_COMMAND_REP,
 	FLUSH_L0_REPLY,
+	CLOSE_COMPACTION_REPLY,
+	REPLICA_INDEX_SWAP_LEVELS_REPLY,
 	GET_RDMA_BUFFER_REP,
 	/*server2server index transfer*/
 	REPLICA_INDEX_GET_BUFFER_REP,
@@ -176,6 +180,7 @@ struct s2s_msg_flush_L0_rep {
 struct s2s_msg_replica_index_get_buffer_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
+	uint32_t level_id;
 };
 
 struct s2s_msg_replica_index_get_buffer_rep {
@@ -183,20 +188,32 @@ struct s2s_msg_replica_index_get_buffer_rep {
 };
 
 struct s2s_msg_replica_index_flush_req {
-	uint64_t primary_segment_offt;
-	uint64_t seg_hash;
-	uint64_t root_w;
-	uint64_t root_r;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
-	uint32_t seg_id;
 	uint32_t region_key_size;
-	int level_id;
-	int tree_id;
-	int is_last;
+	uint32_t height;
 };
 
 struct s2s_msg_replica_index_flush_rep {
-	int seg_id;
+	int status;
+};
+
+struct s2s_msg_close_compaction_request {
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
+	uint32_t level_id;
+};
+
+struct s2s_msg_close_compaction_reply {
+	int status;
+};
+
+struct s2s_msg_swap_levels_request {
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
+	uint32_t level_id;
+};
+
+struct s2s_msg_swap_levels_reply {
 	int status;
 };
 
