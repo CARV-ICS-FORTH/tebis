@@ -15,6 +15,7 @@
 #define _GNU_SOURCE
 #include "allocator/log_structures.h"
 #include "btree/kv_pairs.h"
+#include "btree/level_write_cursor.h"
 #include "btree/lsn.h"
 #include "conf.h"
 #include "parallax/structures.h"
@@ -1654,8 +1655,14 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 
 	log_debug("Starting compaction for level %u", req->level_id);
 
-	if (r_desc->r_state->index_buffer[req->level_id] == NULL) {
-		r_desc->r_state->index_buffer[req->level_id] = send_index_create_compactions_rdma_buffer(task->conn);
+	uint32_t dst_level_id = req->level_id + 1;
+	if (r_desc->r_state->index_buffer[dst_level_id] == NULL) {
+		r_desc->r_state->index_buffer[dst_level_id] = send_index_create_compactions_rdma_buffer(task->conn);
+
+		// acquire a transacation ID (if level > 0) for parallax and initialize a write_cursor for the upcoming compaction
+		par_init_compaction_id(r_desc->db, dst_level_id, req->tree_id);
+		r_desc->r_state->write_cursor_segments[dst_level_id] =
+			wcursor_init_write_cursor(dst_level_id, (struct db_handle *)r_desc->db, req->tree_id);
 	} else {
 		log_fatal("Remote compaction for regions %s still pending", r_desc->region->id);
 		assert(0);
@@ -1666,14 +1673,14 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	reply->mr = *r_desc->r_state->index_buffer[req->level_id];
+	reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
 
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
 			  REPLICA_INDEX_GET_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
-	//log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
-	//	  (uint64_t)reply->mr.addr);
+	log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
+		  (uint64_t)reply->mr.addr);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
@@ -1785,13 +1792,17 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
 	log_debug("Ending compaction for level %u", req->level_id);
+	uint32_t dst_level_id = req->level_id + 1;
 	//free index buffer that was allocated for sending the index for the specific level
-	free(r_desc->r_state->index_buffer[req->level_id]->addr);
-	if (rdma_dereg_mr(r_desc->r_state->index_buffer[req->level_id])) {
+	free(r_desc->r_state->index_buffer[dst_level_id]->addr);
+	if (rdma_dereg_mr(r_desc->r_state->index_buffer[dst_level_id])) {
 		log_fatal("Failed to deregister rdma buffer");
 		_exit(EXIT_FAILURE);
 	}
-	r_desc->r_state->index_buffer[req->level_id] = NULL;
+	r_desc->r_state->index_buffer[dst_level_id] = NULL;
+
+	wcursor_close_write_cursor(r_desc->r_state->write_cursor_segments[dst_level_id]);
+	r_desc->r_state->write_cursor_segments[dst_level_id] = NULL;
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
@@ -1821,16 +1832,19 @@ static void execute_replica_index_swap_levels(struct krm_server_desc const *myde
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
 	log_debug("Swap levels for level %u", req->level_id);
-
+	uint32_t dst_level_id = req->level_id + 1;
 	// free index buffer that was allocated for sending the index for the specific level
 	// compaction started is called before swap levels always
-	free(r_desc->r_state->index_buffer[req->level_id]->addr);
-	if (rdma_dereg_mr(r_desc->r_state->index_buffer[req->level_id])) {
+	free(r_desc->r_state->index_buffer[dst_level_id]->addr);
+	if (rdma_dereg_mr(r_desc->r_state->index_buffer[dst_level_id])) {
 		log_fatal("Failed to deregister rdma buffer");
 		_exit(EXIT_FAILURE);
 	}
-	r_desc->r_state->index_buffer[req->level_id] = NULL;
-	
+	r_desc->r_state->index_buffer[dst_level_id] = NULL;
+
+	wcursor_close_write_cursor(r_desc->r_state->write_cursor_segments[dst_level_id]);
+	r_desc->r_state->write_cursor_segments[dst_level_id] = NULL;
+
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
 				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
