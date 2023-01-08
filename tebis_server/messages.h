@@ -181,6 +181,7 @@ struct s2s_msg_replica_index_get_buffer_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
 	uint32_t level_id;
+	uint8_t tree_id;
 };
 
 struct s2s_msg_replica_index_get_buffer_rep {
