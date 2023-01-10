@@ -116,9 +116,9 @@ enum krm_work_task_status {
 	TASK_CLOSE_COMPACTION,
 };
 
-enum tb_kv_category { SMALLORMEDIUM_KV_CAT = 0, BIG_KV_CAT };
+enum tb_kv_category { TEBIS_SMALLORMEDIUM = 0, TEBIS_BIG };
 
-enum tb_rdma_buf_category { L0_RECOVERY_RDMA_BUF, BIG_RECOVERY_RDMA_BUF };
+enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
 struct sc_msg_pair {
 	/*out variables*/

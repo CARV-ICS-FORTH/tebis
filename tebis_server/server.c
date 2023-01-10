@@ -920,7 +920,7 @@ static void initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_buf, 
 	rdma_buf->segment.end = SEGMENT_SIZE;
 	rdma_buf->segment.curr_end = 0;
 	rdma_buf->segment.mr[backup_id] = rep->l0_recovery_mr;
-	if (rdma_buf_cat == BIG_RECOVERY_RDMA_BUF)
+	if (rdma_buf_cat == TEBIS_BIG_RECOVERY_RDMA_BUF)
 		rdma_buf->segment.mr[backup_id] = rep->big_recovery_mr;
 	rdma_buf->segment.replicated_bytes = 0;
 	assert(rdma_buf->segment.mr[backup_id].length == SEGMENT_SIZE);
@@ -949,9 +949,9 @@ static uint32_t got_all_get_rdma_buffers_replies(struct krm_region_desc *r_desc)
 			assert(rep->status == TEBIS_SUCCESS);
 
 			initialize_rdma_buf_metadata(&r_desc->m_state->l0_recovery_rdma_buf, i, rep,
-						     L0_RECOVERY_RDMA_BUF);
+						     TEBIS_L0_RECOVERY_RDMA_BUF);
 			initialize_rdma_buf_metadata(&r_desc->m_state->big_recovery_rdma_buf, i, rep,
-						     BIG_RECOVERY_RDMA_BUF);
+						     TEBIS_BIG_RECOVERY_RDMA_BUF);
 
 			r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_OK;
 			/*finally free the message*/
@@ -1115,6 +1115,21 @@ static void fill_replication_fields(msg_header *msg, struct par_put_metadata met
 	set_payload_tail(kv, TU_RDMA_REPLICATION_MSG);
 }
 
+inline static uint8_t buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct krm_work_task *task)
+{
+	/*if (task->kv_category == TEBIS_BIG)
+		log_debug("[current end of big buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
+	else
+		log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
+	put_msg_print_msg(task->msg);
+	*/
+	if (r_buf->segment.curr_end >= r_buf->segment.start &&
+	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
+		return 1;
+	return 0;
+}
+
+int64_t lsn_to_be_replicated = 1;
 void insert_kv_to_store(struct krm_work_task *task)
 {
 #if CREATE_TRACE_FILE
@@ -1139,9 +1154,9 @@ void insert_kv_to_store(struct krm_work_task *task)
 	/*replication path*/
 	if (task->r_desc->region->num_of_backup) {
 		fill_replication_fields(task->msg, metadata);
-		task->kv_category = SMALLORMEDIUM_KV_CAT;
+		task->kv_category = TEBIS_SMALLORMEDIUM;
 		if (metadata.key_value_category == BIG_INLOG)
-			task->kv_category = BIG_KV_CAT;
+			task->kv_category = TEBIS_BIG;
 
 		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
 	} else
@@ -1231,7 +1246,7 @@ void replicate_task(struct krm_server_desc const *server, struct krm_work_task *
 	struct krm_region_desc *r_desc = task->r_desc;
 	struct ru_master_state *primary = task->r_desc->m_state;
 	struct ru_master_log_buffer *r_buf = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == BIG_KV_CAT)
+	if (task->kv_category == TEBIS_BIG)
 		r_buf = &primary->big_recovery_rdma_buf;
 
 	uint32_t remote_offset = r_buf->segment.curr_end;
@@ -1293,7 +1308,13 @@ static void wait_for_replication_turn(struct krm_work_task *task)
 		return; /*its not my turn yet*/
 
 	/*only 1 threads enters this region at a time*/
-	if (task->insert_metadata.flush_segment_event)
+	/*find which rdma_buffer must be appended*/
+	struct ru_master_state *primary = task->r_desc->m_state;
+	struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
+	if (task->kv_category == TEBIS_BIG)
+		rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
+
+	if (!buffer_have_enough_space(rdma_buffer_to_fill, task))
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
 	else
 		task->kreon_operation_status = REPLICATE;
@@ -2006,7 +2027,7 @@ int main(int argc, char *argv[])
 	if (argc != 8) {
 		log_fatal(
 			"Error args are %d! usage: ./kreon_server <device name>"
-			" <zk_host:zk_port>  <RDMA subnet> <L0 size in keys> <growth factor> <send_index or build_index> <server(s) vector>\n "
+			" <zk_host:zk_port>  <RDMA subnet> <TEBIS_L0 size in keys> <growth factor> <send_index or build_index> <server(s) vector>\n "
 			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
 			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
 			argc);
@@ -2021,9 +2042,9 @@ int main(int argc, char *argv[])
 	globals_set_zk_host(argv[next_argv++]);
 	// RDMA subnet
 	globals_set_RDMA_IP_filter(argv[next_argv++]);
-	//L0 size
-	uint32_t L0_size = strtoul(argv[next_argv++], NULL, 10);
-	globals_set_l0_size(L0_size);
+	//TEBIS_L0 size
+	uint32_t TEBIS_L0_size = strtoul(argv[next_argv++], NULL, 10);
+	globals_set_l0_size(TEBIS_L0_size);
 	//growth factor
 	uint32_t growth_factor = strtoul(argv[next_argv++], NULL, 10);
 	globals_set_growth_factor(growth_factor);
