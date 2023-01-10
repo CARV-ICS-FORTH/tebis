@@ -1,6 +1,7 @@
 #include "send_index_callbacks.h"
 #include "../../common/common.h"
 #include "../metadata.h"
+#include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_reply_checker.h"
 #include <infiniband/verbs.h>
@@ -114,11 +115,11 @@ static void send_index_flush_L0(struct send_index_context *context)
 		r_desc->rpc[i][0] = send_index_allocate_msg_pair(send_index_allocation_info);
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][0];
 
+		// send the msg
 		msg_header *req_header = msg_pair->request;
 		send_index_fill_flush_L0_request(req_header, r_desc);
 		req_header->session_id = (uint64_t)r_desc->region;
 
-		// send the msg
 		if (__send_rdma_message(r_conn, req_header, NULL) != TEBIS_SUCCESS) {
 			log_fatal("failed to send message");
 			_exit(EXIT_FAILURE);
@@ -141,7 +142,6 @@ static void send_index_flush_L0(struct send_index_context *context)
 			log_fatal("Mismatch in piggybacked uuid");
 			_exit(EXIT_FAILURE);
 		}
-
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
 	}
@@ -173,11 +173,11 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 
+		// send the msg
 		send_index_fill_get_rdma_buffer_request(msg_pair->request, r_desc, level_id, tree_id);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = (uint64_t)r_desc->region;
 
-		// send the msg
 		if (__send_rdma_message(r_conn, msg_pair->request, NULL) != TEBIS_SUCCESS) {
 			log_fatal("failed to send message");
 			_exit(EXIT_FAILURE);
@@ -197,6 +197,30 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
 	}
+}
+
+static void send_index_reg_write_primary_compaction_buffers(struct send_index_context *context,
+							    struct wcursor_level_write_cursor *wcursor)
+{
+	assert(context && wcursor);
+
+	// TODO: develop a better way to find the protection domain
+	struct connection_rdma *r_conn =
+		sc_get_compaction_conn(context->server, context->r_desc->region->backups[0].kreon_ds_hostname);
+
+	wcursor_segment_buffers_iterator_t segment_buffers_cursor = wcursor_segment_buffers_cursor_init(wcursor);
+	for (int i = 0; wcursor_segment_buffers_cursor_is_valid(segment_buffers_cursor);
+	     wcursor_segment_buffers_cursor_next(segment_buffers_cursor), i++) {
+		char *curr_buf = wcursor_segment_buffers_cursor_get_offt(segment_buffers_cursor);
+		context->r_desc->local_buffer[i] = rdma_reg_write(r_conn->rdma_cm_id, curr_buf, SEGMENT_SIZE);
+		if (context->r_desc->local_buffer[i] == NULL) {
+			log_fatal("Failed to reg memory");
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	assert(!wcursor_segment_buffers_cursor_is_valid(segment_buffers_cursor));
+	wcursor_segment_buffers_cursor_close(segment_buffers_cursor);
 }
 
 static void send_index_close_compaction(struct send_index_context *context, uint32_t level_id)
@@ -273,9 +297,10 @@ static void send_index_replicate_index_segment(struct send_index_context *contex
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 
+		// XXX TODO XXX remove [0], temporary for compilation issues
 		while (1) {
-			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, r_desc->local_buffer->addr, buf_size,
-					      r_desc->local_buffer, IBV_SEND_SIGNALED,
+			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, r_desc->local_buffer[0]->addr, buf_size,
+					      r_desc->local_buffer[0], IBV_SEND_SIGNALED,
 					      (uint64_t)r_desc->remote_mem_buf[i]->addr,
 					      r_desc->remote_mem_buf[i]->rkey);
 			if (!ret)
@@ -363,16 +388,18 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 	}
 }
 
-void send_index_compaction_started_callback(void *context, uint32_t src_level_id, uint8_t tree_id)
+void send_index_compaction_started_callback(void *context, uint32_t src_level_id, uint8_t dst_tree_id,
+					    struct wcursor_level_write_cursor *new_level)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 	//compaction from L0 to L1
 	if (src_level_id)
 		send_index_flush_L0(send_index_cxt);
 
-	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, tree_id);
+	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id);
 
-	send_index_cxt->r_desc->send_index_reply_checker = send_index_reply_checker_init();
+	send_index_reg_write_primary_compaction_buffers(send_index_cxt, new_level);
+	//send_index_cxt->r_desc->send_index_reply_checker = send_index_reply_checker_init();
 }
 
 void send_index_compaction_ended_callback(void *context, uint32_t src_level_id)
