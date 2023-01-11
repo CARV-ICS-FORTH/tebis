@@ -339,29 +339,6 @@ struct krm_leader_ds_map {
 	UT_hash_handle hh;
 };
 
-struct krm_server_desc {
-	struct krm_server_name name;
-	sem_t wake_up;
-	pthread_mutex_t msg_list_lock;
-	struct tebis_klist *msg_list;
-	zhandle_t *zh;
-	struct rco_pool *compaction_pool;
-	char *mail_path;
-	uint8_t IP[IP_SIZE];
-	uint8_t RDMA_IP[IP_SIZE];
-	enum krm_server_role role;
-	enum krm_server_state state;
-	uint8_t zconn_state;
-	uint32_t RDMA_port;
-	/*entry in the root table of my dad (numa_server)*/
-	int root_server_id;
-	/*filled only by the leader server*/
-	struct krm_leader_regions *ld_regions;
-	struct krm_leader_ds_map *dataservers_map;
-	/*filled by the ds*/
-	struct krm_ds_regions *ds_regions;
-};
-
 struct krm_msg {
 	struct krm_region region;
 	char sender[KRM_HOSTNAME_SIZE];
@@ -371,13 +348,9 @@ struct krm_msg {
 	uint64_t transaction_id;
 };
 
-void *run_region_server(void *args);
-struct krm_region_desc *krm_get_region(struct krm_ds_regions *region_table, char *key, uint32_t key_size);
-//struct krm_region_desc *krm_get_region_based_on_id(struct krm_server_desc *desc, char *region_id,
-//						   uint32_t region_id_size);
-int krm_get_server_info(struct krm_server_desc *server_desc, char *hostname, struct krm_server_name *server);
+int krm_get_server_info(struct regs_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
-struct channel_rdma *ds_get_channel(struct krm_server_desc const *my_desc);
+struct channel_rdma *ds_get_channel(struct regs_server_desc const *my_desc);
 
 /*remote compaction related staff*/
 struct rco_task_queue {
@@ -391,13 +364,13 @@ struct rco_task_queue {
 
 struct rco_pool {
 	pthread_mutex_t pool_lock;
-	struct krm_server_desc *rco_server;
+	struct regs_server_desc *rco_server;
 	int curr_worker_id;
 	int num_workers;
 	struct rco_task_queue worker_queue[];
 };
 #define RCO_POOL_SIZE 1
-struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size);
+struct rco_pool *rco_init_pool(struct regs_server_desc *server, int pool_size);
 void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc);
 //int rco_send_index_to_group(struct bt_compaction_callback_args *c);
 int rco_flush_last_log_segment(void *handle);
@@ -413,8 +386,8 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type);
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname);
-struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname);
+struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *mydesc, char *hostname);
+struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *mydesc, char *hostname);
 void sc_free_rpc_pair(struct sc_msg_pair *p);
 void *run_master(void *args);
 #endif /* METADATA_H */

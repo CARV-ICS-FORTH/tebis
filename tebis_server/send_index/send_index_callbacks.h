@@ -4,7 +4,7 @@
 
 struct send_index_context {
 	struct krm_region_desc *r_desc;
-	struct krm_server_desc *server;
+	struct regs_server_desc *server;
 };
 struct wcursor_level_write_cursor;
 
@@ -12,6 +12,6 @@ void send_index_compaction_started_callback(void *context, uint64_t small_log_ta
 					    uint64_t big_log_tail_dev_offt, uint32_t src_level_id, uint8_t dst_tree_id,
 					    struct wcursor_level_write_cursor *new_level);
 
-void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region_desc *r_desc);
+void send_index_init_callbacks(struct regs_server_desc *server, struct krm_region_desc *r_desc);
 
 #endif // SEND_INDEX_CALLBACKS_H_

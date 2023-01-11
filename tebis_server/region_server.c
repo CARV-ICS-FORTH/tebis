@@ -1,4 +1,18 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #define _GNU_SOURCE
+#include "region_server.h"
 #include "../utilities/spin_loop.h"
 #include "djb2.h"
 #include "globals.h"
@@ -51,7 +65,7 @@ char *krm_msg_type_tostring(enum krm_msg_type type)
 	return tostring_array[type];
 }
 
-static void krm_get_IP_Addresses(struct krm_server_desc *server)
+static void krm_get_IP_Addresses(struct regs_server_desc *server)
 {
 	char addr[INET_ADDRSTRLEN] = { 0 };
 	struct ifaddrs *ifaddr = { 0 };
@@ -236,7 +250,7 @@ static void krm_send_open_command(struct krm_server_desc *desc, struct krm_regio
 void zk_main_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
 {
 	(void)zkh;
-	struct krm_server_desc *my_desc = (struct krm_server_desc *)context;
+	struct regs_server_desc *my_desc = (struct regs_server_desc *)context;
 	/*
 * zookeeper_init might not have returned, so we
 * use zkh instead.
@@ -285,7 +299,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 	(void)path;
 	struct Stat stat;
 
-	struct krm_server_desc *s_desc = (struct krm_server_desc *)watcherCtx;
+	struct regs_server_desc *s_desc = (struct regs_server_desc *)watcherCtx;
 	if (type == ZOO_CREATED_EVENT) {
 		log_info("ZOO_CREATE_EVENT");
 	} else if (type == ZOO_DELETED_EVENT) {
@@ -407,18 +421,18 @@ static int krm_insert_ds_region(struct krm_ds_regions *region_table, struct krm_
 /**
  * Returns r_desc that key should be hosted. Returns NULL if region_table is empty
  */
-struct krm_region_desc *krm_get_region(struct krm_ds_regions *region_table, char *key, uint32_t key_size)
+struct krm_region_desc *regs_get_region(struct regs_server_desc const *region_server, char *key, uint32_t key_size)
 {
 	bool found = false;
-	int pos = get_region_pos(region_table, key, key_size, &found);
+	int pos = get_region_pos(region_server->ds_regions, key, key_size, &found);
 	if (-1 == pos) {
 		log_warn("Querying an empty region table returning NULL");
 		return NULL;
 	}
-	return region_table->r_desc[pos];
+	return region_server->ds_regions->r_desc[pos];
 }
 
-static struct krm_region_desc *open_region(struct krm_server_desc *region_server, struct krm_region *new_region_info,
+static struct krm_region_desc *open_region(struct regs_server_desc *region_server, struct krm_region *new_region_info,
 					   enum krm_region_role server_role)
 {
 	(void)region_server;
@@ -467,7 +481,7 @@ static struct krm_region_desc *open_region(struct krm_server_desc *region_server
 	return r_desc;
 }
 
-static void krm_process_msg(struct krm_server_desc *region_server, struct krm_msg *msg)
+static void krm_process_msg(struct regs_server_desc *region_server, struct krm_msg *msg)
 {
 	char *zk_path;
 	struct krm_msg reply;
@@ -521,7 +535,7 @@ static void krm_process_msg(struct krm_server_desc *region_server, struct krm_ms
 	}
 }
 
-int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc, struct krm_server_name *dst,
+int krm_zk_get_server_name(char *dataserver_name, struct regs_server_desc const *my_desc, struct krm_server_name *dst,
 			   int *zk_rc)
 {
 	/*check if you are hostname-RDMA_port belongs to the project*/
@@ -565,7 +579,7 @@ int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *
 	return 0;
 }
 
-static int krm_zk_update_server_name(struct krm_server_desc *my_desc, struct krm_server_name *src)
+static int krm_zk_update_server_name(struct regs_server_desc *my_desc, struct krm_server_name *src)
 {
 	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, src->kreon_ds_hostname);
 	cJSON *obj = cJSON_CreateObject();
@@ -588,7 +602,7 @@ static int krm_zk_update_server_name(struct krm_server_desc *my_desc, struct krm
 /**
  * Announces Region Server presence in the Tebis cluster. More precisely, it creates an ephemeral znode under /aliveservers
  */
-static void announce_region_server_presence(struct krm_server_desc *server)
+static void announce_region_server_presence(struct regs_server_desc *server)
 {
 	char path[KRM_HOSTNAME_SIZE] = { 0 };
 	char *zk_path =
@@ -602,7 +616,7 @@ static void announce_region_server_presence(struct krm_server_desc *server)
 	free(zk_path);
 }
 
-static void handle_master_command(struct krm_server_desc *server, struct krm_msg *msg)
+static void handle_master_command(struct regs_server_desc *server, struct krm_msg *msg)
 {
 	(void)server;
 	switch (msg->type) {
@@ -619,7 +633,7 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 {
 	(void)type;
 	(void)state;
-	struct krm_server_desc *server = (struct krm_server_desc *)context;
+	struct regs_server_desc *server = (struct regs_server_desc *)context;
 	log_debug("New command from master %s", path);
 	struct String_vector commands = { 0 };
 	zoo_wget_children(zkh, path, command_watcher, context, &commands);
@@ -639,7 +653,7 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 	}
 }
 
-static void clean_region_server_mailbox(struct krm_server_desc *server)
+static void clean_region_server_mailbox(struct regs_server_desc *server)
 {
 	log_debug("Cleaning stale messages from my mailbox from previous epoch "
 		  "and leaving a watcher");
@@ -668,7 +682,7 @@ static void clean_region_server_mailbox(struct krm_server_desc *server)
 	free(mailbox);
 }
 
-static void init_zookeeper(struct krm_server_desc *server)
+static void init_zookeeper(struct regs_server_desc *server)
 {
 	if (gethostname(server->name.hostname, KRM_HOSTNAME_SIZE) != 0) {
 		log_fatal("failed to get my hostname");
@@ -689,7 +703,7 @@ static void init_zookeeper(struct krm_server_desc *server)
 	field_spin_for_value(&server->zconn_state, KRM_CONNECTED);
 }
 
-static void init_region_server_state(struct krm_server_desc *server)
+static void init_region_server_state(struct regs_server_desc *server)
 {
 	server->mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, server->name.kreon_ds_hostname);
@@ -700,31 +714,31 @@ static void init_region_server_state(struct krm_server_desc *server)
 	server->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
 }
 
-static bool is_server_part_of_the_cluster(struct krm_server_desc *server)
+static bool is_server_part_of_the_cluster(struct regs_server_desc *server)
 {
 	int ignored_value = 0;
 
 	return krm_zk_get_server_name(server->name.kreon_ds_hostname, server, &server->name, &ignored_value) == 0;
 }
 
-static bool is_first_time_joining_cluster(struct krm_server_desc *server)
+static bool is_first_time_joining_cluster(struct regs_server_desc *server)
 {
 	return server->name.epoch == 0;
 }
 
-static void update_region_server_clock(struct krm_server_desc *server)
+static void update_region_server_clock(struct regs_server_desc *server)
 {
 	// Update my zookeeper entry
 	++server->name.epoch;
 	krm_zk_update_server_name(server, &server->name);
 }
 
-void *run_region_server(void *args)
+void *regs_run_region_server(void *args)
 {
 	pthread_setname_np(pthread_self(), "rserverd");
 	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
 
-	struct krm_server_desc *server = (struct krm_server_desc *)args;
+	struct regs_server_desc *server = (struct regs_server_desc *)args;
 	init_region_server_state(server);
 	init_zookeeper(server);
 

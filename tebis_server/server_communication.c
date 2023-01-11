@@ -211,10 +211,10 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	pthread_mutex_unlock(&p->conn->buffer_lock);
 }
 
-extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,
+extern int krm_zk_get_server_name(char *dataserver_name, struct regs_server_desc const *my_desc,
 				  struct krm_server_name *dst, int *zk_rc);
 
-static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc, char *hostname,
+static struct connection_rdma *sc_get_conn(struct regs_server_desc const *mydesc, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
 	struct sc_conn_per_server *cps = NULL;
@@ -247,12 +247,12 @@ static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc,
 	return cps->conn;
 }
 
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname)
+struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *mydesc, char *hostname)
 {
 	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
 }
 
-struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname)
+struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *mydesc, char *hostname)
 {
 	return sc_get_conn(mydesc, hostname, &sc_root_compaction_cps);
 }

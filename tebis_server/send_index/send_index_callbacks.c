@@ -122,7 +122,7 @@ static void send_index_flush_L0(struct send_index_context *context, uint64_t sma
 				uint64_t big_log_tail_dev_offt)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
 
@@ -168,7 +168,7 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 							struct wcursor_level_write_cursor *new_level_cursor)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
@@ -237,7 +237,7 @@ static void send_index_reg_write_primary_compaction_buffer(struct send_index_con
 static void send_index_close_compaction(struct send_index_context *context, uint32_t level_id)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
 
@@ -284,7 +284,7 @@ static void send_index_replicate_index_segment(struct send_index_context *contex
 					       uint32_t level_id, uint32_t height, uint32_t clock)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	int ret = 0;
 	char *primary_buffer = wcursor_get_cursor_buffer(wcursor, height, clock);
@@ -312,7 +312,7 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 						uint32_t clock, uint32_t height, bool is_last)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
@@ -363,7 +363,7 @@ static void send_index_send_segment(struct send_index_context *context, uint64_t
 static void send_index_swap_levels(struct send_index_context *context, uint32_t level_id)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
+	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
@@ -451,7 +451,7 @@ void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t lev
 	}
 }
 
-void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region_desc *r_desc)
+void send_index_init_callbacks(struct regs_server_desc *server, struct krm_region_desc *r_desc)
 {
 	struct send_index_context *send_index_cxt =
 		(struct send_index_context *)calloc(1, sizeof(struct send_index_context));

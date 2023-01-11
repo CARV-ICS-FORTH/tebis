@@ -959,7 +959,7 @@ void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
 	pthread_mutex_unlock(&db_map_lock);
 }
 
-struct rco_pool *rco_init_pool(struct krm_server_desc *server, int pool_size)
+struct rco_pool *rco_init_pool(struct regs_server_desc *server, int pool_size)
 {
 	struct rco_pool *pool = NULL;
 	pool = (struct rco_pool *)malloc(sizeof(struct rco_pool) + (pool_size * sizeof(struct rco_task_queue)));
