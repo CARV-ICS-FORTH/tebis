@@ -34,6 +34,39 @@
 #include <zookeeper/zookeeper.jute.h>
 uint64_t ds_hash_key;
 
+static void *regs_run_region_server(void *args);
+
+struct regs_server_desc *regs_create_server(void)
+{
+	return calloc(1UL, sizeof(struct regs_server_desc));
+}
+
+void regs_destroy_server(struct regs_server_desc *region_server)
+{
+	if (NULL == region_server)
+		return;
+	free(region_server);
+}
+
+void regs_start_server(struct regs_server_desc *region_server)
+{
+	log_info("Starting Region Server");
+	if (pthread_create(&region_server->region_server_cnxt, NULL, regs_run_region_server, region_server)) {
+		log_fatal("Failed to start metadata_server");
+		_exit(EXIT_FAILURE);
+	}
+}
+
+void regs_set_group_id(struct regs_server_desc *region_server, int group_id)
+{
+	region_server->root_server_id = group_id;
+}
+
+void regs_set_rdma_port(struct regs_server_desc *region_server, int port)
+{
+	region_server->RDMA_port = port;
+}
+
 par_handle open_db(const char *path)
 {
 	disable_gc();
@@ -50,7 +83,7 @@ par_handle open_db(const char *path)
 	return handle;
 }
 
-char *krm_msg_type_tostring(enum krm_msg_type type)
+char *regs_msg_type_tostring(enum krm_msg_type type)
 {
 	static char *const tostring_array[KRM_BUILD_PRIMARY + 1] = { NULL,
 								     "KRM_OPEN_REGION_AS_PRIMARY",
@@ -602,7 +635,7 @@ static int krm_zk_update_server_name(struct regs_server_desc *my_desc, struct kr
 /**
  * Announces Region Server presence in the Tebis cluster. More precisely, it creates an ephemeral znode under /aliveservers
  */
-static void announce_region_server_presence(struct regs_server_desc *server)
+static void regs_announce_server_presence(struct regs_server_desc *server)
 {
 	char path[KRM_HOSTNAME_SIZE] = { 0 };
 	char *zk_path =
@@ -653,7 +686,7 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 	}
 }
 
-static void clean_region_server_mailbox(struct regs_server_desc *server)
+static void regs_clean_server_mailbox(struct regs_server_desc *server)
 {
 	log_debug("Cleaning stale messages from my mailbox from previous epoch "
 		  "and leaving a watcher");
@@ -682,7 +715,7 @@ static void clean_region_server_mailbox(struct regs_server_desc *server)
 	free(mailbox);
 }
 
-static void init_zookeeper(struct regs_server_desc *server)
+static void regs_init_zookeeper(struct regs_server_desc *server)
 {
 	if (gethostname(server->name.hostname, KRM_HOSTNAME_SIZE) != 0) {
 		log_fatal("failed to get my hostname");
@@ -703,7 +736,7 @@ static void init_zookeeper(struct regs_server_desc *server)
 	field_spin_for_value(&server->zconn_state, KRM_CONNECTED);
 }
 
-static void init_region_server_state(struct regs_server_desc *server)
+static void regs_init_server_state(struct regs_server_desc *server)
 {
 	server->mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, server->name.kreon_ds_hostname);
@@ -714,43 +747,43 @@ static void init_region_server_state(struct regs_server_desc *server)
 	server->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
 }
 
-static bool is_server_part_of_the_cluster(struct regs_server_desc *server)
+static bool regs_am_I_part_of_the_cluster(struct regs_server_desc *server)
 {
 	int ignored_value = 0;
 
 	return krm_zk_get_server_name(server->name.kreon_ds_hostname, server, &server->name, &ignored_value) == 0;
 }
 
-static bool is_first_time_joining_cluster(struct regs_server_desc *server)
+static bool regs_is_first_time_joining_cluster(struct regs_server_desc *server)
 {
 	return server->name.epoch == 0;
 }
 
-static void update_region_server_clock(struct regs_server_desc *server)
+static void regs_update_server_clock(struct regs_server_desc *server)
 {
 	// Update my zookeeper entry
 	++server->name.epoch;
 	krm_zk_update_server_name(server, &server->name);
 }
 
-void *regs_run_region_server(void *args)
+static void *regs_run_region_server(void *args)
 {
 	pthread_setname_np(pthread_self(), "rserverd");
 	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
 
 	struct regs_server_desc *server = (struct regs_server_desc *)args;
-	init_region_server_state(server);
-	init_zookeeper(server);
+	regs_init_server_state(server);
+	regs_init_zookeeper(server);
 
-	if (!is_server_part_of_the_cluster(server)) {
+	if (!regs_am_I_part_of_the_cluster(server)) {
 		log_fatal("Host %s cannot determine that is part of the cluster", server->name.kreon_ds_hostname);
 		_exit(EXIT_FAILURE);
 	}
-	update_region_server_clock(server);
-	clean_region_server_mailbox(server);
-	announce_region_server_presence(server);
+	regs_update_server_clock(server);
+	regs_clean_server_mailbox(server);
+	regs_announce_server_presence(server);
 
-	if (is_first_time_joining_cluster(server))
+	if (regs_is_first_time_joining_cluster(server))
 		globals_init_volume();
 
 	sem_wait(&server->wake_up);
@@ -767,7 +800,7 @@ void *regs_run_region_server(void *args)
 			sem_wait(&server->wake_up);
 			continue;
 		}
-		log_debug("New command: %s", krm_msg_type_tostring(((struct krm_msg *)node->data)->type));
+		log_debug("New command: %s", regs_msg_type_tostring(((struct krm_msg *)node->data)->type));
 		server->state = KRM_PROCESSING_MSG;
 		krm_process_msg(server, (struct krm_msg *)node->data);
 		free(node->data);

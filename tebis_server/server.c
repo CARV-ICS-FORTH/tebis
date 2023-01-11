@@ -120,11 +120,11 @@ struct ds_numa_server {
 	pthread_t poll_cq_cnxt;
 	// context of spinning thread
 	pthread_t spinner_cnxt;
+	pthread_t meta_server_cnxt;
 	// our rdma channel
 	struct channel_rdma *channel;
-	// context of the metadata thread
-	pthread_t meta_server_cnxt;
-	struct regs_server_desc meta_server;
+
+	struct regs_server_desc *region_server;
 	// spinner manages its workers
 	struct ds_spinning_thread spinner;
 };
@@ -230,7 +230,7 @@ void *socket_thread(void *args)
 		exit(EXIT_FAILURE);
 	}
 
-	struct rdma_cm_id *listen_id;
+	struct rdma_cm_id *listen_id = NULL;
 	ret = rdma_create_ep(&listen_id, res, NULL, NULL);
 	if (ret) {
 		log_fatal("rdma_create_ep: %s", strerror(errno));
@@ -446,8 +446,8 @@ void *worker_thread_kernel(void *args)
 				continue;
 		}
 		/*process task*/
-		handle_task(&root_server->numa_servers[worker->root_server_id]->meta_server, job);
 		enum message_type type = job->msg->msg_type;
+		handle_task(root_server->numa_servers[worker->root_server_id]->region_server, job);
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
 
@@ -2139,12 +2139,12 @@ int main(int argc, char *argv[])
 	server->spinner.num_workers = num_workers;
 	server->spinner.spinner_id = spinning_thread_id;
 	server->spinner.root_server_id = server_idx;
-	server->meta_server.root_server_id = server_idx;
+	// server->meta_server.root_server_id = server_idx;
 	server->rdma_port = rdma_port;
 	// server->meta_server.ld_regions = NULL;
 	// server->meta_server.dataservers_map = NULL;
 
-	server->meta_server.RDMA_port = rdma_port;
+	// server->meta_server.RDMA_port = rdma_port;
 
 	for (int j = 0; j < num_workers; j++) {
 		server->spinner.worker[j].worker_id = j;
@@ -2204,18 +2204,15 @@ int main(int argc, char *argv[])
 		 "core %d",
 		 server->server_id, server->rdma_port, server->spinner.spinner_id);
 
-	server->meta_server.root_server_id = server_idx;
-
-	log_info("Startring Master (candidate) server");
 	if (pthread_create(&server->meta_server_cnxt, NULL, run_master, &rdma_port)) {
 		log_fatal("Failed to start metadata_server");
 		_exit(EXIT_FAILURE);
 	}
-	log_info("Starting Region Server");
-	if (pthread_create(&server->meta_server_cnxt, NULL, regs_run_region_server, &server->meta_server)) {
-		log_fatal("Failed to start metadata_server");
-		_exit(EXIT_FAILURE);
-	}
+
+	server->region_server = regs_create_server();
+	regs_set_group_id(server->region_server, server_idx);
+	regs_set_rdma_port(server->region_server, rdma_port);
+	regs_start_server(server->region_server);
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	sem_init(&exit_main, 0, 0);
 
