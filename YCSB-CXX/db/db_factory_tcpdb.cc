@@ -5,5 +5,5 @@ using namespace ycsbc;
 
 YCSBDB *DBFactory::CreateDB(int num, utils::Properties &props)
 {
-	return new tcpDB(num);
+	return new tcpDB(num, props);
 }

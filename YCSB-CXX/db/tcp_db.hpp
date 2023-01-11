@@ -1,20 +1,21 @@
 #ifndef YCSB_C_TCP_DB_H
 #define YCSB_C_TCP_DB_H
 
-#define NUM_OF_THR 8
+#define NUM_OF_THR 16
 
 extern "C" {
 #include "tcp_client.h"
 }
 
 #include "ycsbdb.h"
+#include "properties.h"
 
 namespace ycsbc
 {
 
 class tcpDB : public YCSBDB {
     public:
-	tcpDB(int num);
+	tcpDB(int num, utils::Properties &props);
 
 	~tcpDB();
 

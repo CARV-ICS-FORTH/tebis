@@ -244,7 +244,8 @@ static void *thread_routine(void *arg)
 
 					if (is_req_init_conn_type(req)) {
 						if (client_version_check(clifd, this) < 0) {
-							log_error("thread_routine::client_version_check(): %s", strerror(errno));
+							log_error("thread_routine::client_version_check(): %s",
+								  strerror(errno));
 							epoll_ctl(this->epfd, EPOLL_CTL_DEL, clifd,
 								  NULL); // kernel 2.6+
 							close(clifd);
@@ -468,7 +469,7 @@ s_tcp_rep s_tcp_rep_new(worker_t *this, char retcode, size_t paysz)
 	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
 
 	if (retcode == TT_REQ_SUCC)
-		tsize += paysz + 8UL;  //temp
+		tsize += paysz + 8UL; //temp
 	else
 		paysz = 0UL; // failure-reply has 0-length payload
 

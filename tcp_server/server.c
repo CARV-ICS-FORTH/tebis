@@ -18,7 +18,7 @@ int main(int argc, char **argv)
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, SITH5_IP_56G, 25565, 16)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, SITH2_IP_56G, 25565, 16)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}
@@ -28,3 +28,5 @@ int main(int argc, char **argv)
 
 	return EXIT_SUCCESS;
 }
+
+// perf top --all-cpus --pid=PID --count-filter=500 --sort cpu,socket,symbol,dso

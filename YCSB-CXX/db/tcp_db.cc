@@ -44,10 +44,13 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 
 /** PUBLIC **/
 
-tcpDB::tcpDB(int num) /* OK */
+tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 {
-	for (uint i = 0U; i < NUM_OF_THR; ++i) {
-		if (chandle_init(this->chandle + i, SITH5_IP_56G, "25565") < 0) {
+	int threads = stoi(props.GetProperty("threadcount", "1"));
+	printf("\033[1;31mthreads = %d\033[0m\n", threads);
+
+	for (uint i = 0U; i < threads; ++i) {
+		if (chandle_init(this->chandle + i, SITH2_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}

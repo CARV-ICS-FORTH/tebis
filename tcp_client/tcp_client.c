@@ -127,11 +127,15 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	if (!res)
 		return -(EXIT_FAILURE);
 
+	// char debug[INET6_ADDRSTRLEN];
+
 	for (rp = res; rp; rp = rp->ai_next) {
 		if ((ch->sock = socket(rp->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {
 			print_debug("socket()");
 			continue;
 		}
+
+		// printf("rp->ai_addr = %s\n", inet_ntop(rp->ai_family, &rp->ai_addr, debug, INET6_ADDRSTRLEN));
 
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
 			freeaddrinfo(res);
