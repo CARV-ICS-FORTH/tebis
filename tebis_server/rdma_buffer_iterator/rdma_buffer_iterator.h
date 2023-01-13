@@ -11,6 +11,6 @@ extern struct lsn *rdma_buffer_iterator_get_lsn(rdma_buffer_iterator_t iter);
 extern struct kv_splice *rdma_buffer_iterator_get_kv(rdma_buffer_iterator_t iter);
 extern enum rdma_buffer_iterator_status rdma_buffer_iterator_is_valid(rdma_buffer_iterator_t iter);
 
-extern uint8_t iterator_is_valid(rdma_buffer_iterator_t iter);
+extern uint8_t rdma_buffer_iterator_is_in_bounds(rdma_buffer_iterator_t iter);
 
 #endif // RDMA_BUFFER_ITERATOR_H

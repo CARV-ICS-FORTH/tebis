@@ -1198,16 +1198,16 @@ void wait_for_flush_replies(struct krm_work_task *task)
 	//got all replies motherfuckers
 	pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
-		/*re zero l0 recovery rdma buf metadata*/
-		r_desc->m_state->l0_recovery_rdma_buf.segment.curr_end = 0;
-		r_desc->m_state->l0_recovery_rdma_buf.segment.replicated_bytes = 0;
-		/*re zero l0 big rdma buf metadata*/
-		r_desc->m_state->big_recovery_rdma_buf.segment.curr_end = 0;
-		r_desc->m_state->big_recovery_rdma_buf.segment.replicated_bytes = 0;
-		/*finally free the flush msg*/
+		// re-zero the metadat of the flushed segment
+		struct ru_master_log_buffer_seg *flushed_segment = &r_desc->m_state->l0_recovery_rdma_buf.segment;
+		if (task->insert_metadata.log_type == BIG)
+			flushed_segment = &r_desc->m_state->big_recovery_rdma_buf.segment;
+
+		flushed_segment->curr_end = 0;
+		flushed_segment->replicated_bytes = 0;
+		/*free the flush msg*/
 		sc_free_rpc_pair(&r_desc->m_state->flush_cmd[i].msg_pair);
 	}
-	// log_info("Resume possible halted tasks after flush");
 	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
 	task->last_replica_to_ack = 0;
 	task->kreon_operation_status = REPLICATE;
