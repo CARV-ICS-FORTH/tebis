@@ -35,9 +35,9 @@ enum rdma_buffer_iterator_status rdma_buffer_iterator_next(rdma_buffer_iterator_
 		return INVALID;
 
 	struct kv_splice *kv = rdma_buffer_iterator_get_kv(iter);
-	int32_t key_size = get_key_size(kv);
-	int32_t value_size = get_value_size(kv);
-	int32_t kv_size = key_size + value_size + get_kv_metadata_size();
+	int32_t key_size = kv_splice_get_key_size(kv);
+	int32_t value_size = kv_splice_get_value_size(kv);
+	int32_t kv_size = key_size + value_size + kv_splice_get_metadata_size();
 
 	// proceed iterator
 	iter->curr_offset = iter->curr_offset + get_lsn_size() + kv_size;
@@ -50,6 +50,8 @@ enum rdma_buffer_iterator_status rdma_buffer_iterator_next(rdma_buffer_iterator_
 struct lsn *rdma_buffer_iterator_get_lsn(rdma_buffer_iterator_t iter)
 {
 	assert(iterator_is_valid(iter));
+	struct lsn *curr_lsn = (struct lsn *)iter->curr_offset;
+	log_debug("CHecking lsn %lu", curr_lsn->id);
 	return (struct lsn *)iter->curr_offset;
 }
 
@@ -60,9 +62,15 @@ struct kv_splice *rdma_buffer_iterator_get_kv(rdma_buffer_iterator_t iter)
 	return kv;
 }
 
+uint64_t rdma_buffer_iterator_get_remaining_space(rdma_buffer_iterator_t iter)
+{
+	return (uint64_t)iter->end_offt - (uint64_t)iter->curr_offset;
+}
+
 enum rdma_buffer_iterator_status rdma_buffer_iterator_is_valid(rdma_buffer_iterator_t iter)
 {
-	if (iterator_is_valid(iter) && rdma_buffer_iterator_get_lsn(iter)->id != 0) {
+	if (iterator_is_valid(iter) &&
+	    rdma_buffer_iterator_get_remaining_space(iter) > kv_splice_get_min_possible_kv_size() + get_lsn_size()) {
 		return VALID;
 	}
 	return INVALID;

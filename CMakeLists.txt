@@ -67,11 +67,6 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE)
 
 FetchContent_Declare(
-  libbloom # Recommendation: Stick close to the original name.
-  GIT_REPOSITORY https://github.com/innerout/libbloom
-  GIT_TAG cmake)
-
-FetchContent_Declare(
   cmake-scripts
   GIT_REPOSITORY https://github.com/StableCoder/cmake-scripts.git
   GIT_TAG main
@@ -110,7 +105,6 @@ set(cjson_LIBRARY ${BINARY_DIR}/libcjson.a)
 
 FetchContent_GetProperties(uthash)
 FetchContent_GetProperties(log)
-FetchContent_GetProperties(libbloom)
 FetchContent_GetProperties(cjson)
 FetchContent_GetProperties(cmake-scripts)
 FetchContent_GetProperties(parallax)
@@ -128,14 +122,6 @@ if(NOT log_POPULATED)
   add_subdirectory(${log_SOURCE_DIR} ${log_BINARY_DIR})
   include_directories(${log_SOURCE_DIR}/include)
   FetchContent_MakeAvailable(log)
-endif()
-
-if(NOT libbloom_POPULATED)
-  FetchContent_Populate(libbloom)
-  add_subdirectory(${libbloom_SOURCE_DIR} ${libbloom_BINARY_DIR})
-  include_directories(${libbloom_SOURCE_DIR}/include)
-  message(${libbloom_SOURCE_DIR}/include)
-  FetchContent_MakeAvailable(libbloom)
 endif()
 
 if(NOT cmake-scripts_POPULATED)

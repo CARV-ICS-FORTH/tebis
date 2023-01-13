@@ -1340,8 +1340,8 @@ static uint8_t key_exists(struct krm_work_task *task)
 	assert(task);
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_key pkey = { 0 };
-	pkey.size = get_key_size(task->kv);
-	pkey.data = get_key_offset_in_kv(task->kv);
+	pkey.size = kv_splice_get_key_size(task->kv);
+	pkey.data = kv_splice_get_key_offset_in_kv(task->kv);
 	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
 		return 0;
 
@@ -1356,8 +1356,8 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 	 * */
 	if (task->kv == NULL) {
 		task->kv = put_msg_get_kv_offset(task->msg);
-		uint32_t key_length = get_key_size(task->kv);
-		char *key = get_key_offset_in_kv(task->kv);
+		uint32_t key_length = kv_splice_get_key_size(task->kv);
+		char *key = kv_splice_get_key_offset_in_kv(task->kv);
 		if (key_length == 0) {
 			assert(0);
 			_exit(EXIT_FAILURE);
@@ -1662,7 +1662,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		// acquire a transacation ID (if level > 0) for parallax and initialize a write_cursor for the upcoming compaction
 		par_init_compaction_id(r_desc->db, dst_level_id, req->tree_id);
 		r_desc->r_state->write_cursor_segments[dst_level_id] =
-			wcursor_init_write_cursor(dst_level_id, (struct db_handle *)r_desc->db, req->tree_id);
+			wcursor_init_write_cursor(dst_level_id, (struct db_handle *)r_desc->db, req->tree_id, true);
 	} else {
 		log_fatal("Remote compaction for regions %s still pending", r_desc->region->id);
 		assert(0);
