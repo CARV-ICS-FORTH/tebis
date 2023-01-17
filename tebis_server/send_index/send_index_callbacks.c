@@ -4,6 +4,7 @@
 #include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_reply_checker.h"
+#include "send_index_uuid_checker.h"
 #include <infiniband/verbs.h>
 #include <log.h>
 #include <rdma/rdma_verbs.h>
@@ -27,6 +28,7 @@ static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, 
 	strcpy(req->region_key, r_desc->region->min_key);
 	req->level_id = level_id;
 	req->tree_id = tree_id;
+	req->uuid = (uint64_t)req;
 }
 
 static void send_index_fill_close_compaction_request(msg_header *request_header, struct krm_region_desc *r_desc,
@@ -37,6 +39,7 @@ static void send_index_fill_close_compaction_request(msg_header *request_header,
 	req->region_key_size = r_desc->region->min_key_size;
 	strcpy(req->region_key, r_desc->region->min_key);
 	req->level_id = level_id;
+	req->uuid = (uint64_t)req;
 }
 
 static void send_index_fill_swap_levels_request(msg_header *request_header, struct krm_region_desc *r_desc,
@@ -47,6 +50,7 @@ static void send_index_fill_swap_levels_request(msg_header *request_header, stru
 	req->region_key_size = r_desc->region->min_key_size;
 	strcpy(req->region_key, r_desc->region->min_key);
 	req->level_id = level_id;
+	req->uuid = (uint64_t)req;
 }
 
 static void send_index_fill_flush_index_segment(msg_header *request_header, struct krm_region_desc *r_desc,
@@ -130,18 +134,8 @@ static void send_index_flush_L0(struct send_index_context *context)
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][0];
 		// spin for reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
-
 		// for debugging purposes
-		struct s2s_msg_flush_L0_req *flush_req_L0_payload =
-			(struct s2s_msg_flush_L0_req *)((char *)msg_pair->request + sizeof(struct msg_header));
-		struct s2s_msg_flush_L0_rep *flush_rep_L0_payload =
-			(struct s2s_msg_flush_L0_rep *)((char *)msg_pair->reply + sizeof(struct msg_header));
-
-		if (flush_req_L0_payload->uuid != flush_rep_L0_payload->uuid) {
-			assert(0);
-			log_fatal("Mismatch in piggybacked uuid");
-			_exit(EXIT_FAILURE);
-		}
+		send_index_uuid_checker_validate_uuid(msg_pair, FLUSH_L0_REQUEST);
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
 	}
@@ -186,7 +180,8 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
-
+		// for debuging purposes
+		send_index_uuid_checker_validate_uuid(msg_pair, REPLICA_INDEX_GET_BUFFER_REQ);
 		struct s2s_msg_replica_index_get_buffer_rep *get_buffer_reply =
 			(struct s2s_msg_replica_index_get_buffer_rep *)((uint64_t)msg_pair->reply +
 									sizeof(struct msg_header));
@@ -257,6 +252,8 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
+		// for debuging purposes
+		send_index_uuid_checker_validate_uuid(msg_pair, CLOSE_COMPACTION_REQUEST);
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
 	}
@@ -363,7 +360,6 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 			.reply_size = send_index_swap_levels_reply_size,
 			.request_type = REPLICA_INDEX_SWAP_LEVELS_REQUEST
 		};
-
 		r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
 
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
@@ -381,6 +377,8 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
+		// for debuging purposes
+		send_index_uuid_checker_validate_uuid(msg_pair, REPLICA_INDEX_SWAP_LEVELS_REQUEST);
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
 	}
@@ -415,13 +413,19 @@ void send_index_swap_levels_callback(void *context, uint32_t src_level_id)
 	send_index_swap_levels(send_index_cxt, src_level_id);
 }
 
-void send_index_compaction_wcursor_flush_segment_callback(void *context, char *buf, uint32_t buf_size, uint32_t height)
+void send_index_compaction_wcursor_flush_segment_callback(void *context, uint32_t level_id, uint32_t height,
+							  uint32_t buf_size, int is_last_segment)
 {
-	assert(0);
+	(void)context;
+	(void)level_id;
+	(void)height;
+	(void)buf_size;
+	(void)is_last_segment;
+	return;
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
 	send_index_wait_for_previous_reply(send_index_cxt);
-
+	char *buf = NULL;
 	send_index_send_segment(send_index_cxt, buf, buf_size, height);
 }
 
@@ -437,6 +441,8 @@ void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region
 	send_index_callback_functions.compaction_started_cb = send_index_compaction_started_callback;
 	send_index_callback_functions.compaction_ended_cb = send_index_compaction_ended_callback;
 	send_index_callback_functions.swap_levels_cb = send_index_swap_levels_callback;
+	send_index_callback_functions.comp_write_cursor_flush_segment_cb =
+		send_index_compaction_wcursor_flush_segment_callback;
 
 	parallax_init_callbacks(r_desc->db, &send_index_callback_functions, cxt);
 }

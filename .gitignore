@@ -45,3 +45,4 @@ __pycache__/
 *$py.class
 docs/html/*
 docs/xml/*
+.cache

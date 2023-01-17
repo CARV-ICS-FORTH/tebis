@@ -24,6 +24,7 @@ add_executable(
   send_index/send_index.c
   send_index/send_index_callbacks.c
   send_index/send_index_reply_checker.c
+  send_index/send_index_uuid_checker.c
   ../common/common.c
   rdma_buffer_iterator/rdma_buffer_iterator.c
   remote_compaction.c

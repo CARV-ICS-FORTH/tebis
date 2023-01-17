@@ -19,6 +19,7 @@
 #include "btree/lsn.h"
 #include "conf.h"
 #include "parallax/structures.h"
+#include "send_index/send_index_uuid_checker.h"
 #include <include/parallax/parallax.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1090,6 +1091,7 @@ static void fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_fl
 	flush_request->log_type = task->insert_metadata.log_type;
 	flush_request->region_key_size = r_desc->region->min_key_size;
 	strcpy(flush_request->region_key, r_desc->region->min_key);
+	flush_request->uuid = (uint64_t)flush_request;
 }
 
 /** Fills the replication fields of a put msg. Only put msgs need to be replicated.
@@ -1205,6 +1207,8 @@ void wait_for_flush_replies(struct krm_work_task *task)
 
 		flushed_segment->curr_end = 0;
 		flushed_segment->replicated_bytes = 0;
+		//for debuging purposes
+		send_index_uuid_checker_validate_uuid(&r_desc->m_state->flush_cmd[i].msg_pair, FLUSH_COMMAND_REQ);
 		/*free the flush msg*/
 		sc_free_rpc_pair(&r_desc->m_state->flush_cmd[i].msg_pair);
 	}
@@ -1364,7 +1368,6 @@ static void execute_put_req(struct krm_server_desc const *mydesc, struct krm_wor
 		}
 		/*calculate kv_payload size*/
 		task->msg_payload_size = put_msg_get_payload_size(task->msg);
-
 		task->r_desc = krm_get_region(mydesc, key, key_length);
 		if (task->r_desc == NULL) {
 			log_fatal("Region not found for key size key %u:%s", key_length, key);
@@ -1574,6 +1577,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 	struct s2s_msg_flush_cmd_rep *flush_rep =
 		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
 	flush_rep->status = TEBIS_SUCCESS;
+	flush_rep->uuid = flush_req->uuid;
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
@@ -1658,8 +1662,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	uint32_t dst_level_id = req->level_id + 1;
 	if (r_desc->r_state->index_buffer[dst_level_id] == NULL) {
 		r_desc->r_state->index_buffer[dst_level_id] = send_index_create_compactions_rdma_buffer(task->conn);
-
-		// acquire a transacation ID (if level > 0) for parallax and initialize a write_cursor for the upcoming compaction
+		// acquire a transacation ID (if level > 0) for parallax and initialize a write_cursor for the upcoming compaction */
 		par_init_compaction_id(r_desc->db, dst_level_id, req->tree_id);
 		r_desc->r_state->write_cursor_segments[dst_level_id] =
 			wcursor_init_write_cursor(dst_level_id, (struct db_handle *)r_desc->db, req->tree_id, true);
@@ -1674,6 +1677,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
 	reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
+	reply->uuid = req->uuid;
 
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
 			  REPLICA_INDEX_GET_BUFFER_REP);
@@ -1800,13 +1804,15 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 		_exit(EXIT_FAILURE);
 	}
 	r_desc->r_state->index_buffer[dst_level_id] = NULL;
-
 	wcursor_close_write_cursor(r_desc->r_state->write_cursor_segments[dst_level_id]);
 	r_desc->r_state->write_cursor_segments[dst_level_id] = NULL;
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
 				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	struct s2s_msg_close_compaction_reply *reply =
+		(struct s2s_msg_close_compaction_reply *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply->uuid = req->uuid;
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_close_compaction_reply), CLOSE_COMPACTION_REPLY);
 
 	if (task->reply_msg->payload_length != 0)
@@ -1832,22 +1838,14 @@ static void execute_replica_index_swap_levels(struct krm_server_desc const *myde
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
 	log_debug("Swap levels for level %u", req->level_id);
-	uint32_t dst_level_id = req->level_id + 1;
-	// free index buffer that was allocated for sending the index for the specific level
-	// compaction started is called before swap levels always
-	free(r_desc->r_state->index_buffer[dst_level_id]->addr);
-	if (rdma_dereg_mr(r_desc->r_state->index_buffer[dst_level_id])) {
-		log_fatal("Failed to deregister rdma buffer");
-		_exit(EXIT_FAILURE);
-	}
-	r_desc->r_state->index_buffer[dst_level_id] = NULL;
-
-	wcursor_close_write_cursor(r_desc->r_state->write_cursor_segments[dst_level_id]);
-	r_desc->r_state->write_cursor_segments[dst_level_id] = NULL;
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
 				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+
+	struct s2s_msg_swap_levels_reply *reply =
+		(struct s2s_msg_swap_levels_reply *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply->uuid = req->uuid;
 	fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_swap_levels_reply),
 			  REPLICA_INDEX_SWAP_LEVELS_REPLY);
 

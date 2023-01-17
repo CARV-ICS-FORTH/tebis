@@ -156,12 +156,14 @@ struct s2s_msg_get_rdma_buffer_rep {
 struct s2s_msg_flush_cmd_req {
 	/*where primary has stored its segment*/
 	uint64_t primary_segment_offt;
+	uint64_t uuid;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
 	enum log_category log_type;
 };
 
 struct s2s_msg_flush_cmd_rep {
+	uint64_t uuid;
 	uint32_t status;
 };
 
@@ -179,6 +181,7 @@ struct s2s_msg_flush_L0_rep {
 /*server2server index transfers*/
 struct s2s_msg_replica_index_get_buffer_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t level_id;
 	uint8_t tree_id;
@@ -186,36 +189,40 @@ struct s2s_msg_replica_index_get_buffer_req {
 
 struct s2s_msg_replica_index_get_buffer_rep {
 	struct ibv_mr mr;
+	uint64_t uuid;
 };
 
 struct s2s_msg_replica_index_flush_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t height;
 };
 
 struct s2s_msg_replica_index_flush_rep {
-	int status;
+	uint64_t uuid;
 };
 
 struct s2s_msg_close_compaction_request {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t level_id;
 };
 
 struct s2s_msg_close_compaction_reply {
-	int status;
+	uint64_t uuid;
 };
 
 struct s2s_msg_swap_levels_request {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t level_id;
 };
 
 struct s2s_msg_swap_levels_reply {
-	int status;
+	uint64_t uuid;
 };
 
 int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *buf);
