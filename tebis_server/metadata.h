@@ -1,7 +1,6 @@
 #pragma once
 #include "messages.h"
 #include "send_index/send_index_callbacks.h"
-#include "send_index/send_index_reply_checker.h"
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 #include "../tebis_rdma/rdma.h"
@@ -265,7 +264,6 @@ struct krm_region_desc {
 	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
 	//Staff for deserializing the index at the replicas
 	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
-	send_index_reply_checker_t send_index_reply_checker;
 	enum krm_region_role role;
 	par_handle *db;
 	union {

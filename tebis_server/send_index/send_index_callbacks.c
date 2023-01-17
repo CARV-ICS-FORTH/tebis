@@ -3,7 +3,6 @@
 #include "../metadata.h"
 #include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
-#include "send_index_reply_checker.h"
 #include "send_index_uuid_checker.h"
 #include <infiniband/verbs.h>
 #include <log.h>
@@ -259,27 +258,6 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	}
 }
 
-static void send_index_wait_for_previous_reply(struct send_index_context *context)
-{
-	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
-	send_index_reply_checker_t send_index_reply_checker = r_desc->send_index_reply_checker;
-	assert(r_desc && server);
-	if (!send_index_reply_checker_got_msg(r_desc->send_index_reply_checker))
-		return; // this is the first msg to be send
-
-	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
-		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
-		send_index_reply_checker_spin_for_reply(send_index_reply_checker, r_conn, i);
-		// free msg space
-		msg_header *previous_request = send_index_reply_checker_get_msg(send_index_reply_checker, i);
-		msg_header *previous_reply =
-			(struct msg_header *)((char *)r_conn->rdma_memory_regions->local_memory_buffer +
-					      previous_request->offset_reply_in_recv_buffer);
-		client_free_rpc_pair(r_conn, previous_reply);
-	}
-}
-
 static void send_index_replicate_index_segment(struct send_index_context *context, char *buf, uint32_t buf_size)
 {
 	(void)buf;
@@ -325,7 +303,6 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		send_index_fill_flush_index_segment(msg_pair.request, r_desc, height);
 
 		send_index_fill_reply_fields(&msg_pair, r_conn);
-		send_index_reply_checker_add_msg(r_desc->send_index_reply_checker, msg_pair.request, i);
 
 		if (__send_rdma_message(r_conn, msg_pair.request, NULL) != TEBIS_SUCCESS) {
 			log_fatal("failed to send message");
@@ -424,7 +401,6 @@ void send_index_compaction_wcursor_flush_segment_callback(void *context, uint32_
 	return;
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
-	send_index_wait_for_previous_reply(send_index_cxt);
 	char *buf = NULL;
 	send_index_send_segment(send_index_cxt, buf, buf_size, height);
 }
