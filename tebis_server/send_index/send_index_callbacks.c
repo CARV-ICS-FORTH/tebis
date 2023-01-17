@@ -161,7 +161,6 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		uint32_t get_buffer_reply_size = sizeof(struct s2s_msg_replica_index_get_buffer_rep);
 
 		log_debug("Sending get rdma buffer for region %s", r_desc->region->id);
-
 		// allocate msg
 		struct send_index_allocate_msg_pair_info send_index_allocation_info = {
 			.conn = r_conn,
@@ -169,7 +168,6 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 			.reply_size = get_buffer_reply_size,
 			.request_type = REPLICA_INDEX_GET_BUFFER_REQ
 		};
-
 		r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 
@@ -393,7 +391,7 @@ void send_index_compaction_started_callback(void *context, uint32_t src_level_id
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 	//compaction from L0 to L1
-	if (src_level_id)
+	if (!src_level_id)
 		send_index_flush_L0(send_index_cxt);
 
 	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id);
