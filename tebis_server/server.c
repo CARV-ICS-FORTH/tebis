@@ -1654,24 +1654,17 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", req->region_key);
-		exit(EXIT_FAILURE);
-	}
-
-	log_debug("Starting compaction for level %u", req->level_id);
-
-	uint32_t dst_level_id = req->level_id + 1;
-	if (r_desc->r_state->index_buffer[dst_level_id] == NULL) {
-		r_desc->r_state->index_buffer[dst_level_id] = send_index_create_compactions_rdma_buffer(task->conn);
-		// acquire a transacation ID (if level > 0) for parallax and initialize a write_cursor for the upcoming compaction */
-		par_init_compaction_id(r_desc->db, dst_level_id, req->tree_id);
-		r_desc->r_state->write_cursor_segments[dst_level_id] =
-			wcursor_init_write_cursor(dst_level_id, (struct db_handle *)r_desc->db, req->tree_id, true);
-	} else {
-		log_fatal("Remote compaction for regions %s still pending", r_desc->region->id);
-		assert(0);
 		_exit(EXIT_FAILURE);
 	}
 
+	log_debug("Starting compaction for level %u", req->level_id);
+	uint32_t dst_level_id = req->level_id + 1;
+	struct send_index_create_compactions_rdma_buffer_params params = {
+		.level_id = req->level_id, .tree_id = req->tree_id, .conn = task->conn, .r_desc = r_desc
+	};
+	send_index_create_compactions_rdma_buffer(params);
+
+	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
@@ -1796,16 +1789,7 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
 	log_debug("Ending compaction for level %u", req->level_id);
-	uint32_t dst_level_id = req->level_id + 1;
-	//free index buffer that was allocated for sending the index for the specific level
-	free(r_desc->r_state->index_buffer[dst_level_id]->addr);
-	if (rdma_dereg_mr(r_desc->r_state->index_buffer[dst_level_id])) {
-		log_fatal("Failed to deregister rdma buffer");
-		_exit(EXIT_FAILURE);
-	}
-	r_desc->r_state->index_buffer[dst_level_id] = NULL;
-	wcursor_close_write_cursor(r_desc->r_state->write_cursor_segments[dst_level_id]);
-	r_desc->r_state->write_cursor_segments[dst_level_id] = NULL;
+	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

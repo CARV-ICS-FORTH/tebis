@@ -191,8 +191,8 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 	}
 }
 
-static void send_index_reg_write_primary_compaction_buffers(struct send_index_context *context,
-							    struct wcursor_level_write_cursor *wcursor)
+static void send_index_reg_write_primary_compaction_buffer(struct send_index_context *context,
+							   struct wcursor_level_write_cursor *wcursor)
 {
 	assert(context && wcursor);
 
@@ -200,19 +200,14 @@ static void send_index_reg_write_primary_compaction_buffers(struct send_index_co
 	struct connection_rdma *r_conn =
 		sc_get_compaction_conn(context->server, context->r_desc->region->backups[0].kreon_ds_hostname);
 
-	wcursor_segment_buffers_iterator_t segment_buffers_cursor = wcursor_segment_buffers_cursor_init(wcursor);
-	for (int i = 0; wcursor_segment_buffers_cursor_is_valid(segment_buffers_cursor);
-	     wcursor_segment_buffers_cursor_next(segment_buffers_cursor), i++) {
-		char *curr_buf = wcursor_segment_buffers_cursor_get_offt(segment_buffers_cursor);
-		context->r_desc->local_buffer[i] = rdma_reg_write(r_conn->rdma_cm_id, curr_buf, SEGMENT_SIZE);
-		if (context->r_desc->local_buffer[i] == NULL) {
-			log_fatal("Failed to reg memory");
-			exit(EXIT_FAILURE);
-		}
+	char *wcursor_segment_buffer_offt = wcursor_get_segment_buffer_offt(wcursor);
+	uint32_t wcursor_segment_buffer_size = wcursor_get_segment_buffer_size(wcursor);
+	context->r_desc->local_buffer =
+		rdma_reg_write(r_conn->rdma_cm_id, wcursor_segment_buffer_offt, wcursor_segment_buffer_size);
+	if (context->r_desc->local_buffer == NULL) {
+		log_fatal("Failed to reg memory");
+		_exit(EXIT_FAILURE);
 	}
-
-	assert(!wcursor_segment_buffers_cursor_is_valid(segment_buffers_cursor));
-	wcursor_segment_buffers_cursor_close(segment_buffers_cursor);
 }
 
 static void send_index_close_compaction(struct send_index_context *context, uint32_t level_id)
@@ -272,8 +267,8 @@ static void send_index_replicate_index_segment(struct send_index_context *contex
 
 		// XXX TODO XXX remove [0], temporary for compilation issues
 		while (1) {
-			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, r_desc->local_buffer[0]->addr, buf_size,
-					      r_desc->local_buffer[0], IBV_SEND_SIGNALED,
+			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, r_desc->local_buffer->addr, buf_size,
+					      r_desc->local_buffer, IBV_SEND_SIGNALED,
 					      (uint64_t)r_desc->remote_mem_buf[i]->addr,
 					      r_desc->remote_mem_buf[i]->rkey);
 			if (!ret)
@@ -370,9 +365,7 @@ void send_index_compaction_started_callback(void *context, uint32_t src_level_id
 		send_index_flush_L0(send_index_cxt);
 
 	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id);
-
-	send_index_reg_write_primary_compaction_buffers(send_index_cxt, new_level);
-	//send_index_cxt->r_desc->send_index_reply_checker = send_index_reply_checker_init();
+	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level);
 }
 
 void send_index_compaction_ended_callback(void *context, uint32_t src_level_id)

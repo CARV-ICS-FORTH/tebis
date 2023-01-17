@@ -1,5 +1,3 @@
-# File: CMakeLists.txt Author: Michalis Vardoulakis <mvard@ics.forth.gr>
-
 cmake_minimum_required(VERSION 3.11.0)
 project(tebis VERSION 1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -64,7 +62,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   log # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/innerout/log.c.git
-  GIT_PROGRESS TRUE)
+  GIT_PROGRESS YES)
 
 FetchContent_Declare(
   cmake-scripts

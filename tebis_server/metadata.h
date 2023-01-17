@@ -258,7 +258,7 @@ struct krm_region_desc {
 	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
-	struct ibv_mr *local_buffer[MAX_HEIGHT];
+	struct ibv_mr *local_buffer;
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
 	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
