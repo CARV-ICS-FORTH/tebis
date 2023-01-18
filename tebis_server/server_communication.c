@@ -4,6 +4,7 @@
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
+#include "region_server.h"
 #include "uthash.h"
 #include <infiniband/verbs.h>
 #include <log.h>
@@ -228,8 +229,9 @@ static struct connection_rdma *sc_get_conn(struct regs_server_desc const *mydesc
 		if (cps == NULL) {
 			/*ok update server info from zookeeper*/
 			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
-			int rc = krm_zk_get_server_name(hostname, mydesc, &cps->server, NULL);
-			if (rc) {
+			int ret_code =
+				regs_lookup_server_info((struct regs_server_desc *const)mydesc, hostname, &cps->server);
+			if (ret_code != ZOK) {
 				log_fatal("Failed to refresh info for server %s", hostname);
 				_exit(EXIT_FAILURE);
 			}

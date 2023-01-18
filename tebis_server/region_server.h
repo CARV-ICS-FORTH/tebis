@@ -29,7 +29,7 @@ struct regs_server_desc {
 	enum krm_server_role role;
 	enum krm_server_state state;
 	uint8_t zconn_state;
-	uint32_t RDMA_port;
+	int RDMA_port;
 	/*entry in the root table of my dad (numa_server)*/
 	int root_server_id;
 	// /*filled only by the leader server*/
@@ -67,4 +67,24 @@ void regs_set_group_id(struct regs_server_desc *region_server, int group_id);
  * @brief Sets the rdma port this servers is responsible for
  */
 void regs_set_rdma_port(struct regs_server_desc *region_server, int port);
+
+/**
+ * @brief Returns a pointer to the Tebis name of the server
+ * @param region_server pointer to the region server object
+ */
+char *regs_get_server_name(struct regs_server_desc *region_server);
+
+/**
+ * @brief Lookups (in Zookeeper) information about server with hostname
+ * @param region_server_desc pointer to the region_server object
+ * @param server_hostname pointer to the hostname of the server for which we
+ * need information
+ * @param server_info the object to be filled with the server's information
+ * @returns ZOK on success otherwise the appropriate Zookeeper error code.
+ * Zookeeper error code can be transformed to string with the zerror() function
+ * of Zookeeper.
+ */
+int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *server_hostname,
+			    struct krm_server_name *server_info);
+
 #endif
