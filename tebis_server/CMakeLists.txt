@@ -30,7 +30,7 @@ add_executable(
   rdma_buffer_iterator/rdma_buffer_iterator.c
   master/master.c
   master/region_log.c
-  master/region.c
+  master/mregion.c
   master/mregion_server.c
   master/command.c
   region_server.c

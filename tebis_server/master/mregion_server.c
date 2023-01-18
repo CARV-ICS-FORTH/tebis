@@ -1,7 +1,7 @@
 #include "mregion_server.h"
 #include "../djb2.h"
 #include "../metadata.h"
-#include "region.h"
+#include "mregion.h"
 #include <log.h>
 #include <stdlib.h>
 #include <uthash.h>
@@ -16,7 +16,7 @@ struct region_server {
 };
 
 struct region_info {
-	region_t region;
+	mregion_t region;
 	enum server_role role;
 };
 
@@ -41,7 +41,7 @@ region_server_t RS_create_region_server(struct krm_server_name server_name, enum
 	return region_server;
 }
 
-void RS_add_region_in_server(region_server_t region_server, region_t region, enum server_role role)
+void RS_add_region_in_server(region_server_t region_server, mregion_t region, enum server_role role)
 {
 	if (region_server->num_of_regions >= region_server->capacity) {
 		region_server->capacity *= 2;
@@ -86,7 +86,7 @@ region_info_t RS_get_next_region_info(region_server_iterator_t iterator)
 
 	return &iterator->region_server->regions[iterator->position];
 }
-region_t RS_get_region(region_info_t region_info)
+mregion_t RS_get_region(region_info_t region_info)
 {
 	return region_info->region;
 }

@@ -5,8 +5,8 @@
 #include "../metadata.h"
 #include "../zk_utils.h"
 #include "command.h"
+#include "mregion.h"
 #include "mregion_server.h"
-#include "region.h"
 #include "region_log.h"
 #include "uthash.h"
 #include "zookeeper.h"
@@ -29,7 +29,7 @@
 typedef void (*master_watcher_t)(zhandle_t *, int, int, const char *, void *);
 
 struct region_table_s {
-	region_t region;
+	mregion_t region;
 	uint64_t region_key;
 	UT_hash_handle hh;
 };
@@ -452,7 +452,7 @@ static size_t MASTER_calculate_prefix_size(char *server_name)
 	return prefix_size;
 }
 
-static char *MASTER_choose_random_server(struct region_server_table_s *alive_servers, region_t region)
+static char *MASTER_choose_random_server(struct region_server_table_s *alive_servers, mregion_t region)
 {
 	int capacity = alive_servers->capacity;
 	int start = rand() % capacity;
@@ -462,7 +462,7 @@ static char *MASTER_choose_random_server(struct region_server_table_s *alive_ser
 			continue;
 		hostname = RS_get_region_server_krm_hostname(alive_servers->region_servers[i % capacity].region_server);
 		size_t prefix_size = MASTER_calculate_prefix_size(hostname->kreon_ds_hostname);
-		if (!REG_is_server_prefix_in_region_group(hostname->kreon_ds_hostname, prefix_size, region))
+		if (!MREG_is_server_prefix_in_region_group(hostname->kreon_ds_hostname, prefix_size, region))
 			break;
 		hostname = NULL;
 	}
@@ -472,40 +472,40 @@ static char *MASTER_choose_random_server(struct region_server_table_s *alive_ser
 /**
  * Replaces dead backup or dead servers in the region, this should go
  */
-static void MASTER_reconfigure_region(struct master_s *master, region_t region)
+static void MASTER_reconfigure_region(struct master_s *master, mregion_t region)
 {
-	int num_of_backup = REG_get_region_num_of_backups(region);
+	int num_of_backup = MREG_get_region_num_of_backups(region);
 	for (int i = num_of_backup - 1; i >= 0; --i) {
-		if (BACKUP_DEAD != REG_get_region_backup_role(region, i))
+		if (BACKUP_DEAD != MREG_get_region_backup_role(region, i))
 			continue;
-		REG_remove_backup_from_region(region, i);
+		MREG_remove_backup_from_region(region, i);
 		char *new_host = MASTER_choose_random_server(master->alive_servers, region);
 		if (NULL == new_host) {
 			log_fatal("Cannot replace faulty server, no suitable server found");
 			_exit(EXIT_FAILURE);
 		}
 
-		REG_append_backup_in_region(region, new_host);
+		MREG_append_backup_in_region(region, new_host);
 		log_debug("I replaced faulty backup with %s for region:%s num backups: %d", new_host,
-			  REG_get_region_id(region), REG_get_region_num_of_backups(region));
-		i = REG_get_region_num_of_backups(region); //recheck
+			  MREG_get_region_id(region), MREG_get_region_num_of_backups(region));
+		i = MREG_get_region_num_of_backups(region); //recheck
 	}
 
-	if (PRIMARY_DEAD != REG_get_region_primary_role(region))
+	if (PRIMARY_DEAD != MREG_get_region_primary_role(region))
 		return;
-	REG_remove_and_upgrade_primary(region);
+	MREG_remove_and_upgrade_primary(region);
 	char *new_host = MASTER_choose_random_server(master->alive_servers, region);
-	log_debug("I add backup %s due to faulty primary %s for region:%s", new_host, REG_get_region_primary(region),
-		  REG_get_region_id(region));
-	REG_append_backup_in_region(region, new_host);
+	log_debug("I add backup %s due to faulty primary %s for region:%s", new_host, MREG_get_region_primary(region),
+		  MREG_get_region_id(region));
+	MREG_append_backup_in_region(region, new_host);
 }
 
 /**
  * Handles or better reports that guys we lost data Sorry
  */
-static void MASTER_handle_data_loss(region_t region)
+static void MASTER_handle_data_loss(mregion_t region)
 {
-	log_fatal("We lost data for region %s", REG_get_region_id(region));
+	log_fatal("We lost data for region %s", MREG_get_region_id(region));
 	_exit(EXIT_FAILURE);
 }
 /**
@@ -514,24 +514,24 @@ static void MASTER_handle_data_loss(region_t region)
  * @param region: Region to be checked
  * @return number of faulty servers
  */
-static int MASTER_check_replica_group_health(struct master_s *master, region_t region)
+static int MASTER_check_replica_group_health(struct master_s *master, mregion_t region)
 {
 	int n_failures = 0;
 	/*is primary healthy?*/
 
-	if (!MASTER_is_server_alive(REG_get_region_primary(region), master)) {
-		log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
-			  REG_get_region_id(region));
-		REG_set_region_primary_role(region, PRIMARY_DEAD);
+	if (!MASTER_is_server_alive(MREG_get_region_primary(region), master)) {
+		log_debug("Setting primary %s of region %s to PRIMARY_DEAD", MREG_get_region_primary(region),
+			  MREG_get_region_id(region));
+		MREG_set_region_primary_role(region, PRIMARY_DEAD);
 		++n_failures;
 	}
 
-	for (int i = 0; i < REG_get_region_num_of_backups(region); ++i) {
-		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master))
+	for (int i = 0; i < MREG_get_region_num_of_backups(region); ++i) {
+		if (MASTER_is_server_alive(MREG_get_region_backup(region, i), master))
 			continue;
-		log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, REG_get_region_backup(region, i),
-			  REG_get_region_id(region));
-		REG_set_region_backup_role(region, i, BACKUP_DEAD);
+		log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, MREG_get_region_backup(region, i),
+			  MREG_get_region_id(region));
+		MREG_set_region_backup_role(region, i, BACKUP_DEAD);
 		++n_failures;
 	}
 	return n_failures;
@@ -549,7 +549,7 @@ static void MASTER_full_regions_check(struct master_s *master)
 	HASH_ITER(hh, region_table, curr, tmp)
 	{
 		int n_failures = MASTER_check_replica_group_health(master, region_table->region);
-		if (REG_get_region_num_of_backups(region_table->region) + 1 == n_failures)
+		if (MREG_get_region_num_of_backups(region_table->region) + 1 == n_failures)
 			MASTER_handle_data_loss(region_table->region);
 		if (n_failures) {
 			MASTER_reconfigure_region(master, region_table->region);
@@ -566,7 +566,7 @@ static void MASTER_full_regions_check(struct master_s *master)
  * reconfigured after suffering N failures.
  */
 struct region_reconfiguration_s {
-	struct region *region;
+	struct mregion *region;
 	UT_hash_handle hh;
 };
 
@@ -737,7 +737,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	struct region_reconfiguration_s *tmp = NULL;
 	HASH_ITER(hh, affected_regions, updated_region, tmp)
 	{
-		REG_print_region_configuration(updated_region->region);
+		MREG_print_region_configuration(updated_region->region);
 		/*log new region configuration in Zookeeper*/
 		/*send message to corresponding primary*/
 		HASH_DEL(affected_regions, updated_region);
@@ -1000,39 +1000,39 @@ static void MASTER_build_region_table(struct master_s *master)
 		}
 		struct region_table_s *region_entry = calloc(1UL, sizeof(*region_entry));
 		// log_debug("Region id is %s", cJSON_GetStringValue(id));
-		region_entry->region = REG_create_region(cJSON_GetStringValue(min_key), cJSON_GetStringValue(max_key),
-							 cJSON_GetStringValue(id),
-							 (enum krm_region_status)cJSON_GetNumberValue(status));
+		region_entry->region = MREG_create_region(cJSON_GetStringValue(min_key), cJSON_GetStringValue(max_key),
+							  cJSON_GetStringValue(id),
+							  (enum krm_region_status)cJSON_GetNumberValue(status));
 
-		region_entry->region_key = djb2_hash((unsigned char *)REG_get_region_id(region_entry->region),
-						     strlen(REG_get_region_id(region_entry->region)));
-		REG_set_region_primary(region_entry->region, cJSON_GetStringValue(primary));
-		REG_set_region_primary_role(region_entry->region,
-					    master->leadership_clock > 1 ? PRIMARY : PRIMARY_INFANT);
+		region_entry->region_key = djb2_hash((unsigned char *)MREG_get_region_id(region_entry->region),
+						     strlen(MREG_get_region_id(region_entry->region)));
+		MREG_set_region_primary(region_entry->region, cJSON_GetStringValue(primary));
+		MREG_set_region_primary_role(region_entry->region,
+					     master->leadership_clock > 1 ? PRIMARY : PRIMARY_INFANT);
 		region_server_t region_server =
-			find_server(master->alive_servers, REG_get_region_primary(region_entry->region));
+			find_server(master->alive_servers, MREG_get_region_primary(region_entry->region));
 		if (!region_server) {
 			log_fatal("Could not find server %s this should not happen",
-				  REG_get_region_primary(region_entry->region));
+				  MREG_get_region_primary(region_entry->region));
 			_exit(EXIT_FAILURE);
 		}
 		RS_add_region_in_server(region_server, region_entry->region,
-					REG_get_region_primary_role(region_entry->region));
+					MREG_get_region_primary_role(region_entry->region));
 
 		for (int j = 0; j < cJSON_GetArraySize(backups); ++j) {
-			REG_set_region_backup(region_entry->region, j,
-					      cJSON_GetStringValue(cJSON_GetArrayItem(backups, j)));
-			REG_set_region_backup_role(region_entry->region, j,
-						   master->leadership_clock > 1 ? BACKUP : BACKUP_INFANT);
+			MREG_set_region_backup(region_entry->region, j,
+					       cJSON_GetStringValue(cJSON_GetArrayItem(backups, j)));
+			MREG_set_region_backup_role(region_entry->region, j,
+						    master->leadership_clock > 1 ? BACKUP : BACKUP_INFANT);
 			region_server_t region_server =
-				find_server(master->alive_servers, REG_get_region_backup(region_entry->region, j));
+				find_server(master->alive_servers, MREG_get_region_backup(region_entry->region, j));
 			if (!region_server) {
 				log_fatal("Could not find server %s, this should not happen",
-					  REG_get_region_backup(region_entry->region, j));
+					  MREG_get_region_backup(region_entry->region, j));
 				_exit(EXIT_FAILURE);
 			}
 			RS_add_region_in_server(region_server, region_entry->region,
-						REG_get_region_backup_role(region_entry->region, j));
+						MREG_get_region_backup_role(region_entry->region, j));
 		}
 		HASH_ADD_PTR(master->region_table, region_key, region_entry);
 
@@ -1103,7 +1103,7 @@ exit:
 
 typedef struct {
 	MC_command_t command_code;
-	region_t region;
+	mregion_t region;
 } region_server_command_t;
 
 /**
@@ -1112,16 +1112,16 @@ typedef struct {
  * responsible to notify its Backups. hostname is of the form <hostname>:<rdma
  * port>,clock which is the mailbox path of the Region Server.
  */
-static void MASTER_send_open_region_command_to_primary(struct master_s *master, region_t region, MC_command_t command)
+static void MASTER_send_open_region_command_to_primary(struct master_s *master, mregion_t region, MC_command_t command)
 {
-	region_server_t region_server = find_server(master->alive_servers, REG_get_region_primary(region));
+	region_server_t region_server = find_server(master->alive_servers, MREG_get_region_primary(region));
 	if (NULL == region_server) {
-		log_fatal("Cannot find server %s in the alive servers table", REG_get_region_primary(region));
+		log_fatal("Cannot find server %s in the alive servers table", MREG_get_region_primary(region));
 	}
 
 	char mail_id[MAX_MAILBOX_PATH_SIZE] = { 0 };
 	char mailbox_path[MAX_MAILBOX_PATH_SIZE] = { 0 };
-	if (snprintf(mailbox_path, MAX_MAILBOX_PATH_SIZE, "%s", REG_get_region_primary(region)) < 0) {
+	if (snprintf(mailbox_path, MAX_MAILBOX_PATH_SIZE, "%s", MREG_get_region_primary(region)) < 0) {
 		log_fatal("Failed to create mailbox path");
 		_exit(EXIT_FAILURE);
 	}
@@ -1155,16 +1155,16 @@ static void MASTER_assign_regions(struct master_s *master)
 
 	HASH_ITER(hh, master->region_table, region_entry, tmp)
 	{
-		MC_command_t command = MC_create_command(OPEN_REGION_START, REG_get_region_id(region_entry->region),
+		MC_command_t command = MC_create_command(OPEN_REGION_START, MREG_get_region_id(region_entry->region),
 							 PRIMARY_INFANT, MASTER_create_uuid(master));
 
 		if (!append_req_to_region_log(master->region_log, command)) {
 			log_fatal("Failed to append to region log ");
 			_exit(EXIT_FAILURE);
 		}
-		REG_set_region_primary_role(region_entry->region, PRIMARY_INFANT);
-		for (int i = 0; i < REG_get_region_num_of_backups(region_entry->region); ++i)
-			REG_set_region_backup_role(region_entry->region, i, BACKUP_INFANT);
+		MREG_set_region_primary_role(region_entry->region, PRIMARY_INFANT);
+		for (int i = 0; i < MREG_get_region_num_of_backups(region_entry->region); ++i)
+			MREG_set_region_backup_role(region_entry->region, i, BACKUP_INFANT);
 		MASTER_send_open_region_command_to_primary(master, region_entry->region, command);
 	}
 }

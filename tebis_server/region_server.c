@@ -691,221 +691,217 @@ static void regs_handle_master_command(struct regs_server_desc *region_server, M
 	case OPEN_REGION_START:
 		log_debug("RegionServer: %s opening region: %s", regs_get_server_name(region_server),
 			  MC_get_region_id(command));
-		open_region(region_server, struct krm_region * new_region_info, enum krm_region_role server_role) break;
+		break;
 	default:
 		log_debug("Unhandled case");
 		_exit(EXIT_FAILURE);
 	}
+}
 
-	static void command_watcher(zhandle_t * zkh, int type, int state, const char *path, void *context)
-	{
-		(void)type;
-		(void)state;
-		struct regs_server_desc *server = (struct regs_server_desc *)context;
-		log_debug("New command from master %s", path);
-		struct String_vector commands = { 0 };
-		zoo_wget_children(zkh, path, command_watcher, context, &commands);
-		for (int i = 0; i < commands.count; ++i) {
-			char *command_path = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-								server->name.kreon_ds_hostname, KRM_SLASH,
-								commands.data[i]);
-			char buffer[512] = { 0 };
-			int buf_len = sizeof(buffer);
-			struct Stat stat = { 0 };
-			int ret_code = zoo_get(zkh, command_path, 0, (char *)buffer, &buf_len, &stat);
-			if (ret_code != ZOK) {
-				log_fatal("Error could not get command from path %s reason: %s", command_path,
-					  zerror(ret_code));
-				_exit(EXIT_FAILURE);
-			}
-			MC_command_t command = MC_deserialize_command(buffer, sizeof(buffer));
-			regs_handle_master_command(server, command);
-			free(command_path);
+static void command_watcher(zhandle_t *zkh, int type, int state, const char *path, void *context)
+{
+	(void)type;
+	(void)state;
+	struct regs_server_desc *server = (struct regs_server_desc *)context;
+	log_debug("New command from master %s", path);
+	struct String_vector commands = { 0 };
+	zoo_wget_children(zkh, path, command_watcher, context, &commands);
+	for (int i = 0; i < commands.count; ++i) {
+		char *command_path = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
+							server->name.kreon_ds_hostname, KRM_SLASH, commands.data[i]);
+		char buffer[512] = { 0 };
+		int buf_len = sizeof(buffer);
+		struct Stat stat = { 0 };
+		int ret_code = zoo_get(zkh, command_path, 0, (char *)buffer, &buf_len, &stat);
+		if (ret_code != ZOK) {
+			log_fatal("Error could not get command from path %s reason: %s", command_path,
+				  zerror(ret_code));
+			_exit(EXIT_FAILURE);
 		}
+		MC_command_t command = MC_deserialize_command(buffer, sizeof(buffer));
+		regs_handle_master_command(server, command);
+		free(command_path);
 	}
+}
 
-	/**
+/**
  * @brief Creates server's mailbox path in Zookeeper
  */
-	static void regs_create_server_mailbox(struct regs_server_desc * region_server)
-	{
-		log_debug("Creating *NEW* mailbox and leaving a watcher");
+static void regs_create_server_mailbox(struct regs_server_desc *region_server)
+{
+	log_debug("Creating *NEW* mailbox and leaving a watcher");
 
-		char *mailbox = zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-						   regs_get_server_name(region_server));
-		int ret_code = zoo_create(regs_get_zk_handle(region_server), mailbox, NULL, -1, &ZOO_OPEN_ACL_UNSAFE,
-					  ZOO_PERSISTENT, NULL, -1);
+	char *mailbox =
+		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, regs_get_server_name(region_server));
+	int ret_code = zoo_create(regs_get_zk_handle(region_server), mailbox, NULL, -1, &ZOO_OPEN_ACL_UNSAFE,
+				  ZOO_PERSISTENT, NULL, -1);
 
-		if (ret_code != ZOK) {
-			log_fatal("failed to query zookeeper for path %s contents with code %s", mailbox,
-				  zku_op2String(ret_code));
-			_exit(EXIT_FAILURE);
-		}
-
-		struct String_vector stale_msgs = { 0 };
-		ret_code = zoo_wget_children(region_server->zh, mailbox, command_watcher, region_server, &stale_msgs);
-
-		if (ZOK != ret_code) {
-			log_fatal("Failed to set a watcher for new master commands. Reason is: %s", zerror(ret_code));
-			_exit(EXIT_FAILURE);
-		}
-		free(mailbox);
+	if (ret_code != ZOK) {
+		log_fatal("failed to query zookeeper for path %s contents with code %s", mailbox,
+			  zku_op2String(ret_code));
+		_exit(EXIT_FAILURE);
 	}
 
-	/**
+	struct String_vector stale_msgs = { 0 };
+	ret_code = zoo_wget_children(region_server->zh, mailbox, command_watcher, region_server, &stale_msgs);
+
+	if (ZOK != ret_code) {
+		log_fatal("Failed to set a watcher for new master commands. Reason is: %s", zerror(ret_code));
+		_exit(EXIT_FAILURE);
+	}
+	free(mailbox);
+}
+
+/**
  * @brief Each time a region server enters the group it changes its epoch
  * and cleans its previous state. This functions does a cleanup of possible
  * previous messages
  */
-	static void regs_clean_server_mailbox(struct regs_server_desc * region_server, uint64_t previous_epoch)
-	{
-		log_debug("Cleaning stale messages from my mailbox from previous epoch %lu", previous_epoch);
+static void regs_clean_server_mailbox(struct regs_server_desc *region_server, uint64_t previous_epoch)
+{
+	log_debug("Cleaning stale messages from my mailbox from previous epoch %lu", previous_epoch);
 
-		char epoch_to_string[256] = { 0 };
-		if (snprintf(epoch_to_string, sizeof(epoch_to_string), "%lu", previous_epoch) < 0) {
-			log_fatal("Failed to convert epoch to string");
-			_exit(EXIT_FAILURE);
-		}
-		char *mailbox = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-						   regs_get_server_name(region_server), KRM_DASH, epoch_to_string);
-		struct String_vector stale_msgs = { 0 };
-		int ret_code =
-			zoo_wget_children(region_server->zh, mailbox, command_watcher, region_server, &stale_msgs);
+	char epoch_to_string[256] = { 0 };
+	if (snprintf(epoch_to_string, sizeof(epoch_to_string), "%lu", previous_epoch) < 0) {
+		log_fatal("Failed to convert epoch to string");
+		_exit(EXIT_FAILURE);
+	}
+	char *mailbox = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
+					   regs_get_server_name(region_server), KRM_DASH, epoch_to_string);
+	struct String_vector stale_msgs = { 0 };
+	int ret_code = zoo_wget_children(region_server->zh, mailbox, command_watcher, region_server, &stale_msgs);
 
+	if (ret_code != ZOK) {
+		log_fatal("failed to query zookeeper for path %s contents with code %s", mailbox,
+			  zku_op2String(ret_code));
+		_exit(EXIT_FAILURE);
+	}
+	for (int i = 0; i < stale_msgs.count; i++) {
+		/*iterate old mails and delete them*/
+		char *mail = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
+						region_server->name.kreon_ds_hostname, KRM_SLASH, stale_msgs.data[i]);
+		log_debug("Deleting %s", mail);
+		ret_code = zoo_delete(region_server->zh, mail, -1);
 		if (ret_code != ZOK) {
-			log_fatal("failed to query zookeeper for path %s contents with code %s", mailbox,
-				  zku_op2String(ret_code));
+			log_fatal("failed to delete stale mail msg %s error %s", mail, zku_op2String(ret_code));
 			_exit(EXIT_FAILURE);
 		}
-		for (int i = 0; i < stale_msgs.count; i++) {
-			/*iterate old mails and delete them*/
-			char *mail = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-							region_server->name.kreon_ds_hostname, KRM_SLASH,
-							stale_msgs.data[i]);
-			log_debug("Deleting %s", mail);
-			ret_code = zoo_delete(region_server->zh, mail, -1);
-			if (ret_code != ZOK) {
-				log_fatal("failed to delete stale mail msg %s error %s", mail, zku_op2String(ret_code));
-				_exit(EXIT_FAILURE);
-			}
-			free(mail);
-		}
-		free(mailbox);
+		free(mail);
+	}
+	free(mailbox);
+}
+
+static void regs_register_server(struct regs_server_desc *region_server)
+{
+	if (gethostname(region_server->name.hostname, KRM_HOSTNAME_SIZE) != 0) {
+		log_fatal("failed to get my hostname");
+		_exit(EXIT_FAILURE);
+	}
+	/*now fill your cluster hostname*/
+	if (snprintf(region_server->name.kreon_ds_hostname, KRM_HOSTNAME_SIZE, "%s:%d", region_server->name.hostname,
+		     regs_get_rdma_port(region_server)) < 0) {
+		log_fatal("Failed to create hostname string");
+		_exit(EXIT_FAILURE);
+	}
+	struct krm_server_name server_info = { 0 };
+	log_debug("Constructing my Tebis name: %s ...", region_server->name.kreon_ds_hostname);
+	int ret_code = regs_lookup_server_info(region_server, region_server->name.kreon_ds_hostname, &server_info);
+	uint64_t epoch = ret_code == ZOK ? ++server_info.epoch : 1;
+	regs_update_server_info(region_server, &server_info);
+	++region_server->name.epoch;
+
+	char tebis_name[KRM_HOSTNAME_SIZE] = { 0 };
+	if (snprintf(tebis_name, KRM_HOSTNAME_SIZE, "%s:%lu", region_server->name.kreon_ds_hostname, epoch) < 0) {
+		log_fatal("Failed to create region server Tebis name");
+		_exit(EXIT_FAILURE);
+	}
+	memcpy(region_server->name.kreon_ds_hostname, tebis_name, KRM_HOSTNAME_SIZE);
+	regs_get_IP_addresses(region_server);
+	log_debug("Everything ok I decided that my Tebis name is %s", regs_get_server_name(region_server));
+}
+
+static void regs_init_zookeeper(struct regs_server_desc *region_server)
+{
+	region_server->zh = zookeeper_init(globals_get_zk_host(), zk_main_watcher, 15000, 0, region_server, 0);
+	if (!region_server->zh) {
+		log_fatal("failed to connect to zk %s", globals_get_zk_host());
+		_exit(EXIT_FAILURE);
+	}
+	field_spin_for_value(&region_server->zconn_state, KRM_CONNECTED);
+}
+
+static void regs_init_server_state(struct regs_server_desc *server)
+{
+	server->mail_path =
+		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, server->name.kreon_ds_hostname);
+
+	sem_init(&server->wake_up, 0, 0);
+	server->msg_list = tebis_klist_init();
+	/*init ds_regions table*/
+	server->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
+}
+
+static bool regs_am_I_part_of_the_cluster(struct regs_server_desc *region_server_desc)
+{
+	(void)region_server_desc;
+	return true;
+	// return regs_lookup_server_info(region_server_desc, region_server_desc->name.kreon_ds_hostname,
+	// 			       &region_server_desc->name) == ZOK;
+}
+
+static void *regs_run_region_server(void *args)
+{
+	pthread_setname_np(pthread_self(), "rserverd");
+	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
+
+	struct regs_server_desc *region_server = (struct regs_server_desc *)args;
+	regs_init_server_state(region_server);
+	regs_init_zookeeper(region_server);
+
+	if (!regs_am_I_part_of_the_cluster(region_server)) {
+		log_fatal("Host %s cannot determine that is part of the cluster",
+			  region_server->name.kreon_ds_hostname);
+		_exit(EXIT_FAILURE);
 	}
 
-	static void regs_register_server(struct regs_server_desc * region_server)
-	{
-		if (gethostname(region_server->name.hostname, KRM_HOSTNAME_SIZE) != 0) {
-			log_fatal("failed to get my hostname");
-			_exit(EXIT_FAILURE);
-		}
-		/*now fill your cluster hostname*/
-		if (snprintf(region_server->name.kreon_ds_hostname, KRM_HOSTNAME_SIZE, "%s:%d",
-			     region_server->name.hostname, regs_get_rdma_port(region_server)) < 0) {
-			log_fatal("Failed to create hostname string");
-			_exit(EXIT_FAILURE);
-		}
-		struct krm_server_name server_info = { 0 };
-		log_debug("Constructing my Tebis name: %s ...", region_server->name.kreon_ds_hostname);
-		int ret_code =
-			regs_lookup_server_info(region_server, region_server->name.kreon_ds_hostname, &server_info);
-		uint64_t epoch = ret_code == ZOK ? ++server_info.epoch : 1;
-		regs_update_server_info(region_server, &server_info);
-		++region_server->name.epoch;
+	log_debug("Hello I am Region Server: %s epoch is %lu", regs_get_server_name(region_server),
+		  regs_get_server_epoch(region_server));
+	regs_register_server(region_server);
 
-		char tebis_name[KRM_HOSTNAME_SIZE] = { 0 };
-		if (snprintf(tebis_name, KRM_HOSTNAME_SIZE, "%s:%lu", region_server->name.kreon_ds_hostname, epoch) <
-		    0) {
-			log_fatal("Failed to create region server Tebis name");
-			_exit(EXIT_FAILURE);
-		}
-		memcpy(region_server->name.kreon_ds_hostname, tebis_name, KRM_HOSTNAME_SIZE);
-		regs_get_IP_addresses(region_server);
-		log_debug("Everything ok I decided that my Tebis name is %s", regs_get_server_name(region_server));
-	}
-
-	static void regs_init_zookeeper(struct regs_server_desc * region_server)
-	{
-		region_server->zh = zookeeper_init(globals_get_zk_host(), zk_main_watcher, 15000, 0, region_server, 0);
-		if (!region_server->zh) {
-			log_fatal("failed to connect to zk %s", globals_get_zk_host());
-			_exit(EXIT_FAILURE);
-		}
-		field_spin_for_value(&region_server->zconn_state, KRM_CONNECTED);
-	}
-
-	static void regs_init_server_state(struct regs_server_desc * server)
-	{
-		server->mail_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-						       server->name.kreon_ds_hostname);
-
-		sem_init(&server->wake_up, 0, 0);
-		server->msg_list = tebis_klist_init();
-		/*init ds_regions table*/
-		server->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
-	}
-
-	static bool regs_am_I_part_of_the_cluster(struct regs_server_desc * region_server_desc)
-	{
-		(void)region_server_desc;
-		return true;
-		// return regs_lookup_server_info(region_server_desc, region_server_desc->name.kreon_ds_hostname,
-		// 			       &region_server_desc->name) == ZOK;
-	}
-
-	static void *regs_run_region_server(void *args)
-	{
-		pthread_setname_np(pthread_self(), "rserverd");
-		zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
-
-		struct regs_server_desc *region_server = (struct regs_server_desc *)args;
-		regs_init_server_state(region_server);
-		regs_init_zookeeper(region_server);
-
-		if (!regs_am_I_part_of_the_cluster(region_server)) {
-			log_fatal("Host %s cannot determine that is part of the cluster",
-				  region_server->name.kreon_ds_hostname);
-			_exit(EXIT_FAILURE);
-		}
-
-		log_debug("Hello I am Region Server: %s epoch is %lu", regs_get_server_name(region_server),
+	if (1 == regs_get_server_epoch(region_server)) {
+		log_debug("First time I join the cluster no previous cleanup needed");
+		log_debug("Formatting volume to enter the system as a completely new server");
+		globals_init_volume();
+	} else {
+		log_debug("I have rejoined the cluster current epoch is %lu cleaning up previous mailbox",
 			  regs_get_server_epoch(region_server));
-		regs_register_server(region_server);
-
-		if (1 == regs_get_server_epoch(region_server)) {
-			log_debug("First time I join the cluster no previous cleanup needed");
-			log_debug("Formatting volume to enter the system as a completely new server");
-			globals_init_volume();
-		} else {
-			log_debug("I have rejoined the cluster current epoch is %lu cleaning up previous mailbox",
-				  regs_get_server_epoch(region_server));
-			regs_clean_server_mailbox(region_server, regs_get_server_epoch(region_server));
-		}
-
-		regs_create_server_mailbox(region_server);
-
-		// regs_update_server_info(region_server, &region_server->name);
-
-		regs_announce_server_presence(region_server);
-
-		sem_wait(&region_server->wake_up);
-
-		region_server->state = KRM_BOOTING;
-
-		while (1) {
-			struct klist_node *node = NULL;
-
-			pthread_mutex_lock(&region_server->msg_list_lock);
-			node = tebis_klist_remove_first(region_server->msg_list);
-			pthread_mutex_unlock(&region_server->msg_list_lock);
-			if (!node) {
-				sem_wait(&region_server->wake_up);
-				continue;
-			}
-			region_server->state = KRM_PROCESSING_MSG;
-			regs_process_command(region_server, (struct krm_msg *)node->data);
-			free(node->data);
-			free(node);
-		}
-		return NULL;
+		regs_clean_server_mailbox(region_server, regs_get_server_epoch(region_server));
 	}
+
+	regs_create_server_mailbox(region_server);
+
+	// regs_update_server_info(region_server, &region_server->name);
+
+	regs_announce_server_presence(region_server);
+
+	sem_wait(&region_server->wake_up);
+
+	region_server->state = KRM_BOOTING;
+
+	while (1) {
+		struct klist_node *node = NULL;
+
+		pthread_mutex_lock(&region_server->msg_list_lock);
+		node = tebis_klist_remove_first(region_server->msg_list);
+		pthread_mutex_unlock(&region_server->msg_list_lock);
+		if (!node) {
+			sem_wait(&region_server->wake_up);
+			continue;
+		}
+		region_server->state = KRM_PROCESSING_MSG;
+		regs_process_command(region_server, (struct krm_msg *)node->data);
+		free(node->data);
+		free(node);
+	}
+	return NULL;
+}
