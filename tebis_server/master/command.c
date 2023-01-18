@@ -58,3 +58,12 @@ enum server_role MC_get_role(MC_command_t command)
 {
 	return command->role;
 }
+
+MC_command_t MC_deserialize_command(char *buffer, size_t size)
+{
+	if (size < sizeof(struct MC_command)) {
+		log_warn("Buffer too small");
+		return NULL;
+	}
+	return (MC_command_t)buffer;
+}

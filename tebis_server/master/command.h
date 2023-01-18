@@ -17,6 +17,7 @@ typedef enum MC_command_code {
 typedef struct MC_command *MC_command_t;
 extern MC_command_t MC_create_command(enum MC_command_code code, char *region_id, enum server_role role,
 				      uint64_t cmd_id);
+extern MC_command_t MC_deserialize_command(char *buffer, size_t size);
 extern int MC_get_command_size(void);
 extern void MC_print_command(MC_command_t command);
 extern MC_command_code_t MC_get_command_code(MC_command_t command);
