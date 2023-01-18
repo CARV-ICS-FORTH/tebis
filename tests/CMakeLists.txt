@@ -13,7 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set_source_files_properties(kadmos.c PROPERTIES COMPILE_FLAGS "-O3")
 
-# set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
+set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
 
 # add_executable(streaming_btree_test test_streaming_btree.c)
 # target_link_libraries(streaming_btree_test runtime)
