@@ -26,8 +26,6 @@ extern void REG_set_region_primary(region_t region, char *hostname);
 extern enum server_role REG_get_region_primary_role(region_t region);
 extern void REG_set_region_primary_role(region_t region, enum server_role role);
 
-extern uint64_t REG_get_region_primary_clock(region_t region);
-extern void REG_set_region_primary_clock(region_t region);
 /**
  * Return the hostname of the ist backup server. If the backup_id exceeds the
  * number of backups it returns NULL
@@ -44,8 +42,6 @@ extern int REG_get_region_num_of_backups(region_t region);
 */
 extern enum server_role REG_get_region_backup_role(region_t region, int backup_id);
 extern void REG_set_region_backup_role(region_t region, int backup_id, enum server_role role);
-extern uint64_t REG_get_region_backup_clock(region_t region, int backup_id);
-extern void REG_set_region_backup_clock(region_t region, int backup_id, uint64_t clock);
 
 extern void REG_remove_backup_from_region(region_t region, int backup_id);
 extern void REG_remove_and_upgrade_primary(region_t region);

@@ -5,7 +5,6 @@
 #include <uthash.h>
 struct replica_member_info {
 	char hostname[KRM_HOSTNAME_SIZE];
-	uint64_t clock;
 	enum server_role role;
 };
 
@@ -21,16 +20,6 @@ struct region {
 	int num_of_backup;
 	enum krm_region_status status;
 };
-
-uint64_t REG_get_region_primary_clock(region_t region)
-{
-	return region->primary.clock;
-}
-
-uint64_t REG_get_region_backup_clock(region_t region, int backup_id)
-{
-	return region->backup[backup_id].clock;
-}
 
 region_t REG_create_region(const char *min_key, const char *max_key, const char *region_id,
 			   enum krm_region_status status)
@@ -88,7 +77,6 @@ void REG_append_backup_in_region(region_t region, char *server)
 	memset(region->backup[region->num_of_backup].hostname, 0x00,
 	       sizeof(region->backup[region->num_of_backup].hostname));
 	strcpy(region->backup[region->num_of_backup].hostname, server);
-	region->backup[region->num_of_backup].clock = UINT64_MAX;
 	region->backup[region->num_of_backup++].role = BACKUP_NEWBIE;
 }
 
@@ -122,11 +110,13 @@ char *REG_get_region_id(region_t region)
 
 char *REG_get_region_primary(region_t region)
 {
+	log_debug("Region primary is %s", region->primary.hostname);
 	return region->primary.hostname;
 }
 
 void REG_set_region_primary(region_t region, char *hostname)
 {
+	log_debug("Setting region primary to %s", hostname);
 	strncpy(region->primary.hostname, hostname, KRM_HOSTNAME_SIZE - 1);
 }
 

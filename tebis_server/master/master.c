@@ -225,6 +225,8 @@ static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *z
 		return NULL;
 	}
 
+	log_debug("Fetched info for region server: %s", zk_path);
+
 	free(zk_path);
 
 	// Parse json string with server's krm_server_name struct
@@ -242,9 +244,9 @@ static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *z
 	cJSON *leader = cJSON_GetObjectItem(json, "leader");
 	if (!cJSON_IsString(hostname) || !cJSON_IsString(dataserver_name_retrieved) || !cJSON_IsString(rdma_ip) ||
 	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
-		cJSON_Delete(json);
+		// cJSON_Delete(json);
 		log_warn("Failed to retrieve all of the server info from json. Possible data corruption?");
-		return false;
+		// return false;
 	}
 	strncpy(server_name->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
 	strncpy(server_name->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
@@ -427,7 +429,7 @@ static struct server_vector_s *MASTER_find_dead_servers(struct master_s *master,
 /**
  * Checks if a server with a given epoch is alive
  */
-static bool MASTER_is_server_alive(const char *server_name, struct master_s *master, uint64_t server_epoch)
+static bool MASTER_is_server_alive(const char *server_name, struct master_s *master)
 {
 	uint64_t region_server_key = djb2_hash((const unsigned char *)server_name, strlen(server_name));
 	struct region_server_table_entry_s *region_server_entry = NULL;
@@ -435,8 +437,6 @@ static bool MASTER_is_server_alive(const char *server_name, struct master_s *mas
 	if (!region_server_entry)
 		return false;
 	if (DEAD == RS_get_region_server_status(region_server_entry->region_server))
-		return false;
-	if (RS_get_server_clock(region_server_entry->region_server) != server_epoch)
 		return false;
 	return true;
 }
@@ -519,7 +519,7 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 	int n_failures = 0;
 	/*is primary healthy?*/
 
-	if (!MASTER_is_server_alive(REG_get_region_primary(region), master, REG_get_region_primary_clock(region))) {
+	if (!MASTER_is_server_alive(REG_get_region_primary(region), master)) {
 		log_debug("Setting primary %s of region %s to PRIMARY_DEAD", REG_get_region_primary(region),
 			  REG_get_region_id(region));
 		REG_set_region_primary_role(region, PRIMARY_DEAD);
@@ -527,8 +527,7 @@ static int MASTER_check_replica_group_health(struct master_s *master, region_t r
 	}
 
 	for (int i = 0; i < REG_get_region_num_of_backups(region); ++i) {
-		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master,
-					   REG_get_region_backup_clock(region, i)))
+		if (MASTER_is_server_alive(REG_get_region_backup(region, i), master))
 			continue;
 		log_debug("Setting backup[%d] %s of region %s to BACKUP_DEAD", i, REG_get_region_backup(region, i),
 			  REG_get_region_id(region));
@@ -936,6 +935,7 @@ static void MASTER_build_server_table(struct master_s *master)
 		struct krm_server_name server_name = { 0 };
 		if (!MASTER_get_region_server_name(alive_servers.data[i], master->zhandle, &server_name)) {
 			log_fatal("Cannot find entry for server %s in zookeeper", alive_servers.data[i]);
+			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 		server_entry->region_server = RS_create_region_server(server_name, ALIVE);
@@ -1101,9 +1101,8 @@ exit:
 	MUTEX_UNLOCK(&master->fresh_boot_lock);
 }
 
-typedef enum { OPEN_REGION_AS_PRIMARY = 0 } command_t;
 typedef struct {
-	command_t command_code;
+	MC_command_t command_code;
 	region_t region;
 } region_server_command_t;
 
