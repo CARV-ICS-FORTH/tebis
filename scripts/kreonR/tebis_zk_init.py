@@ -7,15 +7,16 @@ from kazoo.client import KazooState
 from kazoo.security import OPEN_ACL_UNSAFE
 import json
 
-ROOT_PATH = "/kreonR"
+ROOT_PATH = "/tebis"
 REGION_LOG_PATH = ROOT_PATH + "/region_log"
 SERVERS_PATH = ROOT_PATH + "/servers"
+REGION_SERVERS_EPOCHS = ROOT_PATH + "/region_servers_epochs"
 MAILBOX_PATH = ROOT_PATH + "/mailbox"
 LEADER_MAILBOX_PATH = MAILBOX_PATH + "/leader"
 REGIONS_PATH = ROOT_PATH + "/regions"
 LEADER_PATH = ROOT_PATH + "/leader"
 ALIVE_LEADER_PATH = ROOT_PATH + "/alive_leader"
-ALIVE_DATASERVERS_PATH = ROOT_PATH + "/alive_dataservers"
+ALIVE_DATASERVERS_PATH = ROOT_PATH + "/alive_region_servers"
 # new staff
 ELECTIONS_PATH = ROOT_PATH + "/elections"
 LEADER_CLOCK_PATH = ROOT_PATH + "/clock"
@@ -69,6 +70,7 @@ def main():
     zk.create(ROOT_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(REGION_LOG_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(SERVERS_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(REGION_SERVERS_EPOCHS, acl=OPEN_ACL_UNSAFE)
     zk.create(MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(LEADER_MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(REGIONS_PATH, acl=OPEN_ACL_UNSAFE)
@@ -110,14 +112,14 @@ def main():
             #zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
             # build/kreon_server/create_server_node zk_host cols[0]
             server_path = SERVERS_PATH + "/" + cols[0]
-            hostname, port = cols[0].split(":")
+            hostname, port, epoch = cols[0].split(":")
             server_name = {
                 "hostname": hostname,
                 "port": port,
                 "dataserver_name": cols[0],
                 "leader": "",
                 "RDMA_IP_addr": "",
-                "epoch": 0,
+                "epoch": epoch,
             }
             zk.create(
                 server_path,
