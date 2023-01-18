@@ -21,16 +21,18 @@
 #define KRM_MAX_BACKUPS 4
 #define KRM_MAX_RDMA_IP_SIZE 22
 #define KRM_GUID "tebis-"
-#define KRM_ROOT_PATH "/kreonR"
+#define KRM_ROOT_PATH "/tebis"
 #define KRM_SERVERS_PATH "/servers"
+#define KRM_REGION_SERVERS_EPOCHS "/region_servers_epochs"
 #define KRM_SLASH "/"
+#define KRM_DASH ":"
 #define KRM_LEADER_PATH "/leader"
 #define KRM_REGION_LOG "/region_log"
 #define KRM_REGION_LOG_PREFIX "/ts"
 #define KRM_MAILBOX_PATH "/mailbox"
 #define KRM_MAX_ZK_PATH_SIZE 128UL
 #define KRM_MAIL_TITLE "/msg"
-#define KRM_ALIVE_SERVERS_PATH "/alive_dataservers"
+#define KRM_ALIVE_SERVERS_PATH "/alive_region_servers"
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
 //new master staff
@@ -81,16 +83,16 @@ enum krm_server_role { KRM_LEADER, KRM_DATASERVER };
 enum krm_region_role { KRM_PRIMARY, KRM_BACKUP };
 enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH, KRM_HALTED };
 
-enum krm_msg_type {
-	KRM_OPEN_REGION_AS_PRIMARY = 1,
-	KRM_ACK_OPEN_PRIMARY,
-	KRM_NACK_OPEN_PRIMARY,
-	KRM_OPEN_REGION_AS_BACKUP,
-	KRM_ACK_OPEN_BACKUP,
-	KRM_NACK_OPEN_BACKUP,
-	KRM_CLOSE_REGION,
-	KRM_BUILD_PRIMARY
-};
+// enum krm_msg_type {
+// 	KRM_OPEN_REGION_AS_PRIMARY = 1,
+// 	KRM_ACK_OPEN_PRIMARY,
+// 	KRM_NACK_OPEN_PRIMARY,
+// 	KRM_OPEN_REGION_AS_BACKUP,
+// 	KRM_ACK_OPEN_BACKUP,
+// 	KRM_NACK_OPEN_BACKUP,
+// 	KRM_CLOSE_REGION,
+// 	KRM_BUILD_PRIMARY
+// };
 
 enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REGION_EXISTS };
 
@@ -342,7 +344,7 @@ struct krm_leader_ds_map {
 struct krm_msg {
 	struct krm_region region;
 	char sender[KRM_HOSTNAME_SIZE];
-	enum krm_msg_type type;
+	// enum krm_msg_type type;
 	enum krm_error_code error_code;
 	uint64_t epoch;
 	uint64_t transaction_id;
