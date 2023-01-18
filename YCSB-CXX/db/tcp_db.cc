@@ -9,11 +9,12 @@ extern "C" {
 #include <log.h>
 }
 
+#define LOCALHOST    "127.0.0.1"
 #define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
 #define SITH4_IP_56G
 #define SITH5_IP_56G "192.168.2.125"
-#define SITH6_IP_56G
+#define SITH6_IP_56G "192.168.2.126"
 
 using namespace ycsbc;
 
@@ -50,7 +51,7 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	printf("\033[1;31mthreads = %d\033[0m\n", threads);
 
 	for (uint i = 0U; i < threads; ++i) {
-		if (chandle_init(this->chandle + i, SITH2_IP_56G, "25565") < 0) {
+		if (chandle_init(this->chandle + i, SITH6_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
@@ -225,7 +226,7 @@ int tcpDB::Insert(int id, const std::string &table, const std::string &key, std:
 	if (c_tcp_recv_rep(this->chandle[id], &this->rep[id]) < 0) {
 		log_error("c_tcp_recv_rep(%d) failed\n", id);
 		perror("recv_rep()");
-		return -(EXIT_FAILURE);
+		return YCSBDB::kErrorNoData;
 	}
 
 	return YCSBDB::kOK;

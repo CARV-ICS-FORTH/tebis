@@ -5,11 +5,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#define LOCALHOST "127.0.0.1"
 #define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
 #define SITH4_IP_56G
 #define SITH5_IP_56G "192.168.2.125"
-#define SITH6_IP_56G
+#define SITH6_IP_56G "192.168.2.126"
 
 int main(int argc, char **argv)
 {
@@ -18,7 +19,7 @@ int main(int argc, char **argv)
 
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, SITH2_IP_56G, 25565, 16)) < 0) {
+	if ((shandle_init(&shandle, AF_INET, SITH6_IP_56G, 25565, 16)) < 0) {
 		print_debug("shandle_init()");
 		exit(EXIT_FAILURE);
 	}
