@@ -1,9 +1,17 @@
 #define _GNU_SOURCE
 #include "tebis_rdma_client.h"
+#include "../common/common.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/djb2.h"
+#include "../tebis_server/globals.h"
+#include "../tebis_server/messages.h"
+#include "../utilities/spin_loop.h"
 #include "client_utils.h"
+#include "msg_factory.h"
 #include <assert.h>
 #include <immintrin.h>
 #include <infiniband/verbs.h>
+#include <log.h>
 #include <pthread.h>
 #include <rdma/rdma_verbs.h>
 #include <semaphore.h>
@@ -12,15 +20,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-//#include "../kreon_server/client_regions.h"
-#include "../common/common.h"
-#include "../tebis_rdma/rdma.h"
-#include "../tebis_server/djb2.h"
-#include "../tebis_server/globals.h"
-#include "../tebis_server/messages.h"
-#include "../utilities/spin_loop.h"
-#include "msg_factory.h"
-#include <log.h>
 #define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;

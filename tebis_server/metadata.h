@@ -1,12 +1,11 @@
 #ifndef METADATA_H
 #define METADATA_H
 
-#include "messages.h"
-#include "send_index/send_index_callbacks.h"
-#define KRM_HOSTNAME_SIZE 128
-#define IP_SIZE 4
 #include "../tebis_rdma/rdma.h"
 #include "../utilities/list.h"
+#include "configurables.h"
+#include "messages.h"
+#include "send_index/send_index_callbacks.h"
 #include "uthash.h"
 #include <btree/conf.h>
 #include <include/parallax/parallax.h>
@@ -14,36 +13,7 @@
 #include <semaphore.h>
 #include <stdint.h>
 #include <zookeeper/zookeeper.h>
-#define KRM_MAX_REGIONS 1024
-#define KRM_MAX_DS_REGIONS 512
-#define KRM_MAX_KEY_SIZE 64
-#define KRM_MAX_REGION_ID_SIZE 16
-#define KRM_MAX_BACKUPS 4
-#define KRM_MAX_RDMA_IP_SIZE 22
-#define KRM_GUID "tebis-"
-#define KRM_ROOT_PATH "/tebis"
-#define KRM_SERVERS_PATH "/servers"
-#define KRM_REGION_SERVERS_EPOCHS "/region_servers_epochs"
-#define KRM_SLASH "/"
-#define KRM_DASH ":"
-#define KRM_LEADER_PATH "/leader"
-#define KRM_REGION_LOG "/region_log"
-#define KRM_REGION_LOG_PREFIX "/ts"
-#define KRM_MAILBOX_PATH "/mailbox"
-#define KRM_MAX_ZK_PATH_SIZE 128UL
-#define KRM_MAIL_TITLE "/msg"
-#define KRM_ALIVE_SERVERS_PATH "/alive_region_servers"
-#define KRM_ALIVE_LEADER_PATH "/alive_leader"
-#define KRM_REGIONS_PATH "/regions"
-//new master staff
-#define KRM_ELECTIONS_PATH "/elections"
-#define KRM_LEADER_CLOCK "/clock"
 
-#define RU_REGION_KEY_SIZE MSG_MAX_REGION_KEY_SIZE
-#define RU_MAX_TREE_HEIGHT 12
-#define RU_MAX_NUM_REPLICAS 4
-#define CLOCK_DIMENTIONS 2
-//#define RU_MAX_INDEX_SEGMENTS 4
 typedef struct level_write_appender *level_write_appender_t;
 typedef struct send_index_rewriter *send_index_rewriter_t;
 #define MAX_REPLICA_GROUP_SIZE (RU_MAX_NUM_REPLICAS + 1)
@@ -123,6 +93,8 @@ enum tb_kv_category { TEBIS_SMALLORMEDIUM = 0, TEBIS_BIG };
 enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
 struct sc_msg_pair {
+#define KRM_HOSTNAME_SIZE 128
+#define IP_SIZE 4
 	/*out variables*/
 	struct msg_header *request;
 	struct msg_header *reply;
@@ -291,6 +263,7 @@ struct krm_region_desc {
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
+#define CLOCK_DIMENTIONS 2
 	struct sc_msg_pair send_index_flush_index_segment_rpc[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
 	bool send_index_flush_index_segment_rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];

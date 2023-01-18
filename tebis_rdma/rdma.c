@@ -1,20 +1,20 @@
+#define _GNU_SOURCE /* See feature_test_macros(7) */
 #include "rdma.h"
 #include "memory_region_pool.h"
-#include <infiniband/verbs.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
-#include <stdint.h>
-#define _GNU_SOURCE /* See feature_test_macros(7) */
 #include <arpa/inet.h>
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
 #include <immintrin.h>
+#include <infiniband/verbs.h>
 #include <limits.h>
 #include <malloc.h>
 #include <pthread.h>
+#include <rdma/rdma_cma.h>
+#include <rdma/rdma_verbs.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
