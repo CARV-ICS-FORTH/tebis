@@ -1293,7 +1293,7 @@ typedef void execute_task(struct regs_server_desc const *mydesc, struct krm_work
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
 							 execute_get_rdma_buffer_req,
-							 execute_flush_command_req,
+							 regs_execute_flush_command_req,
 							 regs_execute_put_req,
 							 regs_execute_delete_req,
 							 regs_execute_get_req,
