@@ -1594,3 +1594,21 @@ exit:;
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
+
+void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	(void)region_server_desc;
+	(void)task;
+	log_debug("Close scans since we dont use them for now (the tebis-parallax no replication porting");
+	assert(0);
+	_exit(EXIT_FAILURE);
+}
+
+void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	(void)region_server_desc;
+	(void)task;
+	log_debug("Closing delete ops since we dont use them for now (tebis-parallax) replication");
+	assert(0);
+	_exit(EXIT_FAILURE);
+}

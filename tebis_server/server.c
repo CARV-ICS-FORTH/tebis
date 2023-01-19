@@ -861,24 +861,6 @@ static void fill_reply_header(msg_header *reply_msg, struct krm_work_task *task,
 	reply_msg->receive = TU_RDMA_REGULAR_MSG;
 }
 
-static void execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
-{
-	(void)region_server_desc;
-	(void)task;
-	log_debug("Close scans since we dont use them for now (the tebis-parallax no replication porting");
-	assert(0);
-	_exit(EXIT_FAILURE);
-}
-
-static void execute_delete_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
-{
-	(void)region_server_desc;
-	(void)task;
-	log_debug("Closing delete ops since we dont use them for now (tebis-parallax) replication");
-	assert(0);
-	_exit(EXIT_FAILURE);
-}
-
 /*zero both RDMA buffers*/
 static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
 {
@@ -1300,9 +1282,9 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_get_rdma_buffer_req,
 							 execute_flush_command_req,
 							 regs_execute_put_req,
-							 execute_delete_req,
+							 regs_execute_delete_req,
 							 regs_execute_get_req,
-							 execute_multi_get_req,
+							 regs_execute_multi_get_req,
 							 execute_test_req,
 							 execute_test_req_fetch_payload,
 							 execute_no_op,
