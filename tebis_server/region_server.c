@@ -1807,3 +1807,24 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 		  (uint64_t)reply->mr.addr);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
+
+/**
+ * @brief Acknowledges a NO_OP operation. Client spins for server's reply.
+ *  This operation happens only when there is no space in server's recv circular buffer for a client to
+ * allocate and send its msg */
+void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_task *task)
+{
+	(void)mydesc;
+	assert(mydesc && task);
+	assert(task->msg->msg_type == NO_OP);
+
+	task->kreon_operation_status = TASK_NO_OP;
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+
+	regs_fill_reply_header(task->reply_msg, task, 0, NO_OP_ACK);
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
