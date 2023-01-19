@@ -1446,7 +1446,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_replica_index_flush_req,
 							 execute_get_rdma_buffer_req,
 							 execute_flush_command_req,
-							 execute_put_req,
+							 regs_execute_put_req,
 							 execute_delete_req,
 							 execute_get_req,
 							 execute_multi_get_req,
