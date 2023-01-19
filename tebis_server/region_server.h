@@ -92,4 +92,5 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
 void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
 void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
 #endif

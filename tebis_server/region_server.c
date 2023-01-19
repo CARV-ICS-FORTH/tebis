@@ -1652,7 +1652,7 @@ static int8_t regs_is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uin
 	return 1;
 }
 
-void execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	(void)region_server_desc;
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
@@ -1689,5 +1689,66 @@ void execute_flush_command_req(struct regs_server_desc const *region_server_desc
 	flush_rep->uuid = flush_req->uuid;
 	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+static struct ru_replica_rdma_buffer regs_initialize_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
+{
+	void *addr = NULL;
+	if (posix_memalign(&addr, ALIGNMENT, size)) {
+		log_fatal("Failed to allocate aligned RDMA buffer");
+		perror("Reason\n");
+		_exit(EXIT_FAILURE);
+	}
+	/*Zero RDMA buffer*/
+	memset(addr, 0, size);
+	/*initialize the replicas rdma buffer*/
+	struct ru_replica_rdma_buffer rdma_buf = { .rdma_buf_size = size,
+						   .mr = rdma_reg_write(rdma_cm_id, addr, size) };
+	return rdma_buf;
+}
+
+void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	assert(task->msg->msg_type == GET_RDMA_BUFFER_REQ);
+	struct s2s_msg_get_rdma_buffer_req *get_log =
+		(struct s2s_msg_get_rdma_buffer_req *)((char *)task->msg + sizeof(struct msg_header));
+
+	struct krm_region_desc *r_desc =
+		regs_get_region(region_server_desc, get_log->region_key, get_log->region_key_size);
+	if (r_desc == NULL) {
+		log_fatal("No region found for min key %s", get_log->region_key);
+		_exit(EXIT_FAILURE);
+	}
+
+	log_debug("Region-master wants to initialize rdma buffers for region %s", r_desc->region->id);
+	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
+	if (r_desc->r_state == NULL) {
+		r_desc->r_state = (struct ru_replica_state *)calloc(1, sizeof(struct ru_replica_state));
+		uint32_t size = get_log->buffer_size;
+		struct rdma_cm_id *rdma_cm_id = task->conn->rdma_cm_id;
+		/*initalize l0_recovery_buffer*/
+		r_desc->r_state->l0_recovery_rdma_buf = regs_initialize_rdma_buffer(size, rdma_cm_id);
+		/*initialize big recovery buffer*/
+		r_desc->r_state->big_recovery_rdma_buf = regs_initialize_rdma_buffer(size, rdma_cm_id);
+	} else {
+		log_fatal("remote buffers already initialized, what?");
+		_exit(EXIT_FAILURE);
+	}
+
+	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
+	task->reply_msg = (void *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+				   task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_get_rdma_buffer_rep *rep =
+		(struct s2s_msg_get_rdma_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
+	rep->status = TEBIS_SUCCESS;
+	rep->l0_recovery_mr = *r_desc->r_state->l0_recovery_rdma_buf.mr;
+	rep->big_recovery_mr = *r_desc->r_state->big_recovery_rdma_buf.mr;
+
+	regs_fill_reply_header(task->reply_msg, task,
+			       sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
+			       GET_RDMA_BUFFER_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	log_debug("Region master wants rdma buffers...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
 }

@@ -837,22 +837,6 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 
 int64_t lsn_to_be_replicated = 1;
 
-static struct ru_replica_rdma_buffer initialize_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
-{
-	void *addr = NULL;
-	if (posix_memalign(&addr, ALIGNMENT, size)) {
-		log_fatal("Failed to allocate aligned RDMA buffer");
-		perror("Reason\n");
-		_exit(EXIT_FAILURE);
-	}
-	/*Zero RDMA buffer*/
-	memset(addr, 0, size);
-	/*initialize the replicas rdma buffer*/
-	struct ru_replica_rdma_buffer rdma_buf = { .rdma_buf_size = size,
-						   .mr = rdma_reg_write(rdma_cm_id, addr, size) };
-	return rdma_buf;
-}
-
 static void fill_reply_header(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size,
 			      uint16_t msg_type)
 {
@@ -1292,7 +1276,7 @@ typedef void execute_task(struct regs_server_desc const *mydesc, struct krm_work
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
-							 execute_get_rdma_buffer_req,
+							 regs_execute_get_rdma_buffer_req,
 							 regs_execute_flush_command_req,
 							 regs_execute_put_req,
 							 regs_execute_delete_req,
