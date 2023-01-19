@@ -96,4 +96,5 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *region_server_desc,
 					       struct krm_work_task *task);
 void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_task *task);
+void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
 #endif

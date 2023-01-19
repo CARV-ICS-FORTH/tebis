@@ -1811,11 +1811,12 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 /**
  * @brief Acknowledges a NO_OP operation. Client spins for server's reply.
  *  This operation happens only when there is no space in server's recv circular buffer for a client to
- * allocate and send its msg */
-void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_task *task)
+ * allocate and send its msg
+ */
+void regs_execute_no_op(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
 {
-	(void)mydesc;
-	assert(mydesc && task);
+	(void)region_server_desc;
+	assert(region_server_desc && task);
 	assert(task->msg->msg_type == NO_OP);
 
 	task->kreon_operation_status = TASK_NO_OP;
@@ -1826,5 +1827,23 @@ void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_t
 	if (task->reply_msg->payload_length != 0)
 		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	(void)region_server_desc;
+	assert(region_server_desc);
+	assert(task->msg->msg_type == TEST_REQUEST);
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
+	/*initialize message*/
+	if (task->msg->reply_length_in_recv_buffer < TU_HEADER_SIZE) {
+		log_fatal("CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
+			  task->msg->reply_length_in_recv_buffer);
+		_exit(EXIT_FAILURE);
+	}
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	regs_fill_reply_header(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
 	task->kreon_operation_status = TASK_COMPLETE;
 }

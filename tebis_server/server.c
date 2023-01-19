@@ -1114,24 +1114,6 @@ static void execute_replica_index_flush_req(struct regs_server_desc const *regio
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static void execute_test_req(struct regs_server_desc const *mydesc, struct krm_work_task *task)
-{
-	(void)mydesc;
-	assert(mydesc);
-	assert(task->msg->msg_type == TEST_REQUEST);
-	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	/*initialize message*/
-	if (task->msg->reply_length_in_recv_buffer < TU_HEADER_SIZE) {
-		log_fatal("CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
-			  task->msg->reply_length_in_recv_buffer);
-		_exit(EXIT_FAILURE);
-	}
-	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-	fill_reply_header(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
-	task->kreon_operation_status = TASK_COMPLETE;
-}
-
 void execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct krm_work_task *task)
 {
 	(void)mydesc;
@@ -1262,7 +1244,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_in
 							 regs_execute_delete_req,
 							 regs_execute_get_req,
 							 regs_execute_multi_get_req,
-							 execute_test_req,
+							 regs_execute_test_req,
 							 execute_test_req_fetch_payload,
 							 regs_execute_no_op,
 							 execute_flush_L0_op,
