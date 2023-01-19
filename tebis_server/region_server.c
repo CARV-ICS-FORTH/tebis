@@ -1512,3 +1512,85 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 		}
 	}
 }
+
+void regs_execute_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	assert(task->msg->msg_type == GET_REQUEST);
+	struct msg_data_get_request request_data = get_request_get_msg_data(task->msg);
+	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, request_data.key, request_data.key_size);
+
+	if (r_desc == NULL) {
+		log_fatal("Region not found for key %s", request_data.key);
+		_exit(EXIT_FAILURE);
+	}
+
+	task->kreon_operation_status = TASK_GET_KEY;
+	task->r_desc = r_desc;
+	if (!regs_enter_parallax(r_desc, task)) {
+		// later...
+		return;
+	}
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
+
+	par_handle par_hd = (par_handle)task->r_desc->db;
+	struct par_value lookup_value = { .val_buffer = get_reply_get_kv_offset(task->reply_msg),
+					  .val_buffer_size = request_data.bytes_to_read };
+	const char *error_message = NULL;
+	par_get_serialized(par_hd, get_msg_get_key_slice_t(task->msg), &lookup_value, &error_message);
+	regs_leave_parallax(r_desc);
+
+	if (error_message) {
+		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
+
+		struct msg_data_get_reply reply_data = { 0 };
+		create_get_reply_msg(reply_data, task->reply_msg);
+		goto exit;
+	}
+	uint32_t offset = request_data.offset;
+	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
+	int32_t fetch_value = request_data.fetch_value;
+	// tranlate now
+	if (offset > lookup_value.val_size) {
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 1,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size };
+		create_get_reply_msg(reply_data, task->reply_msg);
+		goto exit;
+	}
+
+	if (!fetch_value) {
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 0,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size - offset };
+		create_get_reply_msg(reply_data, task->reply_msg);
+		goto exit;
+	}
+	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
+	uint32_t bytes_to_read = value_bytes_remaining;
+	bytes_to_read = value_bytes_remaining;
+	int32_t bytes_remaining = 0;
+	if (msg_bytes_to_read <= value_bytes_remaining) {
+		bytes_to_read = msg_bytes_to_read;
+		bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
+	}
+
+	struct msg_data_get_reply reply_data = { .key_found = 1,
+						 .offset_too_large = 0,
+						 .value_size = bytes_to_read,
+						 .value = NULL,
+						 .bytes_remaining = bytes_remaining };
+	create_get_reply_msg(reply_data, task->reply_msg);
+
+exit:;
+	//finally fix the header
+	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
+
+	regs_fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	task->kreon_operation_status = TASK_COMPLETE;
+}

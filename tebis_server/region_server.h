@@ -88,4 +88,5 @@ int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *s
 			    struct krm_server_name *server_info);
 
 void regs_execute_put_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+void regs_execute_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
 #endif

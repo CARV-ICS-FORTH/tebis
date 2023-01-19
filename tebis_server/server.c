@@ -835,71 +835,6 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 	__sync_fetch_and_sub(&cnxt->num_of_replies_needed, 1);
 }
 
-static int krm_enter_parallax(struct krm_region_desc *r_desc, struct krm_work_task *task)
-{
-	if (r_desc == NULL) {
-		log_fatal("NULL region?");
-		_exit(EXIT_FAILURE);
-	}
-	if (r_desc->region->num_of_backup == 0)
-		return 1;
-
-	pthread_rwlock_rdlock(&r_desc->kreon_lock);
-	if (r_desc->status == KRM_HALTED) {
-		int ret;
-		switch (task->kreon_operation_status) {
-		case TASK_GET_KEY:
-		case TASK_MULTIGET:
-		case TASK_DELETE_KEY:
-		case INS_TO_KREON:
-			// log_info("Do not enter Kreon task status is %d region status =
-			// %d",task->kreon_operation_status,r_desc->status);
-			ret = 0;
-			break;
-		case REPLICATE:
-		case WAIT_FOR_REPLICATION_COMPLETION:
-		case ALL_REPLICAS_ACKED:
-		case SEND_FLUSH_COMMANDS:
-		case WAIT_FOR_FLUSH_REPLIES:
-			ret = 1;
-			break;
-		default:
-			log_fatal("Unhandled state");
-			_exit(EXIT_FAILURE);
-		}
-		pthread_rwlock_unlock(&r_desc->kreon_lock);
-		return ret;
-	} else {
-		switch (task->kreon_operation_status) {
-		case TASK_GET_KEY:
-		case TASK_MULTIGET:
-		case TASK_DELETE_KEY:
-		case INS_TO_KREON:
-			__sync_fetch_and_add(&r_desc->pending_region_tasks, 1);
-			break;
-		case REPLICATE:
-		case WAIT_FOR_REPLICATION_TURN:
-		case WAIT_FOR_REPLICATION_COMPLETION:
-		case ALL_REPLICAS_ACKED:
-		case SEND_FLUSH_COMMANDS:
-		case WAIT_FOR_FLUSH_REPLIES:
-			break;
-		default:
-			log_fatal("Unhandled state");
-			_exit(EXIT_FAILURE);
-		}
-		pthread_rwlock_unlock(&r_desc->kreon_lock);
-		return 1;
-	}
-}
-
-static void krm_leave_parallax(struct krm_region_desc *r_desc)
-{
-	if (r_desc->region->num_of_backup == 0)
-		return;
-	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
-}
-
 int64_t lsn_to_be_replicated = 1;
 
 /** Function filling reply headers from server to clients
@@ -924,88 +859,6 @@ static void fill_reply_header(msg_header *reply_msg, struct krm_work_task *task,
 	reply_msg->msg_type = msg_type;
 	reply_msg->op_status = 0;
 	reply_msg->receive = TU_RDMA_REGULAR_MSG;
-}
-
-static void execute_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
-{
-	assert(task->msg->msg_type == GET_REQUEST);
-	struct msg_data_get_request request_data = get_request_get_msg_data(task->msg);
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, request_data.key, request_data.key_size);
-
-	if (r_desc == NULL) {
-		log_fatal("Region not found for key %s", request_data.key);
-		_exit(EXIT_FAILURE);
-	}
-
-	task->kreon_operation_status = TASK_GET_KEY;
-	task->r_desc = r_desc;
-	if (!krm_enter_parallax(r_desc, task)) {
-		// later...
-		return;
-	}
-	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-
-	par_handle par_hd = (par_handle)task->r_desc->db;
-	struct par_value lookup_value = { .val_buffer = get_reply_get_kv_offset(task->reply_msg),
-					  .val_buffer_size = request_data.bytes_to_read };
-	const char *error_message = NULL;
-	par_get_serialized(par_hd, get_msg_get_key_slice_t(task->msg), &lookup_value, &error_message);
-	krm_leave_parallax(r_desc);
-
-	if (error_message) {
-		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
-
-		struct msg_data_get_reply reply_data = { 0 };
-		create_get_reply_msg(reply_data, task->reply_msg);
-		goto exit;
-	}
-	uint32_t offset = request_data.offset;
-	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
-	int32_t fetch_value = request_data.fetch_value;
-	// tranlate now
-	if (offset > lookup_value.val_size) {
-		struct msg_data_get_reply reply_data = { .key_found = 1,
-							 .offset_too_large = 1,
-							 .value_size = 0,
-							 .value = NULL,
-							 .bytes_remaining = lookup_value.val_size };
-		create_get_reply_msg(reply_data, task->reply_msg);
-		goto exit;
-	}
-
-	if (!fetch_value) {
-		struct msg_data_get_reply reply_data = { .key_found = 1,
-							 .offset_too_large = 0,
-							 .value_size = 0,
-							 .value = NULL,
-							 .bytes_remaining = lookup_value.val_size - offset };
-		create_get_reply_msg(reply_data, task->reply_msg);
-		goto exit;
-	}
-	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
-	uint32_t bytes_to_read = value_bytes_remaining;
-	bytes_to_read = value_bytes_remaining;
-	int32_t bytes_remaining = 0;
-	if (msg_bytes_to_read <= value_bytes_remaining) {
-		bytes_to_read = msg_bytes_to_read;
-		bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
-	}
-
-	struct msg_data_get_reply reply_data = { .key_found = 1,
-						 .offset_too_large = 0,
-						 .value_size = bytes_to_read,
-						 .value = NULL,
-						 .bytes_remaining = bytes_remaining };
-	create_get_reply_msg(reply_data, task->reply_msg);
-
-exit:;
-	//finally fix the header
-	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
-
-	fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
-	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
@@ -1448,7 +1301,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_g
 							 execute_flush_command_req,
 							 regs_execute_put_req,
 							 execute_delete_req,
-							 execute_get_req,
+							 regs_execute_get_req,
 							 execute_multi_get_req,
 							 execute_test_req,
 							 execute_test_req_fetch_payload,
