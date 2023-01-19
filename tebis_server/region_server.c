@@ -1752,3 +1752,58 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 	log_debug("Region master wants rdma buffers...DONE");
 	task->kreon_operation_status = TASK_COMPLETE;
 }
+
+void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *region_server_desc,
+					       struct krm_work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
+	assert(globals_get_send_index());
+
+	struct s2s_msg_replica_index_get_buffer_req *req =
+		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+
+	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	if (r_desc == NULL) {
+		log_fatal("no hosted region found for min key %s", req->region_key);
+		_exit(EXIT_FAILURE);
+	}
+
+	log_debug("Starting compaction for level %u at region %s", req->level_id, r_desc->region->id);
+	uint32_t dst_level_id = req->level_id + 1;
+
+	//initialize and reg write buffers for recieving the primary's segments ready to be flushed.
+	//The buffers follow Parallax compaction index
+	struct send_index_create_compactions_rdma_buffer_params create_buffers_params = {
+		.level_id = req->level_id,
+		.tree_id = req->tree_id,
+		.conn = task->conn,
+		.r_desc = r_desc,
+		.number_of_rows = req->num_rows,
+		.number_of_columns = req->num_cols,
+		.size_of_entry = req->entry_size
+	};
+	send_index_create_compactions_rdma_buffer(create_buffers_params);
+	// also initialize a buffer for sending the flush replies to the primary
+	// we need to reg write this memory region since replicas rdma write segment flush replies into primary's status buffers
+	struct send_index_create_mr_for_segment_replies_params create_flush_reply_mr_params = {
+		.conn = task->conn, .level_id = req->level_id, .r_desc = r_desc
+	};
+	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
+
+	//time for reply
+	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+						task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_replica_index_get_buffer_rep *reply =
+		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
+	reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
+	reply->uuid = req->uuid;
+
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
+			       REPLICA_INDEX_GET_BUFFER_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
+		  (uint64_t)reply->mr.addr);
+	task->kreon_operation_status = TASK_COMPLETE;
+}

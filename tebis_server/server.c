@@ -1274,7 +1274,7 @@ static void execute_replica_index_swap_levels(struct regs_server_desc const *reg
 
 typedef void execute_task(struct regs_server_desc const *mydesc, struct krm_work_task *task);
 
-execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { execute_replica_index_get_buffer_req,
+execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_index_get_buffer_req,
 							 execute_replica_index_flush_req,
 							 regs_execute_get_rdma_buffer_req,
 							 regs_execute_flush_command_req,
