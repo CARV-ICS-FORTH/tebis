@@ -16,11 +16,13 @@
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/spin_loop.h"
 #include "allocator/volume_manager.h"
+#include "build_index/build_index.h"
 #include "djb2.h"
 #include "globals.h"
 #include "list.h"
 #include "master/command.h"
 #include "metadata.h"
+#include "send_index/send_index.h"
 #include "send_index/send_index_uuid_checker.h"
 #include "zk_utils.h"
 #include <arpa/inet.h>
@@ -1432,9 +1434,10 @@ static void regs_insert_kv_pair(struct regs_server_desc const *server, struct kr
 	}
 }
 
-/** Function filling reply headers from server to clients
- *  payload and msg_type must be provided as they defer from msg to msg
- *  */
+/**
+  * @brief Fills reply headers from server to clients
+  * payload and msg_type must be provided as they defer from msg to msgs
+  */
 static void regs_fill_reply_header(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size,
 				   uint16_t msg_type)
 {
@@ -1611,4 +1614,80 @@ void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, 
 	log_debug("Closing delete ops since we dont use them for now (tebis-parallax) replication");
 	assert(0);
 	_exit(EXIT_FAILURE);
+}
+
+/*zero both RDMA buffers*/
+static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
+{
+	if (log_type == L0_RECOVERY)
+		memset(r_desc->r_state->l0_recovery_rdma_buf.mr->addr, 0x00,
+		       r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size);
+	else
+		memset(r_desc->r_state->big_recovery_rdma_buf.mr->addr, 0x00,
+		       r_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
+}
+
+static void regs_add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+				     uint64_t replica_segment_offt)
+{
+	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
+	entry->primary_segment_offt = primary_segment_offt;
+	entry->replica_segment_offt = replica_segment_offt;
+	pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
+	HASH_ADD_PTR(r_desc->replica_log_map, primary_segment_offt, entry);
+	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+}
+
+static int8_t regs_is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt)
+{
+	struct krm_segment_entry *index_entry;
+
+	pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
+	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
+	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
+
+	if (!index_entry)
+		return 0;
+	return 1;
+}
+
+void execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	(void)region_server_desc;
+	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
+	// log_debug("Primary orders a flush!");
+	struct s2s_msg_flush_cmd_req *flush_req =
+		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc =
+		regs_get_region(region_server_desc, flush_req->region_key, flush_req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+
+	enum log_category log_type_to_flush = flush_req->log_type;
+
+	if (!globals_get_send_index()) {
+		build_index_procedure(r_desc, log_type_to_flush);
+		zero_rdma_buffer(r_desc, log_type_to_flush);
+	} else {
+		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
+		int8_t segment_exist_in_HT = regs_is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
+		if (!segment_exist_in_HT) {
+			regs_add_segment_into_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
+			zero_rdma_buffer(r_desc, log_type_to_flush);
+		}
+	}
+
+	//time for reply :-)
+	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
+				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_flush_cmd_rep *flush_rep =
+		(struct s2s_msg_flush_cmd_rep *)((uint64_t)task->reply_msg + sizeof(msg_header));
+	flush_rep->status = TEBIS_SUCCESS;
+	flush_rep->uuid = flush_req->uuid;
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_cmd_rep), FLUSH_COMMAND_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	task->kreon_operation_status = TASK_COMPLETE;
 }

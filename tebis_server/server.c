@@ -837,9 +837,22 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 
 int64_t lsn_to_be_replicated = 1;
 
-/** Function filling reply headers from server to clients
- *  payload and msg_type must be provided as they defer from msg to msg
- *  */
+static struct ru_replica_rdma_buffer initialize_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
+{
+	void *addr = NULL;
+	if (posix_memalign(&addr, ALIGNMENT, size)) {
+		log_fatal("Failed to allocate aligned RDMA buffer");
+		perror("Reason\n");
+		_exit(EXIT_FAILURE);
+	}
+	/*Zero RDMA buffer*/
+	memset(addr, 0, size);
+	/*initialize the replicas rdma buffer*/
+	struct ru_replica_rdma_buffer rdma_buf = { .rdma_buf_size = size,
+						   .mr = rdma_reg_write(rdma_cm_id, addr, size) };
+	return rdma_buf;
+}
+
 static void fill_reply_header(msg_header *reply_msg, struct krm_work_task *task, uint32_t payload_size,
 			      uint16_t msg_type)
 {
@@ -1318,7 +1331,7 @@ static void sigint_handler(int signo)
 	(void)signo;
 	/*pid_t tid = syscall(__NR_gettid);*/
 	printf("caught signal closing server, sorry gracefull shutdown not yet "
-	       "supported. Contace <gesalous,geostyl>@ics.forth.gr");
+	       "supported. Contact <gesalous,geostyl>@ics.forth.gr");
 	stats_notify_stop_reporter_thread();
 	sem_post(&exit_main);
 }
