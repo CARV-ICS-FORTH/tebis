@@ -1536,6 +1536,11 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
+	struct krm_segment_entry {
+		uint64_t primary_segment_offt;
+		uint64_t replica_segment_offt;
+		UT_hash_handle hh;
+	};
 	par_handle par_hd = (par_handle)task->r_desc->db;
 	struct par_value lookup_value = { .val_buffer = get_reply_get_kv_offset(task->reply_msg),
 					  .val_buffer_size = request_data.bytes_to_read };
@@ -1552,50 +1557,66 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 	}
 	uint32_t offset = request_data.offset;
 	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
+	struct krm_segment_entry {
+		uint64_t primary_segment_offt;
+		uint64_t replica_segment_offt;
+		UT_hash_handle hh;
+	};
 	int32_t fetch_value = request_data.fetch_value;
 	// tranlate now
 	if (offset > lookup_value.val_size) {
-		struct msg_data_get_reply reply_data = { .key_found = 1,
-							 .offset_too_large = 1,
-							 .value_size = 0,
-							 .value = NULL,
-							 .bytes_remaining = lookup_value.val_size };
+		Alitiz struct msg_data_get_reply reply_data = { .key_found = 1,
+								.offset_too_large = 1,
+								.value_size = 0,
+								.value = NULL,
+								.bytes_remaining = lookup_value.val_size };
 		create_get_reply_msg(reply_data, task->reply_msg);
 		goto exit;
 	}
 
 	if (!fetch_value) {
-		struct msg_data_get_reply reply_data = { .key_found = 1,
-							 .offset_too_large = 0,
-							 .value_size = 0,
-							 .value = NULL,
-							 .bytes_remaining = lookup_value.val_size - offset };
-		create_get_reply_msg(reply_data, task->reply_msg);
-		goto exit;
-	}
-	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
-	uint32_t bytes_to_read = value_bytes_remaining;
-	bytes_to_read = value_bytes_remaining;
-	int32_t bytes_remaining = 0;
-	if (msg_bytes_to_read <= value_bytes_remaining) {
-		bytes_to_read = msg_bytes_to_read;
-		bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
-	}
+		struct msg_data_get_reply reply_data = {
+			.key_found = 1,
+			.offset_too_large = 0,
+			.value_size = 0,
+			struct krm_segment_entry{ uint64_t primary_segment_offt;
+		uint64_t replica_segment_offt;
+		UT_hash_handle hh;
+	};
+	.value = NULL, .bytes_remaining = lookup_value.val_size - offset
+};
+create_get_reply_msg(reply_data, task->reply_msg);
+goto exit;
+}
+uint32_t value_bytes_remaining = lookup_value.val_size - offset;
+Alitizuint32_t bytes_to_read = value_bytes_remaining;
+bytes_to_read = value_bytes_remaining;
+int32_t bytes_remaining = 0;
+if (msg_bytes_to_read <= value_bytes_remaining) {
+	bytes_to_read = msg_bytes_to_read;
+	bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
+}
 
-	struct msg_data_get_reply reply_data = { .key_found = 1,
-						 .offset_too_large = 0,
-						 .value_size = bytes_to_read,
-						 .value = NULL,
-						 .bytes_remaining = bytes_remaining };
-	create_get_reply_msg(reply_data, task->reply_msg);
+struct msg_data_get_reply reply_data = {
+	.key_found = 1,
+	.offset_too_large = 0,
+	struct krm_segment_entry{ uint64_t primary_segment_offt;
+uint64_t replica_segment_offt;
+UT_hash_handle hh;
+}
+;
+.value_size = bytes_to_read, .value = NULL, .bytes_remaining = bytes_remaining
+}
+;
+create_get_reply_msg(reply_data, task->reply_msg);
 
 exit:;
-	//finally fix the header
-	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
+//finally fix the header
+uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
 
-	regs_fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
-	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-	task->kreon_operation_status = TASK_COMPLETE;
+regs_fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
+set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+task->kreon_operation_status = TASK_COMPLETE;
 }
 
 void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
@@ -1625,31 +1646,6 @@ static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category l
 	else
 		memset(r_desc->r_state->big_recovery_rdma_buf.mr->addr, 0x00,
 		       r_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
-}
-
-static void regs_add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-				     uint64_t replica_segment_offt)
-{
-	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
-	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
-	entry->primary_segment_offt = primary_segment_offt;
-	entry->replica_segment_offt = replica_segment_offt;
-	pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
-	HASH_ADD_PTR(r_desc->replica_log_map, primary_segment_offt, entry);
-	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-}
-
-static int8_t regs_is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt)
-{
-	struct krm_segment_entry *index_entry;
-
-	pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
-	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
-	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-
-	if (!index_entry)
-		return 0;
-	return 1;
 }
 
 void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
@@ -1790,6 +1786,7 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 		.conn = task->conn, .level_id = req->level_id, .r_desc = r_desc
 	};
 	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
+	r_desc->r_state->index_rewriter[dst_level_id] = send_index_rewriter_init(r_desc);
 
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1845,5 +1842,177 @@ void regs_execute_test_req(struct regs_server_desc const *region_server_desc, st
 	}
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	regs_fill_reply_header(task->reply_msg, task, task->msg->payload_length, TEST_REPLY);
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
+	assert(globals_get_send_index());
+
+	struct s2s_msg_replica_index_flush_req *req =
+		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+
+	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	if (r_desc == NULL) {
+		log_fatal("no hosted region found for min key %s", req->region_key);
+		_exit(EXIT_FAILURE);
+	}
+	//TODO send dst_level_id
+	uint32_t dst_level_id = req->level_id + 1;
+	uint64_t segment_offt = get_segment_in_indexHT_mappings(r_desc, req->primary_segment_offt, dst_level_id);
+	log_debug("Searching for index segment %lu", segment_offt);
+	if (!segment_offt) {
+		segment_offt = wappender_allocate_space(r_desc->r_state->wappender[dst_level_id]);
+		add_segment_to_index_HT(r_desc, req->primary_segment_offt, segment_offt, dst_level_id);
+	}
+
+	char *rdma_buffer = r_desc->r_state->index_buffer[dst_level_id]->addr;
+	uint32_t row_size = req->entry_size * req->number_of_columns;
+	struct segment_header *inmem_segment =
+		(struct segment_header *)&rdma_buffer[req->height * row_size + req->clock * req->entry_size];
+
+	send_index_rewriter_rewrite_index(r_desc->r_state->index_rewriter[dst_level_id], r_desc, inmem_segment,
+					  dst_level_id);
+
+	struct wappender_append_index_segment_params flush_index_segment = { .buffer = (char *)inmem_segment,
+									     .buffer_size = req->entry_size,
+									     .segment_offt = segment_offt };
+	wappender_append_index_segment(r_desc->r_state->wappender[dst_level_id], flush_index_segment);
+	//rdma write to primary's status
+	uint64_t reply_value = WCURSOR_STATUS_OK;
+	char *reply_address = (char *)r_desc->r_state->index_segment_flush_replies[dst_level_id]->addr;
+	memcpy(reply_address, &reply_value, sizeof(uint64_t));
+	//rdma write it back to the primary's write cursor status buffers
+	while (1) {
+		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
+					  r_desc->r_state->index_segment_flush_replies[dst_level_id], IBV_SEND_SIGNALED,
+					  (uint64_t)req->reply_offt, req->mr_of_primary.rkey);
+		if (!ret)
+			break;
+	}
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct krm_work_task *task)
+{
+	(void)mydesc;
+	(void)task;
+	assert(task->msg->msg_type == TEST_REQUEST_FETCH_PAYLOAD);
+	log_fatal("This message is not supported yet...");
+	_exit(EXIT_FAILURE);
+}
+
+void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == FLUSH_L0_REQUEST);
+	assert(globals_get_send_index());
+	struct s2s_msg_flush_L0_req *flush_req =
+		(struct s2s_msg_flush_L0_req *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc =
+		regs_get_region(region_server_desc, flush_req->region_key, flush_req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+
+	task->kreon_operation_status = TASK_FLUSH_L0;
+	// persist the buffers
+	uint64_t new_small_log_tail = send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
+	uint64_t new_big_small_log_tail = send_index_flush_rdma_buffer(r_desc, BIG);
+	par_flush_superblock(r_desc->db);
+
+	// append new segments to logmap
+	add_segment_to_logmap_HT(r_desc, flush_req->small_log_tail_dev_offt, new_small_log_tail);
+	add_segment_to_logmap_HT(r_desc, flush_req->big_log_tail_dev_offt, new_big_small_log_tail);
+
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_flush_L0_rep), FLUSH_L0_REPLY);
+
+	// for debugging purposes
+	struct s2s_msg_flush_L0_rep *reply_payload =
+		(struct s2s_msg_flush_L0_rep *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply_payload->uuid = flush_req->uuid;
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_send_index_close_compaction(struct regs_server_desc const *region_server_desc,
+					      struct krm_work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == CLOSE_COMPACTION_REQUEST);
+	assert(globals_get_send_index());
+
+	// get the region descriptor
+	struct s2s_msg_close_compaction_request *req =
+		(struct s2s_msg_close_compaction_request *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
+	uint32_t dst_level_id = req->level_id + 1;
+	log_debug("Closing compaction for region %s level %u", r_desc->region->id, req->level_id);
+	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
+	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
+	send_index_free_index_HT(r_desc, req->level_id);
+	send_index_rewriter_destroy(&r_desc->r_state->index_rewriter[dst_level_id]);
+
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+	struct s2s_msg_close_compaction_reply *reply =
+		(struct s2s_msg_close_compaction_reply *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply->uuid = req->uuid;
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_close_compaction_reply),
+			       CLOSE_COMPACTION_REPLY);
+
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_replica_index_swap_levels(struct regs_server_desc const *region_server_desc,
+					    struct krm_work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == REPLICA_INDEX_SWAP_LEVELS_REQUEST);
+	assert(globals_get_send_index());
+
+	// get the region descriptor
+	struct s2s_msg_swap_levels_request *req =
+		(struct s2s_msg_swap_levels_request *)((char *)task->msg + sizeof(struct msg_header));
+	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	if (r_desc->r_state == NULL) {
+		log_fatal("No state for backup region %s", r_desc->region->id);
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
+
+	log_debug("Swap levels for region %s level %u", r_desc->region->id, req->level_id);
+
+	// create and send the reply
+	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
+				  ->local_memory_buffer[task->msg->offset_reply_in_recv_buffer];
+
+	struct s2s_msg_swap_levels_reply *reply =
+		(struct s2s_msg_swap_levels_reply *)((char *)task->reply_msg + sizeof(struct msg_header));
+	reply->uuid = req->uuid;
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_swap_levels_reply),
+			       REPLICA_INDEX_SWAP_LEVELS_REPLY);
+
+	if (task->reply_msg->payload_length != 0)
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
 	task->kreon_operation_status = TASK_COMPLETE;
 }

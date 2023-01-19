@@ -97,4 +97,15 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 					       struct krm_work_task *task);
 void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_task *task);
 void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+
+void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_server_desc,
+					  struct krm_work_task *task);
+void regs_execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct krm_work_task *task);
+void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+
+void regs_execute_send_index_close_compaction(struct regs_server_desc const *region_server_desc,
+					      struct krm_work_task *task);
+
+void regs_execute_replica_index_swap_levels(struct regs_server_desc const *region_server_desc,
+					    struct krm_work_task *task);
 #endif
