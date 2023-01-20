@@ -77,28 +77,27 @@ static int regs_enter_parallax(struct krm_region_desc *r_desc, struct krm_work_t
 		}
 		pthread_rwlock_unlock(&r_desc->kreon_lock);
 		return ret;
-	} else {
-		switch (task->kreon_operation_status) {
-		case TASK_GET_KEY:
-		case TASK_MULTIGET:
-		case TASK_DELETE_KEY:
-		case INS_TO_KREON:
-			__sync_fetch_and_add(&r_desc->pending_region_tasks, 1);
-			break;
-		case REPLICATE:
-		case WAIT_FOR_REPLICATION_TURN:
-		case WAIT_FOR_REPLICATION_COMPLETION:
-		case ALL_REPLICAS_ACKED:
-		case SEND_FLUSH_COMMANDS:
-		case WAIT_FOR_FLUSH_REPLIES:
-			break;
-		default:
-			log_fatal("Unhandled state");
-			_exit(EXIT_FAILURE);
-		}
-		pthread_rwlock_unlock(&r_desc->kreon_lock);
-		return 1;
 	}
+	switch (task->kreon_operation_status) {
+	case TASK_GET_KEY:
+	case TASK_MULTIGET:
+	case TASK_DELETE_KEY:
+	case INS_TO_KREON:
+		__sync_fetch_and_add(&r_desc->pending_region_tasks, 1);
+		break;
+	case REPLICATE:
+	case WAIT_FOR_REPLICATION_TURN:
+	case WAIT_FOR_REPLICATION_COMPLETION:
+	case ALL_REPLICAS_ACKED:
+	case SEND_FLUSH_COMMANDS:
+	case WAIT_FOR_FLUSH_REPLIES:
+		break;
+	default:
+		log_fatal("Unhandled state");
+		_exit(EXIT_FAILURE);
+	}
+	pthread_rwlock_unlock(&r_desc->kreon_lock);
+	return 1;
 }
 
 static void regs_leave_parallax(struct krm_region_desc *r_desc)
