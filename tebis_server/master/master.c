@@ -1155,8 +1155,8 @@ static void MASTER_assign_regions(struct master_s *master)
 
 	HASH_ITER(hh, master->region_table, region_entry, tmp)
 	{
-		MC_command_t command = MC_create_command(OPEN_REGION_START, MREG_get_region_id(region_entry->region),
-							 PRIMARY_INFANT, MASTER_create_uuid(master));
+		MC_command_t command = MC_create_command(OPEN_REGION_START, region_entry->region, PRIMARY_INFANT,
+							 MASTER_create_uuid(master));
 
 		if (!append_req_to_region_log(master->region_log, command)) {
 			log_fatal("Failed to append to region log ");

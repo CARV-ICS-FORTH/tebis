@@ -1,4 +1,5 @@
 #include "send_index.h"
+#include "../region_desc.h"
 #include "btree/btree.h"
 #include "btree/conf.h"
 #include "btree/index_node.h"
@@ -10,28 +11,18 @@
 #include <rdma/rdma_verbs.h>
 #include <stdlib.h>
 
-void add_segment_to_index_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-			     uint64_t replica_segment_offt, uint32_t level_id)
+uint64_t send_index_flush_rdma_buffer(struct region_desc *r_desc, enum log_category log_type)
 {
-	//log_debug("Inserting primary INDEX seg offt %lu replica seg offt %lu", primary_segment_offt,
-	//  replica_segment_offt);
-	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
-	entry->primary_segment_offt = primary_segment_offt;
-	entry->replica_segment_offt = replica_segment_offt;
-	HASH_ADD_PTR(r_desc->replica_index_map[level_id], primary_segment_offt, entry);
-}
-
-uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
-{
-	uint32_t rdma_buffer_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
-	char *rdma_buffer = (char *)r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
+	struct ru_replica_state *replica_state = region_desc_get_replica_state(r_desc);
+	uint32_t rdma_buffer_size = replica_state->l0_recovery_rdma_buf.rdma_buf_size;
+	char *rdma_buffer = (char *)replica_state->l0_recovery_rdma_buf.mr->addr;
 	if (log_type == BIG)
-		rdma_buffer = (char *)r_desc->r_state->big_recovery_rdma_buf.mr->addr;
+		rdma_buffer = (char *)replica_state->big_recovery_rdma_buf.mr->addr;
 
 	const char *error_message = NULL;
 	/*persist the buffer*/
-	uint64_t replica_new_segment_offt =
-		par_flush_segment_in_log(r_desc->db, rdma_buffer, rdma_buffer_size, log_type, &error_message);
+	uint64_t replica_new_segment_offt = par_flush_segment_in_log(region_desc_get_db(r_desc), rdma_buffer,
+								     rdma_buffer_size, log_type, &error_message);
 	if (error_message) {
 		log_fatal("the flushing of the segment failed");
 		_exit(EXIT_FAILURE);
@@ -40,18 +31,36 @@ uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_c
 	return replica_new_segment_offt;
 }
 
+uint64_t send_index_flush_index_segment(struct send_index_flush_index_segment_params params)
+{
+	uint32_t dst_level_id = params.level_id + 1;
+	struct ru_replica_state *r_state = region_desc_get_replica_state(params.r_desc);
+	char *starting_offt_segment_to_flush = r_state->index_buffer[dst_level_id]->addr;
+	uint32_t backup_index_buffer_row_size = params.size_of_entry * params.number_of_columns;
+	char *segment_to_flush = starting_offt_segment_to_flush + ((params.height * backup_index_buffer_row_size) +
+								   (params.clock * params.size_of_entry));
+	struct wappender_append_index_segment_params append_index_params = { .height = params.height,
+									     .buffer = segment_to_flush,
+									     .buffer_size = params.size_of_entry,
+									     .is_last_segment =
+										     params.is_last_segment };
+	wappender_append_index_segment(r_state->wappender[dst_level_id], append_index_params);
+}
+
 void send_index_create_compactions_rdma_buffer(struct send_index_create_compactions_rdma_buffer_params params)
 {
 	uint32_t dst_level_id = params.level_id + 1;
-	if (params.r_desc->r_state->index_buffer[dst_level_id] != NULL) {
-		log_fatal("Remote compaction for regions %s still pending", params.r_desc->region->id);
+	struct ru_replica_state *r_state = region_desc_get_replica_state(params.r_desc);
+
+	if (r_state->index_buffer[dst_level_id] != NULL) {
+		log_fatal("Remote compaction for regions %s still pending", region_desc_get_id(params.r_desc));
 		assert(0);
 		_exit(EXIT_FAILURE);
 	}
 	// acquire a transacation ID (if level > 0) for parallax and initialize a level write appender for the upcoming compaction */
-	par_init_compaction_id(params.r_desc->db, dst_level_id, params.tree_id);
-	params.r_desc->r_state->wappender[dst_level_id] =
-		wappender_init((struct db_handle *)params.r_desc->db, dst_level_id);
+	par_init_compaction_id(region_desc_get_db(params.r_desc), dst_level_id, params.tree_id);
+	r_state->wappender[dst_level_id] =
+		wappender_init((struct db_handle *)region_desc_get_db(params.r_desc), params.tree_id, dst_level_id);
 	// assign index buffer aswell
 	char *backup_segment_index = NULL;
 	uint32_t backup_segment_index_size = params.number_of_rows * params.number_of_columns * params.size_of_entry;
@@ -61,9 +70,9 @@ void send_index_create_compactions_rdma_buffer(struct send_index_create_compacti
 		_exit(EXIT_FAILURE);
 	}
 
-	params.r_desc->r_state->index_buffer[dst_level_id] =
+	r_state->index_buffer[dst_level_id] =
 		rdma_reg_write(params.conn->rdma_cm_id, backup_segment_index, backup_segment_index_size);
-	if (params.r_desc->r_state->index_buffer[dst_level_id] == NULL) {
+	if (r_state->index_buffer[dst_level_id] == NULL) {
 		log_fatal("Failed to reg memory");
 		_exit(EXIT_FAILURE);
 	}
@@ -73,8 +82,9 @@ void send_index_create_compactions_rdma_buffer(struct send_index_create_compacti
 
 void send_index_create_mr_for_segment_replies(struct send_index_create_mr_for_segment_replies_params params)
 {
+	struct ru_replica_state *r_state = region_desc_get_replica_state(params.r_desc);
 	uint32_t dst_level_id = params.level_id + 1;
-	if (params.r_desc->r_state->index_segment_flush_replies[dst_level_id] != NULL) {
+	if (r_state->index_segment_flush_replies[dst_level_id] != NULL) {
 		log_fatal("The segment flush reply memory region is in use when a compaction started for level %u",
 			  dst_level_id);
 		assert(0);
@@ -89,32 +99,34 @@ void send_index_create_mr_for_segment_replies(struct send_index_create_mr_for_se
 		assert(0);
 		_exit(EXIT_FAILURE);
 	}
-	params.r_desc->r_state->index_segment_flush_replies[dst_level_id] = rdma_reg_write(
+	r_state->index_segment_flush_replies[dst_level_id] = rdma_reg_write(
 		params.conn->rdma_cm_id, backup_segment_flush_replies_mr, backup_segment_flush_replies_mr_size);
 }
 
-void send_index_close_compactions_rdma_buffer(struct krm_region_desc *r_desc, uint32_t level_id)
+void send_index_close_compactions_rdma_buffer(struct region_desc *r_desc, uint32_t level_id)
 {
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	uint32_t dst_level_id = level_id + 1;
 	//free index buffer that was allocated for sending the index for the specific level
-	if (rdma_dereg_mr(r_desc->r_state->index_buffer[dst_level_id])) {
+	if (rdma_dereg_mr(r_state->index_buffer[dst_level_id])) {
 		log_fatal("Failed to deregister rdma buffer");
 		_exit(EXIT_FAILURE);
 	}
-	r_desc->r_state->index_buffer[dst_level_id] = NULL;
-	wappender_close(r_desc->r_state->wappender[dst_level_id]);
-	r_desc->r_state->wappender[dst_level_id] = NULL;
+	r_state->index_buffer[dst_level_id] = NULL;
+	wappender_close(r_state->wappender[dst_level_id]);
+	r_state->wappender[dst_level_id] = NULL;
 }
 
-void send_index_close_mr_for_segment_replies(struct krm_region_desc *r_desc, uint32_t level_id)
+void send_index_close_mr_for_segment_replies(region_desc_t r_desc, uint32_t level_id)
 {
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	uint32_t dst_level_id = level_id + 1;
-	if (rdma_dereg_mr(r_desc->r_state->index_segment_flush_replies[dst_level_id])) {
+	if (rdma_dereg_mr(r_state->index_segment_flush_replies[dst_level_id])) {
 		log_fatal("Failed to deregister rdma buffer");
 		_exit(EXIT_FAILURE);
 	}
-	r_desc->r_state->index_segment_flush_replies[dst_level_id] = NULL;
-	free(r_desc->r_state->index_segment_flush_replies[dst_level_id]);
+	r_state->index_segment_flush_replies[dst_level_id] = NULL;
+	free(r_state->index_segment_flush_replies[dst_level_id]);
 }
 
 void send_index_free_index_HT(struct krm_region_desc *r_desc, uint32_t level_id)

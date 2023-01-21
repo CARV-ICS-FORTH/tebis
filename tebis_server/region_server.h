@@ -50,7 +50,7 @@ void regs_destroy_server(struct regs_server_desc *region_server);
  * @param key pointer to the key
  * @param key_size size of the key
  */
-struct krm_region_desc *regs_get_region(struct regs_server_desc const *region_server, char *key, uint32_t key_size);
+struct region_desc *regs_get_region_desc(struct regs_server_desc const *region_server, char *key, uint32_t key_size);
 
 /**
  * @brief the main loop of the region server. Caution it should be called with pthread_create

@@ -1,11 +1,12 @@
 #ifndef SEND_INDEX_H_
 #define SEND_INDEX_H_
 #include "../metadata.h"
+#include "../region_desc.h"
 #include "include/parallax/structures.h"
 
 /*parameters for function send_index_create_compactions_rdma_buffer*/
 struct send_index_create_compactions_rdma_buffer_params {
-	struct krm_region_desc *r_desc; // the region descriptor of the backup
+	region_desc_t r_desc; // the region descriptor of the backup
 	connection_rdma *conn; // the rdma connection between the primary and the backup
 	uint32_t tree_id; // the tree_id which the wappender and the transaction id will refer to (this is a Parallax thing and it must be 1)
 	uint32_t level_id; // the source level of the compaction taking place
@@ -16,13 +17,15 @@ struct send_index_create_compactions_rdma_buffer_params {
 
 /*parameters for function send_index_create_mr_for_segment_replies*/
 struct send_index_create_mr_for_segment_replies_params {
-	struct krm_region_desc *r_desc; // the region descriptr of the backup
 	connection_rdma *conn; // the rdma connection between the primary and the backup
+	region_desc_t r_desc;
+	uint32_t tree_id;
 	uint32_t level_id; //the source level of the compaction taking place
 };
 
-struct send_index_rewrite_index_params {
-	struct krm_region_desc *r_desc; // the region descriptor of the backup
+/*parameters for function 'send_index_flush_index_segment'*/
+struct send_index_flush_index_segment_params {
+	region_desc_t r_desc; // the region descriptor of the backup
 	uint32_t level_id; // the source level of the compaction taking place
 	uint32_t height; // the row_id  of the compaction index segment to be flushed
 	uint32_t clock; // the col_id of the compaction index segment to be flushed
@@ -36,7 +39,7 @@ struct send_index_rewrite_index_params {
  * @param r_desc: the region desciptor from which the rdma buffer is flushed
  * @param log_type: the type of the buffer to be flushed (L0-recovery, big)
 */
-uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type);
+uint64_t send_index_flush_rdma_buffer(region_desc_t r_desc, enum log_category log_type);
 
 void send_index_rewrite_index(struct send_index_rewrite_index_params params);
 
@@ -65,14 +68,14 @@ void send_index_create_mr_for_segment_replies(struct send_index_create_mr_for_se
  * @param r_desc: the region descriptr of the backup
  * @param level_id: the source level of the compaction that is taking place
  */
-void send_index_close_compactions_rdma_buffer(struct krm_region_desc *r_desc, uint32_t level_id);
+void send_index_close_compactions_rdma_buffer(region_desc_t r_desc, uint32_t level_id);
 
 /**
  * Frees and rdma deregisters the flush segment reply buffers that was allocated by the 'send_index_create_mr_for_segment_replies' function
  * @param r_desc: the region descriptr of the backup
  * @param level_id: the source level of the compaction that is taking place
  */
-void send_index_close_mr_for_segment_replies(struct krm_region_desc *r_desc, uint32_t level_id);
 
-void send_index_free_index_HT(struct krm_region_desc *r_desc, uint32_t level_id);
+void send_index_free_index_HT(region_desc_t r_desc, uint32_t level_id);
+void send_index_close_mr_for_segment_replies(region_desc_t r_desc, uint32_t level_id);
 #endif // SEND_INDEX_H_

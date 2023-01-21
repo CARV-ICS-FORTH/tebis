@@ -21,6 +21,7 @@
 #include "btree/lsn.h"
 #include "conf.h"
 #include "parallax/structures.h"
+#include "region_desc.h"
 #include "region_server.h"
 #include "send_index/send_index_rewriter.h"
 #include "send_index/send_index_uuid_checker/send_index_uuid_checker.h"
@@ -378,7 +379,9 @@ static inline size_t diff_timespec_usec(struct timespec *start, struct timespec 
 	}
 	return result.tv_sec * 1000000 + (size_t)(result.tv_nsec / (double)1000) + 1;
 }
+
 uint32_t no_ops_acks_send = 0;
+
 void *worker_thread_kernel(void *args)
 {
 	struct krm_work_task *job = NULL;
@@ -637,8 +640,8 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 		if (0 == ++task->rescheduling_counter % 1000000) {
 			log_warn(
 				"Suspicious task %lu for region %s has been rescheduled %lu times pending region tasks are: %lu state is %u",
-				(uint64_t)task, task->r_desc->region->id, task->rescheduling_counter,
-				task->r_desc->pending_region_tasks, task->kreon_operation_status);
+				(uint64_t)task, region_desc_get_id(task->r_desc), task->rescheduling_counter,
+				region_desc_get_pending_tasks(task->r_desc), task->kreon_operation_status);
 			b_detection = 1;
 		}
 
@@ -1143,6 +1146,6 @@ int main(int argc, char *argv[])
 		_exit(EXIT_FAILURE);
 	}
 	sem_wait(&exit_main);
-	log_warn("kreonR server exiting");
+	log_warn("Tebis Region Server exiting");
 	return 0;
 }

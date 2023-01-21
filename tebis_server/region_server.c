@@ -11,8 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include "master/mregion.h"
+#include "parallax/structures.h"
 #define _GNU_SOURCE
-#include "region_server.h"
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/spin_loop.h"
 #include "allocator/volume_manager.h"
@@ -22,6 +23,8 @@
 #include "list.h"
 #include "master/command.h"
 #include "metadata.h"
+#include "region_desc.h"
+#include "region_server.h"
 #include "send_index/send_index.h"
 #include "send_index/send_index_uuid_checker.h"
 #include "zk_utils.h"
@@ -42,70 +45,6 @@
 #include <zookeeper/zookeeper.h>
 #include <zookeeper/zookeeper.jute.h>
 uint64_t ds_hash_key;
-
-static int regs_enter_parallax(struct krm_region_desc *r_desc, struct krm_work_task *task)
-{
-	if (r_desc == NULL) {
-		log_fatal("NULL region?");
-		_exit(EXIT_FAILURE);
-	}
-	if (r_desc->region->num_of_backup == 0)
-		return 1;
-
-	pthread_rwlock_rdlock(&r_desc->kreon_lock);
-	if (r_desc->status == KRM_HALTED) {
-		int ret;
-		switch (task->kreon_operation_status) {
-		case TASK_GET_KEY:
-		case TASK_MULTIGET:
-		case TASK_DELETE_KEY:
-		case INS_TO_KREON:
-			// log_info("Do not enter Kreon task status is %d region status =
-			// %d",task->kreon_operation_status,r_desc->status);
-			ret = 0;
-			break;
-		case REPLICATE:
-		case WAIT_FOR_REPLICATION_COMPLETION:
-		case ALL_REPLICAS_ACKED:
-		case SEND_FLUSH_COMMANDS:
-		case WAIT_FOR_FLUSH_REPLIES:
-			ret = 1;
-			break;
-		default:
-			log_fatal("Unhandled state");
-			_exit(EXIT_FAILURE);
-		}
-		pthread_rwlock_unlock(&r_desc->kreon_lock);
-		return ret;
-	}
-	switch (task->kreon_operation_status) {
-	case TASK_GET_KEY:
-	case TASK_MULTIGET:
-	case TASK_DELETE_KEY:
-	case INS_TO_KREON:
-		__sync_fetch_and_add(&r_desc->pending_region_tasks, 1);
-		break;
-	case REPLICATE:
-	case WAIT_FOR_REPLICATION_TURN:
-	case WAIT_FOR_REPLICATION_COMPLETION:
-	case ALL_REPLICAS_ACKED:
-	case SEND_FLUSH_COMMANDS:
-	case WAIT_FOR_FLUSH_REPLIES:
-		break;
-	default:
-		log_fatal("Unhandled state");
-		_exit(EXIT_FAILURE);
-	}
-	pthread_rwlock_unlock(&r_desc->kreon_lock);
-	return 1;
-}
-
-static void regs_leave_parallax(struct krm_region_desc *r_desc)
-{
-	if (r_desc->region->num_of_backup == 0)
-		return;
-	__sync_fetch_and_sub(&r_desc->pending_region_tasks, 1);
-}
 
 char *regs_get_server_name(struct regs_server_desc *region_server)
 {
@@ -202,8 +141,8 @@ static void regs_get_IP_addresses(struct regs_server_desc *server)
 		char *ip_filter = globals_get_RDMA_IP_filter();
 		if (strncmp(addr, ip_filter, strlen(ip_filter)) != 0)
 			continue;
-		log_info("RDMA IP prefix %s match for Interface: %s Full IP Address: %s", globals_get_RDMA_IP_filter(),
-			 ifa->ifa_name, addr);
+		log_debug("RDMA IP prefix %s match for Interface: %s Full IP Address: %s", globals_get_RDMA_IP_filter(),
+			  ifa->ifa_name, addr);
 		if (sprintf(server->name.RDMA_IP_addr, "%s:%u", addr, server->RDMA_port) < 0) {
 			log_fatal("Failed to write IP address");
 			_exit(EXIT_FAILURE);
@@ -489,8 +428,8 @@ static int get_region_pos(struct krm_ds_regions const *ds_regions, char *key, ui
 
 	while (start_idx <= end_idx) {
 		middle = (start_idx + end_idx) / 2;
-		int ret_code = zku_key_cmp(ds_regions->r_desc[middle]->region->min_key_size,
-					   ds_regions->r_desc[middle]->region->min_key, key_size, key);
+		int ret_code = zku_key_cmp(region_desc_get_min_key_size(ds_regions->r_desc[middle]),
+					   region_desc_get_min_key(ds_regions->r_desc[middle]), key_size, key);
 		if (0 == ret_code) {
 			*found = true;
 			return middle;
@@ -532,10 +471,28 @@ static int krm_insert_ds_region(struct krm_ds_regions *region_table, struct krm_
 }
 #endif
 
+static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_desc_t region_desc)
+{
+	bool found = false;
+	int pos = get_region_pos(region_table, region_desc_get_min_key(region_desc),
+				 region_desc_get_min_key_size(region_desc), &found);
+
+	if (found) {
+		log_fatal("Region with min key %.*s already present", region_desc_get_min_key_size(region_desc),
+			  region_desc_get_min_key(region_desc));
+		_exit(EXIT_FAILURE);
+	}
+
+	memmove(&region_table->r_desc[pos + 2], &region_table->r_desc[pos + 1],
+		(region_table->num_ds_regions - (pos + 1)) * sizeof(struct krm_region_desc *));
+	region_table->r_desc[pos + 1] = region_desc;
+	++region_table->num_ds_regions;
+	return true;
+}
 /**
  * Returns r_desc that key should be hosted. Returns NULL if region_table is empty
  */
-struct krm_region_desc *regs_get_region(struct regs_server_desc const *region_server, char *key, uint32_t key_size)
+region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server, char *key, uint32_t key_size)
 {
 	bool found = false;
 	int pos = get_region_pos(region_server->ds_regions, key, key_size, &found);
@@ -546,52 +503,26 @@ struct krm_region_desc *regs_get_region(struct regs_server_desc const *region_se
 	return region_server->ds_regions->r_desc[pos];
 }
 
-static struct krm_region_desc *open_region(struct regs_server_desc *region_server, struct krm_region *new_region_info,
-					   enum krm_region_role server_role)
+static void regs_open_region(struct regs_server_desc *region_server, mregion_t mregion, enum server_role server_role)
 {
-	(void)region_server;
-	struct krm_region_desc *r_desc = (struct krm_region_desc *)calloc(1, sizeof(struct krm_region_desc));
-
-	struct krm_region *region = (struct krm_region *)calloc(1, sizeof(struct krm_region));
-	*region = *new_region_info;
-	r_desc->region = region;
-	r_desc->role = server_role;
-
-	r_desc->replica_buf_status = KRM_BUFS_UNINITIALIZED;
-	pthread_mutex_init(&r_desc->region_mgmnt_lock, NULL);
-	r_desc->pending_region_tasks = 0;
-	if (RWLOCK_INIT(&r_desc->kreon_lock, NULL) != 0) {
-		log_fatal("Failed to init region read write lock");
+	region_desc_t region_desc = region_desc_create(mregion, server_role);
+	disable_gc();
+	par_db_options db_options = { .volume_name = (char *)globals_get_dev(),
+				      .create_flag = PAR_CREATE_DB,
+				      .db_name = region_desc_get_id(region_desc),
+				      .options = par_get_default_options() };
+	const char *error_message = NULL;
+	db_options.options[REPLICA_MODE].value = 1;
+	db_options.options[PRIMARY_MODE].value = 0;
+	db_options.options[LEVEL0_SIZE].value = globals_get_l0_size();
+	par_handle parallax_db = par_open(&db_options, &error_message);
+	region_desc_set_db(region_desc, parallax_db);
+	if (error_message) {
+		log_fatal("Error uppon opening DB: %s, error %s", region_desc_get_id(region_desc), error_message);
 		_exit(EXIT_FAILURE);
 	}
 
-	if (RWLOCK_INIT(&r_desc->replica_log_map_lock, NULL) != 0) {
-		log_fatal("Failed to init replica log map lock");
-		_exit(EXIT_FAILURE);
-	}
-
-	r_desc->status = KRM_OPEN;
-	/*We have performed calloc so the code below is useless*/
-	r_desc->replica_log_map = NULL;
-#if 0
-  for (int i = 0; i < MAX_LEVELS; i++)
-		r_desc->replica_index_map[i] = NULL;
-
-	r_desc->db = custom_db_open(globals_get_dev(), 0, globals_get_dev_size(), region->id, CREATE_DB,
-				    globals_get_l0_size(), globals_get_growth_factor());
-
-	krm_insert_ds_region(region_server->ds_regions, r_desc);
-	if (KRM_PRIMARY == server_role)
-		return r_desc;
-	log_info("Setting DB %s in replicated mode", r_desc->db->db_desc->db_name);
-	bt_set_db_in_replicated_mode(r_desc->db);
-	set_init_index_transfer(r_desc->db->db_desc, &rco_init_index_transfer);
-	set_destroy_local_rdma_buffer(r_desc->db->db_desc, &rco_destroy_local_rdma_buffer);
-	set_send_index_segment_to_replicas(r_desc->db->db_desc, &rco_send_index_segment_to_replicas);
-	bt_set_flush_replicated_logs_callback(r_desc->db->db_desc, rco_flush_last_log_segment);
-	rco_add_db_to_pool(region_server->compaction_pool, r_desc);
-#endif
-	return r_desc;
+	regs_insert_region_desc(region_server->ds_regions, region_desc);
 }
 
 static void regs_process_command(struct regs_server_desc *region_server, struct krm_msg *msg)
@@ -754,12 +685,14 @@ static void regs_handle_master_command(struct regs_server_desc *region_server, M
 	log_debug("Region server: %s got the following command", regs_get_server_name(region_server));
 	MC_print_command(command);
 	if (!region_server)
-		open_region(NULL, NULL, 0);
+		regs_open_region(NULL, NULL, 0);
 
 	switch (MC_get_command_code(command)) {
 	case OPEN_REGION_START:
 		log_debug("RegionServer: %s opening region: %s", regs_get_server_name(region_server),
 			  MC_get_region_id(command));
+		mregion_t mregion = MREG_deserialize_region(MC_get_buffer(command), MC_get_buffer_size(command));
+		regs_open_region(region_server, mregion, MC_get_role(command));
 		break;
 	default:
 		log_debug("Unhandled case");
@@ -975,26 +908,39 @@ static void *regs_run_region_server(void *args)
 	return NULL;
 }
 
-static void regs_send_get_rdma_buffers_requests(struct krm_region_desc *r_desc, struct regs_server_desc const *server)
+static void regs_send_get_rdma_buffers_requests(struct region_desc *r_desc, struct regs_server_desc const *server)
 {
-	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
-		struct connection_rdma *conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
+	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
+		struct connection_rdma *conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
 
-		if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_UNINITIALIZED) {
+		if (region_desc_get_primary2backup_buffer_stat(r_desc, i) == RU_BUFFER_UNINITIALIZED) {
+			// if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_UNINITIALIZED) {
 			log_debug("Sending GET_RDMA_BUFFERs req to Server %s",
-				  r_desc->region->backups[i].kreon_ds_hostname);
+				  region_desc_get_backup_hostname(r_desc, i));
 
-			r_desc->m_state->primary_to_backup[i].msg_pair = sc_allocate_rpc_pair(
-				conn, sizeof(struct s2s_msg_get_rdma_buffer_req) + r_desc->region->min_key_size,
-				sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
-				GET_RDMA_BUFFER_REQ);
+			region_desc_set_primary2backup_msg_pair(
+				r_desc, i,
+				sc_allocate_rpc_pair(conn,
+						     sizeof(struct s2s_msg_get_rdma_buffer_req) +
+							     region_desc_get_min_key_size(r_desc),
+						     sizeof(struct s2s_msg_get_rdma_buffer_rep) +
+							     (sizeof(struct ibv_mr)),
+						     GET_RDMA_BUFFER_REQ));
+			// r_desc->m_state->primary_to_backup[i].msg_pair = sc_allocate_rpc_pair(
+			// 	conn, sizeof(struct s2s_msg_get_rdma_buffer_req) + r_desc->region->min_key_size,
+			// 	sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
+			// 	GET_RDMA_BUFFER_REQ);
 
-			if (r_desc->m_state->primary_to_backup[i].msg_pair.stat != ALLOCATION_IS_SUCCESSFULL)
+			struct sc_msg_pair *s2s = region_desc_get_primary2backup_msg_pair(r_desc, i);
+			if (s2s->stat != ALLOCATION_IS_SUCCESSFULL)
+				// if (r_desc->m_state->primary_to_backup[i].msg_pair.stat != ALLOCATION_IS_SUCCESSFULL)
 				continue;
 
 			/*inform the req about its buddy*/
-			msg_header *req_header = r_desc->m_state->primary_to_backup[i].msg_pair.request;
-			msg_header *rep_header = r_desc->m_state->primary_to_backup[i].msg_pair.reply;
+
+			struct sc_msg_pair *msg_pair = region_desc_get_primary2backup_msg_pair(r_desc, i);
+			msg_header *req_header = msg_pair->request;
+			msg_header *rep_header = msg_pair->reply;
 			req_header->triggering_msg_offset_in_send_buffer =
 				real_address_to_triggering_msg_offt(conn, req_header);
 			/*location where server should put the reply*/
@@ -1003,15 +949,16 @@ static void regs_send_get_rdma_buffers_requests(struct krm_region_desc *r_desc, 
 			req_header->reply_length_in_recv_buffer =
 				sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 			/*time to send the message*/
-			req_header->session_id = (uint64_t)r_desc->region;
+			req_header->session_id = (uint64_t)region_desc_get_uuid(r_desc);
 			struct s2s_msg_get_rdma_buffer_req *g_req =
 				(struct s2s_msg_get_rdma_buffer_req *)((char *)req_header + sizeof(struct msg_header));
 			g_req->buffer_size = SEGMENT_SIZE;
-			g_req->region_key_size = r_desc->region->min_key_size;
-			strcpy(g_req->region_key, r_desc->region->min_key);
+			g_req->region_key_size = region_desc_get_min_key_size(r_desc);
+			strcpy(g_req->region_key, region_desc_get_min_key(r_desc));
 			__send_rdma_message(conn, req_header, NULL);
 
-			r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
+			// r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
+			region_desc_set_primary2backup_buffer_stat(r_desc, i, RU_BUFFER_REQUESTED);
 		}
 	}
 }
@@ -1019,14 +966,11 @@ static void regs_send_get_rdma_buffers_requests(struct krm_region_desc *r_desc, 
 static uint8_t regs_key_exists(struct krm_work_task *task)
 {
 	assert(task);
-	par_handle par_hd = (par_handle)task->r_desc->db;
+	par_handle par_hd = region_desc_get_db(task->r_desc);
 	struct par_key pkey = { 0 };
 	pkey.size = kv_splice_get_key_size(task->kv);
 	pkey.data = kv_splice_get_key_offset_in_kv(task->kv);
-	if (par_exists(par_hd, &pkey) == PAR_KEY_NOT_FOUND)
-		return 0;
-
-	return 1;
+	return par_exists(par_hd, &pkey) != PAR_KEY_NOT_FOUND;
 }
 
 static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_buf, uint32_t backup_id,
@@ -1044,42 +988,45 @@ static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_
 	assert(rdma_buf->segment.mr[backup_id].length == SEGMENT_SIZE);
 }
 
-static uint32_t regs_got_all_get_rdma_buffers_replies(struct krm_region_desc *r_desc)
+static uint32_t regs_got_all_get_rdma_buffers_replies(struct region_desc *r_desc)
 {
 	/*check replies*/
 	uint32_t ready_buffers = 0;
-	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
-		if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_REQUESTED) {
+	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
+		if (region_desc_get_primary2backup_buffer_stat(r_desc, i) == RU_BUFFER_REQUESTED) {
+			// if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_REQUESTED) {
 			/*check reply and process
 			 *wait first for the header and then the payload
 			*/
-			if (r_desc->m_state->primary_to_backup[i].msg_pair.reply->receive != TU_RDMA_REGULAR_MSG)
+			struct sc_msg_pair *msg_pair = region_desc_get_primary2backup_msg_pair(r_desc, i);
+			if (msg_pair->reply->receive != TU_RDMA_REGULAR_MSG)
+				// if (r_desc->m_state->primary_to_backup[i].msg_pair.reply->receive != TU_RDMA_REGULAR_MSG)
 				continue;
 			/*Check arrival of payload*/
-			uint8_t tail = get_receive_field(r_desc->m_state->primary_to_backup[i].msg_pair.reply);
+			uint8_t tail = get_receive_field(msg_pair->reply);
 			if (tail != TU_RDMA_REGULAR_MSG)
 				continue;
 
 			struct s2s_msg_get_rdma_buffer_rep *rep =
-				(struct s2s_msg_get_rdma_buffer_rep *)(((char *)r_desc->m_state->primary_to_backup[i]
-										.msg_pair.reply) +
+				(struct s2s_msg_get_rdma_buffer_rep *)(((char *)msg_pair->reply) +
 								       sizeof(struct msg_header));
 			assert(rep->status == TEBIS_SUCCESS);
 
-			regs_initialize_rdma_buf_metadata(&r_desc->m_state->l0_recovery_rdma_buf, i, rep,
+			regs_initialize_rdma_buf_metadata(region_desc_get_master_L0_log_buf(r_desc), i, rep,
 							  TEBIS_L0_RECOVERY_RDMA_BUF);
-			regs_initialize_rdma_buf_metadata(&r_desc->m_state->big_recovery_rdma_buf, i, rep,
+			regs_initialize_rdma_buf_metadata(region_desc_get_master_big_log_buf(r_desc), i, rep,
 							  TEBIS_BIG_RECOVERY_RDMA_BUF);
 
-			r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_OK;
+			// r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_OK;
+			region_desc_set_primary2backup_buffer_stat(r_desc, i, RU_BUFFER_OK);
 			/*finally free the message*/
-			sc_free_rpc_pair(&r_desc->m_state->primary_to_backup[i].msg_pair);
+			sc_free_rpc_pair(msg_pair);
 		}
-		if (r_desc->m_state->primary_to_backup[i].stat == RU_BUFFER_OK)
+		if (region_desc_get_primary2backup_buffer_stat(r_desc, i) == RU_BUFFER_OK)
 			++ready_buffers;
 	}
 
-	if (ready_buffers != r_desc->region->num_of_backup) {
+	if (ready_buffers != region_desc_get_num_backup(r_desc)) {
 		// log_info("Not all replicas ready waiting status %d",
 		// task->kreon_operation_status);
 		return 0;
@@ -1095,26 +1042,26 @@ static int regs_init_replica_connections(struct regs_server_desc const *server, 
 			break;
 		}
 		case GET_RSTATE: {
-			if (task->r_desc->region->num_of_backup) {
-				if (task->r_desc->replica_buf_status == KRM_BUFS_READY) {
+			if (region_desc_get_num_backup(task->r_desc)) {
+				if (region_desc_get_replicas_buf_statius(task->r_desc) == KRM_BUFS_READY) {
 					task->kreon_operation_status = INS_TO_KREON;
 					return 1;
 				}
 
-				pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
-				if (task->r_desc->replica_buf_status == KRM_BUFS_INITIALIZING) {
-					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
+				region_desc_lock_region_mngmt(task->r_desc);
+				if (region_desc_get_replicas_buf_statius(task->r_desc) == KRM_BUFS_INITIALIZING) {
+					region_desc_unlock_region_mngmt(task->r_desc);
 					return 0;
 				}
-				if (task->r_desc->replica_buf_status == KRM_BUFS_UNINITIALIZED) {
+				if (region_desc_get_replicas_buf_statius(task->r_desc) == KRM_BUFS_UNINITIALIZED) {
 					/*log_info("Initializing log buffers with replicas for DB %s",
 						 task->r_desc->db->db_desc->db_name);*/
-					task->r_desc->replica_buf_status = KRM_BUFS_INITIALIZING;
+					region_desc_set_replicas_buf_statius(task->r_desc, KRM_BUFS_INITIALIZING);
 					task->kreon_operation_status = INIT_LOG_BUFFERS;
-					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
+					region_desc_unlock_region_mngmt(task->r_desc);
 				} else {
 					task->kreon_operation_status = INS_TO_KREON;
-					pthread_mutex_unlock(&task->r_desc->region_mgmnt_lock);
+					region_desc_unlock_region_mngmt(task->r_desc);
 					return 1;
 				}
 			} else {
@@ -1124,16 +1071,17 @@ static int regs_init_replica_connections(struct regs_server_desc const *server, 
 			break;
 		}
 		case INIT_LOG_BUFFERS: {
-			struct krm_region_desc *r_desc = task->r_desc;
-			if (r_desc->m_state == NULL)
-				r_desc->m_state = (struct ru_master_state *)calloc(1, sizeof(struct ru_master_state));
+			struct region_desc *r_desc = task->r_desc;
+			region_desc_init_master_state(r_desc);
 
 			regs_send_get_rdma_buffers_requests(r_desc, server);
 			if (!regs_got_all_get_rdma_buffers_replies(r_desc))
 				return 0;
 
-			log_info("Success RDMA buffers initialized for all replicas of region %s", r_desc->region->id);
-			task->r_desc->replica_buf_status = KRM_BUFS_READY;
+			log_debug("Success RDMA buffers initialized for all replicas of region %s",
+				  region_desc_get_id(r_desc));
+			region_desc_set_replicas_buf_statius(r_desc, KRM_BUFS_READY);
+			// task->r_desc->replica_buf_status = KRM_BUFS_READY;
 			task->kreon_operation_status = INS_TO_KREON;
 			return 1;
 		}
@@ -1173,66 +1121,69 @@ void regs_insert_kv_to_store(struct krm_work_task *task)
 
 	/*insert kv to data store*/
 	const char *error_message = NULL;
-	struct par_put_metadata metadata = par_put_serialized(task->r_desc->db, (char *)task->kv, &error_message);
+	struct par_put_metadata metadata =
+		par_put_serialized(region_desc_get_db(task->r_desc), (char *)task->kv, &error_message);
 	if (error_message) {
-		regs_leave_parallax(task->r_desc);
+		region_desc_leave_parallax(task->r_desc);
 		return;
 	}
 	task->insert_metadata = metadata;
 
 	/*replication path*/
-	if (task->r_desc->region->num_of_backup) {
+	task->kreon_operation_status = TASK_COMPLETE;
+	if (region_desc_get_num_backup(task->r_desc)) {
 		regs_fill_replication_fields(task->msg, metadata);
 		task->kv_category = TEBIS_SMALLORMEDIUM;
 		if (metadata.key_value_category == BIG_INLOG)
 			task->kv_category = TEBIS_BIG;
 
 		task->kreon_operation_status = WAIT_FOR_REPLICATION_TURN;
-	} else
-		task->kreon_operation_status = TASK_COMPLETE;
+	}
 }
 
-static void regs_fill_flush_request(struct krm_region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
+static void regs_fill_flush_request(struct region_desc *r_desc, struct s2s_msg_flush_cmd_req *flush_request,
 				    struct krm_work_task *task)
 {
 	flush_request->primary_segment_offt = task->insert_metadata.flush_segment_offt;
 	flush_request->log_type = task->insert_metadata.log_type;
-	flush_request->region_key_size = r_desc->region->min_key_size;
-	strcpy(flush_request->region_key, r_desc->region->min_key);
+	flush_request->region_key_size = region_desc_get_min_key_size(r_desc),
+	strcpy(flush_request->region_key, region_desc_get_min_key(r_desc));
 	flush_request->uuid = (uint64_t)flush_request;
 }
 
 void regs_send_flush_commands(struct regs_server_desc const *server, struct krm_work_task *task)
 {
 	//log_debug("Send flush commands");
-	struct krm_region_desc *r_desc = task->r_desc;
+	struct region_desc *r_desc = task->r_desc;
 
-	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
-		if (r_desc->m_state->flush_cmd[i].stat == RU_BUFFER_UNINITIALIZED) {
+	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(r_desc); ++i) {
+		if (region_desc_get_flush_cmd_status(r_desc, i) == RU_BUFFER_UNINITIALIZED) {
 			/*allocate and send command*/
 			struct connection_rdma *r_conn =
-				sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
+				sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
 			/*send flush req and piggyback it with the seg id num*/
-			uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + r_desc->region->min_key_size;
+			uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + region_desc_get_min_key_size(r_desc);
 			uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
-			r_desc->m_state->flush_cmd[i].msg_pair =
-				sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ);
+			region_desc_set_flush_msg_pair(
+				r_desc, i, sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ));
 
-			if (r_desc->m_state->flush_cmd[i].msg_pair.stat != ALLOCATION_IS_SUCCESSFULL) {
+			struct sc_msg_pair *flush_cmd = region_desc_get_flush_msg_pair(r_desc, i);
+			if (flush_cmd->stat != ALLOCATION_IS_SUCCESSFULL) {
 				task->last_replica_to_ack = i;
 				return;
 			}
 
-			msg_header *req_header = r_desc->m_state->flush_cmd[i].msg_pair.request;
+			flush_cmd = region_desc_get_flush_msg_pair(r_desc, i);
+			msg_header *req_header = flush_cmd->request;
 
 			//time to send the message
-			req_header->session_id = (uint64_t)task->r_desc->region;
+			req_header->session_id = region_desc_get_uuid(r_desc);
 			struct s2s_msg_flush_cmd_req *f_req =
 				(struct s2s_msg_flush_cmd_req *)((char *)req_header + sizeof(struct msg_header));
 			regs_fill_flush_request(r_desc, f_req, task);
 			__send_rdma_message(r_conn, req_header, NULL);
-			r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
-			// log_info("Sent flush command req_header %llu", req_header);
+			region_desc_set_primary2backup_buffer_stat(r_desc, i, RU_BUFFER_REQUESTED);
+			// r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
 		}
 	}
 	task->last_replica_to_ack = 0;
@@ -1242,10 +1193,11 @@ void regs_send_flush_commands(struct regs_server_desc const *server, struct krm_
 void regs_wait_for_flush_replies(struct krm_work_task *task)
 {
 	//log_debug("wait for flush replies");
-	struct krm_region_desc *r_desc = task->r_desc;
-	for (uint32_t i = task->last_replica_to_ack; i < r_desc->region->num_of_backup; ++i) {
+	struct region_desc *r_desc = task->r_desc;
+	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(task->r_desc); ++i) {
 		/*check if header has arrived*/
-		msg_header *reply = r_desc->m_state->flush_cmd[i].msg_pair.reply;
+		struct sc_msg_pair *flush_cmd = region_desc_get_flush_msg_pair(task->r_desc, i);
+		msg_header *reply = flush_cmd->reply;
 
 		if (reply->receive != TU_RDMA_REGULAR_MSG) {
 			task->last_replica_to_ack = i;
@@ -1259,21 +1211,26 @@ void regs_wait_for_flush_replies(struct krm_work_task *task)
 		}
 	}
 	//got all replies motherfuckers
-	pthread_mutex_lock(&task->r_desc->region_mgmnt_lock);
-	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
+	region_desc_lock_region_mngmt(task->r_desc);
+	for (uint32_t i = 0; i < region_desc_get_num_backup(task->r_desc); ++i) {
 		// re-zero the metadat of the flushed segment
-		struct ru_master_log_buffer_seg *flushed_segment = &r_desc->m_state->l0_recovery_rdma_buf.segment;
-		if (task->insert_metadata.log_type == BIG)
-			flushed_segment = &r_desc->m_state->big_recovery_rdma_buf.segment;
+		struct ru_master_log_buffer *flushed_log = task->insert_metadata.log_type == BIG ?
+								   region_desc_get_master_big_log_buf(r_desc) :
+								   region_desc_get_master_L0_log_buf(r_desc);
+		// if (task->insert_metadata.log_type == BIG)
+		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
+		// if (task->insert_metadata.log_type == BIG)
+		// 	flushed_segment = &r_desc->m_state->big_recovery_rdma_buf.segment;
 
-		flushed_segment->curr_end = 0;
-		flushed_segment->replicated_bytes = 0;
+		flushed_log->segment.curr_end = 0;
+		flushed_log->segment.replicated_bytes = 0;
 		//for debuging purposes
-		send_index_uuid_checker_validate_uuid(&r_desc->m_state->flush_cmd[i].msg_pair, FLUSH_COMMAND_REQ);
+		send_index_uuid_checker_validate_uuid(region_desc_get_flush_msg_pair(r_desc, i), FLUSH_COMMAND_REQ);
 		/*free the flush msg*/
-		sc_free_rpc_pair(&r_desc->m_state->flush_cmd[i].msg_pair);
+		sc_free_rpc_pair(region_desc_get_flush_msg_pair(r_desc, i));
 	}
-	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
+	region_desc_unlock_region_mngmt(task->r_desc);
+
 	task->last_replica_to_ack = 0;
 	task->kreon_operation_status = REPLICATE;
 }
@@ -1296,20 +1253,22 @@ static void regs_wait_for_replication_turn(struct krm_work_task *task)
 {
 	assert(task);
 	int64_t lsn = get_lsn_id(put_msg_get_lsn_offset(task->msg));
-	if (lsn != task->r_desc->next_lsn_to_be_replicated)
+	if (lsn != region_desc_get_next_lsn(task->r_desc))
 		return; /*its not my turn yet*/
 
 	/*only 1 threads enters this region at a time*/
 	/*find which rdma_buffer must be appended*/
-	struct ru_master_state *primary = task->r_desc->m_state;
-	struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == TEBIS_BIG)
-		rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
+	// struct ru_master_state *primary = task->r_desc->m_state;
+	// struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
+	// if (task->kv_category == TEBIS_BIG)
+	// 	rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
+	struct ru_master_log_buffer *rdma_buffer_to_fill = task->kv_category == TEBIS_BIG ?
+								   region_desc_get_master_big_log_buf(task->r_desc) :
+								   region_desc_get_master_L0_log_buf(task->r_desc);
 
+	task->kreon_operation_status = REPLICATE;
 	if (!regs_buffer_have_enough_space(rdma_buffer_to_fill, task))
 		task->kreon_operation_status = SEND_FLUSH_COMMANDS;
-	else
-		task->kreon_operation_status = REPLICATE;
 }
 
 // This function is called by the poll_cq thread every time a notification
@@ -1328,16 +1287,19 @@ void regs_replicate_task(struct regs_server_desc const *server, struct krm_work_
 {
 	assert(server && task);
 	//log_debug("replicate task");
-	struct krm_region_desc *r_desc = task->r_desc;
-	struct ru_master_state *primary = task->r_desc->m_state;
-	struct ru_master_log_buffer *r_buf = &primary->l0_recovery_rdma_buf;
-	if (task->kv_category == TEBIS_BIG)
-		r_buf = &primary->big_recovery_rdma_buf;
+	struct region_desc *r_desc = task->r_desc;
+	// struct ru_master_state *primary = task->r_desc->m_state;
+	// struct ru_master_log_buffer *r_buf = &primary->l0_recovery_rdma_buf;
+	// if (task->kv_category == TEBIS_BIG)
+	// 	r_buf = &primary->big_recovery_rdma_buf;
+	struct ru_master_log_buffer *r_buf = task->kv_category == TEBIS_BIG ?
+						     region_desc_get_master_big_log_buf(r_desc) :
+						     region_desc_get_master_L0_log_buf(r_desc);
 
 	uint32_t remote_offset = r_buf->segment.curr_end;
 	task->replicated_bytes = &r_buf->segment.replicated_bytes;
-	for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
-		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
+	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(r_desc); ++i) {
+		struct connection_rdma *r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
 
 		client_rdma_init_message_context(&task->msg_ctx[i], NULL);
 
@@ -1356,13 +1318,13 @@ void regs_replicate_task(struct regs_server_desc const *server, struct krm_work_
 	}
 
 	r_buf->segment.curr_end += task->msg_payload_size;
-	__sync_fetch_and_add(&task->r_desc->next_lsn_to_be_replicated, 1);
+	region_desc_increase_lsn(r_desc);
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 }
 
 void regs_wait_for_replication_completion(struct krm_work_task *task)
 {
-	for (uint32_t i = task->last_replica_to_ack; i < task->r_desc->region->num_of_backup; ++i) {
+	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(task->r_desc); ++i) {
 		if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
 			task->last_replica_to_ack = i;
 			return;
@@ -1474,7 +1436,7 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 		}
 		/*calculate kv_payload size*/
 		task->msg_payload_size = put_msg_get_payload_size(task->msg);
-		task->r_desc = regs_get_region(region_server_desc, key, key_length);
+		task->r_desc = regs_get_region_desc(region_server_desc, key, key_length);
 		if (task->r_desc == NULL) {
 			log_fatal("Region not found for key size key %u:%s", key_length, key);
 			_exit(EXIT_FAILURE);
@@ -1482,7 +1444,7 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 		if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST) {
 			if (!regs_key_exists(task)) {
 				log_warn("Key %.*s in update if exists for region %s not found!", key_length, key,
-					 task->r_desc->region->id);
+					 region_desc_get_id(task->r_desc));
 				_exit(EXIT_FAILURE);
 			}
 		}
@@ -1491,11 +1453,11 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 	if (!regs_init_replica_connections(region_server_desc, task))
 		return;
 
-	if (!regs_enter_parallax(task->r_desc, task))
+	if (!region_desc_enter_parallax(task->r_desc, task))
 		return;
 	regs_insert_kv_pair(region_server_desc, task);
 	if (task->kreon_operation_status == TASK_COMPLETE) {
-		regs_leave_parallax(task->r_desc);
+		region_desc_leave_parallax(task->r_desc);
 
 		/*prepare the reply*/
 		task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1519,7 +1481,7 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 {
 	assert(task->msg->msg_type == GET_REQUEST);
 	struct msg_data_get_request request_data = get_request_get_msg_data(task->msg);
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, request_data.key, request_data.key_size);
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, request_data.key, request_data.key_size);
 
 	if (r_desc == NULL) {
 		log_fatal("Region not found for key %s", request_data.key);
@@ -1528,24 +1490,19 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 
 	task->kreon_operation_status = TASK_GET_KEY;
 	task->r_desc = r_desc;
-	if (!regs_enter_parallax(r_desc, task)) {
+	if (!region_desc_enter_parallax(r_desc, task)) {
 		// later...
 		return;
 	}
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
 
-	struct krm_segment_entry {
-		uint64_t primary_segment_offt;
-		uint64_t replica_segment_offt;
-		UT_hash_handle hh;
-	};
-	par_handle par_hd = (par_handle)task->r_desc->db;
+	par_handle par_hd = region_desc_get_db(task->r_desc);
 	struct par_value lookup_value = { .val_buffer = get_reply_get_kv_offset(task->reply_msg),
 					  .val_buffer_size = request_data.bytes_to_read };
 	const char *error_message = NULL;
 	par_get_serialized(par_hd, get_msg_get_key_slice_t(task->msg), &lookup_value, &error_message);
-	regs_leave_parallax(r_desc);
+	region_desc_leave_parallax(r_desc);
 
 	if (error_message) {
 		log_warn("key not found key %s : length %u", request_data.key, request_data.key_size);
@@ -1636,17 +1593,6 @@ void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, 
 	_exit(EXIT_FAILURE);
 }
 
-/*zero both RDMA buffers*/
-static void zero_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type)
-{
-	if (log_type == L0_RECOVERY)
-		memset(r_desc->r_state->l0_recovery_rdma_buf.mr->addr, 0x00,
-		       r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size);
-	else
-		memset(r_desc->r_state->big_recovery_rdma_buf.mr->addr, 0x00,
-		       r_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
-}
-
 void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	(void)region_server_desc;
@@ -1654,10 +1600,10 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 	// log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc =
-		regs_get_region(region_server_desc, flush_req->region_key, flush_req->region_key_size);
-	if (r_desc->r_state == NULL) {
-		log_fatal("No state for backup region %s", r_desc->region->id);
+	struct region_desc *r_desc =
+		regs_get_region_desc(region_server_desc, flush_req->region_key, flush_req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
 	}
 
@@ -1665,13 +1611,15 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 
 	if (!globals_get_send_index()) {
 		build_index_procedure(r_desc, log_type_to_flush);
-		zero_rdma_buffer(r_desc, log_type_to_flush);
+		region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
 	} else {
 		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
-		int8_t segment_exist_in_HT = regs_is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
+		int8_t segment_exist_in_HT =
+			region_desc_is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
 		if (!segment_exist_in_HT) {
-			regs_add_segment_into_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
-			zero_rdma_buffer(r_desc, log_type_to_flush);
+			region_desc_add_segment_into_HT(r_desc, flush_req->primary_segment_offt,
+							replica_new_segment_offt);
+			region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
 		}
 	}
 
@@ -1687,58 +1635,39 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 	task->kreon_operation_status = TASK_COMPLETE;
 }
 
-static struct ru_replica_rdma_buffer regs_initialize_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
-{
-	void *addr = NULL;
-	if (posix_memalign(&addr, ALIGNMENT, size)) {
-		log_fatal("Failed to allocate aligned RDMA buffer");
-		perror("Reason\n");
-		_exit(EXIT_FAILURE);
-	}
-	/*Zero RDMA buffer*/
-	memset(addr, 0, size);
-	/*initialize the replicas rdma buffer*/
-	struct ru_replica_rdma_buffer rdma_buf = { .rdma_buf_size = size,
-						   .mr = rdma_reg_write(rdma_cm_id, addr, size) };
-	return rdma_buf;
-}
-
 void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == GET_RDMA_BUFFER_REQ);
 	struct s2s_msg_get_rdma_buffer_req *get_log =
 		(struct s2s_msg_get_rdma_buffer_req *)((char *)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc =
-		regs_get_region(region_server_desc, get_log->region_key, get_log->region_key_size);
+	struct region_desc *r_desc =
+		regs_get_region_desc(region_server_desc, get_log->region_key, get_log->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("No region found for min key %s", get_log->region_key);
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("Region-master wants to initialize rdma buffers for region %s", r_desc->region->id);
-	pthread_mutex_lock(&r_desc->region_mgmnt_lock);
-	if (r_desc->r_state == NULL) {
-		r_desc->r_state = (struct ru_replica_state *)calloc(1, sizeof(struct ru_replica_state));
-		uint32_t size = get_log->buffer_size;
-		struct rdma_cm_id *rdma_cm_id = task->conn->rdma_cm_id;
-		/*initalize l0_recovery_buffer*/
-		r_desc->r_state->l0_recovery_rdma_buf = regs_initialize_rdma_buffer(size, rdma_cm_id);
-		/*initialize big recovery buffer*/
-		r_desc->r_state->big_recovery_rdma_buf = regs_initialize_rdma_buffer(size, rdma_cm_id);
-	} else {
+	log_debug("Region-master wants to initialize rdma buffers for region %s", region_desc_get_id(r_desc));
+	region_desc_lock_region_mngmt(r_desc);
+
+	if (region_desc_get_replica_state(r_desc) != NULL) {
 		log_fatal("remote buffers already initialized, what?");
 		_exit(EXIT_FAILURE);
 	}
+	region_desc_init_replica_state(r_desc, get_log->buffer_size, task->conn->rdma_cm_id);
 
-	pthread_mutex_unlock(&r_desc->region_mgmnt_lock);
+	region_desc_unlock_region_mngmt(r_desc);
 	task->reply_msg = (void *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 				   task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_get_rdma_buffer_rep *rep =
 		(struct s2s_msg_get_rdma_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
 	rep->status = TEBIS_SUCCESS;
-	rep->l0_recovery_mr = *r_desc->r_state->l0_recovery_rdma_buf.mr;
-	rep->big_recovery_mr = *r_desc->r_state->big_recovery_rdma_buf.mr;
+
+	struct ru_master_log_buffer *log_buffer = region_desc_get_master_L0_log_buf(r_desc);
+	rep->l0_recovery_mr = *log_buffer->segment.mr;
+	log_buffer = region_desc_get_master_big_log_buf(r_desc);
+	rep->big_recovery_mr = *log_buffer->segment.mr;
 
 	regs_fill_reply_header(task->reply_msg, task,
 			       sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),
@@ -1754,18 +1683,18 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	assert(region_server_desc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
 	assert(globals_get_send_index());
+	assert(0);
 
 	struct s2s_msg_replica_index_get_buffer_req *req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("Starting compaction for level %u at region %s", req->level_id, r_desc->region->id);
-	uint32_t dst_level_id = req->level_id + 1;
+	log_debug("Starting compaction for level %u at region %s", req->level_id, region_desc_get_id(r_desc));
 
 	//initialize and reg write buffers for recieving the primary's segments ready to be flushed.
 	//The buffers follow Parallax compaction index
@@ -1778,6 +1707,7 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 		.number_of_columns = req->num_cols,
 		.size_of_entry = req->entry_size
 	};
+
 	send_index_create_compactions_rdma_buffer(create_buffers_params);
 	// also initialize a buffer for sending the flush replies to the primary
 	// we need to reg write this memory region since replicas rdma write segment flush replies into primary's status buffers
@@ -1792,14 +1722,16 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
+	//TODO did not solve this
+	// reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
+
 	reply->uuid = req->uuid;
 
 	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
 			       REPLICA_INDEX_GET_BUFFER_REP);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
-	log_debug("Registed a new memory region in region %s at offt %lu", r_desc->region->id,
+	log_debug("Registed a new memory region in region %s at offt %lu", region_desc_get_id(r_desc),
 		  (uint64_t)reply->mr.addr);
 	task->kreon_operation_status = TASK_COMPLETE;
 }
@@ -1853,7 +1785,7 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 	struct s2s_msg_replica_index_flush_req *req =
 		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
 
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
+	region_desc_t r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
 	if (r_desc == NULL) {
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
@@ -1881,12 +1813,14 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 	wappender_append_index_segment(r_desc->r_state->wappender[dst_level_id], flush_index_segment);
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;
-	char *reply_address = (char *)r_desc->r_state->index_segment_flush_replies[dst_level_id]->addr;
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+
+	char *reply_address = (char *)r_state->index_segment_flush_replies[dst_level_id]->addr;
 	memcpy(reply_address, &reply_value, sizeof(uint64_t));
 	//rdma write it back to the primary's write cursor status buffers
 	while (1) {
 		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
-					  r_desc->r_state->index_segment_flush_replies[dst_level_id], IBV_SEND_SIGNALED,
+					  r_state->index_segment_flush_replies[dst_level_id], IBV_SEND_SIGNALED,
 					  (uint64_t)req->reply_offt, req->mr_of_primary.rkey);
 		if (!ret)
 			break;
@@ -1911,10 +1845,10 @@ void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc,
 	assert(globals_get_send_index());
 	struct s2s_msg_flush_L0_req *flush_req =
 		(struct s2s_msg_flush_L0_req *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc =
-		regs_get_region(region_server_desc, flush_req->region_key, flush_req->region_key_size);
-	if (r_desc->r_state == NULL) {
-		log_fatal("No state for backup region %s", r_desc->region->id);
+	struct region_desc *r_desc =
+		regs_get_region_desc(region_server_desc, flush_req->region_key, flush_req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
 	}
 
@@ -1922,7 +1856,7 @@ void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc,
 	// persist the buffers
 	uint64_t new_small_log_tail = send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
 	uint64_t new_big_small_log_tail = send_index_flush_rdma_buffer(r_desc, BIG);
-	par_flush_superblock(r_desc->db);
+	par_flush_superblock(region_desc_get_db(r_desc));
 
 	// append new segments to logmap
 	add_segment_to_logmap_HT(r_desc, flush_req->small_log_tail_dev_offt, new_small_log_tail);
@@ -1953,14 +1887,15 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 	// get the region descriptor
 	struct s2s_msg_close_compaction_request *req =
 		(struct s2s_msg_close_compaction_request *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
-	if (r_desc->r_state == NULL) {
-		log_fatal("No state for backup region %s", r_desc->region->id);
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 	uint32_t dst_level_id = req->level_id + 1;
-	log_debug("Closing compaction for region %s level %u", r_desc->region->id, req->level_id);
+	log_debug("Closing compaction for region %s level %u", region_desc_get_id(r_desc), req->level_id);
+
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	send_index_free_index_HT(r_desc, req->level_id);
@@ -1991,14 +1926,14 @@ void regs_execute_replica_index_swap_levels(struct regs_server_desc const *regio
 	// get the region descriptor
 	struct s2s_msg_swap_levels_request *req =
 		(struct s2s_msg_swap_levels_request *)((char *)task->msg + sizeof(struct msg_header));
-	struct krm_region_desc *r_desc = regs_get_region(region_server_desc, req->region_key, req->region_key_size);
-	if (r_desc->r_state == NULL) {
-		log_fatal("No state for backup region %s", r_desc->region->id);
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
-	log_debug("Swap levels for region %s level %u", r_desc->region->id, req->level_id);
+	log_debug("Swap levels for region %s level %u", region_desc_get_id(r_desc), req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

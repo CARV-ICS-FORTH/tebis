@@ -1,5 +1,6 @@
 #include "build_index.h"
 #include "../rdma_buffer_iterator/rdma_buffer_iterator.h"
+#include "../region_desc.h"
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
 #include "log.h"
@@ -8,9 +9,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static void insert_kv(rdma_buffer_iterator_t iterator, struct krm_region_desc *r_desc)
+static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_desc)
 {
-	par_handle *handle = r_desc->db;
+	par_handle *handle = region_desc_get_db(r_desc);
 	const char *error_message = NULL;
 	struct kv_splice *kv = rdma_buffer_iterator_get_kv(iterator);
 	par_put_serialized(handle, (char *)kv, &error_message);
@@ -37,14 +38,15 @@ void build_index(struct build_index_task *task)
  * parse the overflown RDMA buffer and insert all the kvs that reside in the buffer.
  * Inserts are being sorted in an increasing lsn wise order
 */
-void build_index_procedure(struct krm_region_desc *r_desc, enum log_category log_type)
+void build_index_procedure(struct region_desc *r_desc, enum log_category log_type)
 {
 	struct build_index_task build_index_task;
-	build_index_task.rdma_buffer = r_desc->r_state->l0_recovery_rdma_buf.mr->addr;
+	struct ru_replica_state *replica_state = region_desc_get_replica_state(r_desc);
+	build_index_task.rdma_buffer = replica_state->l0_recovery_rdma_buf.mr->addr;
 	if (log_type == BIG)
-		build_index_task.rdma_buffer = r_desc->r_state->big_recovery_rdma_buf.mr->addr;
+		build_index_task.rdma_buffer = replica_state->big_recovery_rdma_buf.mr->addr;
 
-	build_index_task.rdma_buffers_size = r_desc->r_state->l0_recovery_rdma_buf.rdma_buf_size;
+	build_index_task.rdma_buffers_size = replica_state->l0_recovery_rdma_buf.rdma_buf_size;
 	build_index_task.r_desc = r_desc;
 	build_index(&build_index_task);
 }

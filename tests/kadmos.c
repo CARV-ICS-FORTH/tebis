@@ -55,8 +55,9 @@ static void reply_to_master(zhandle_t *zk_handle, MC_command_t command)
 		log_fatal("Wrong command");
 		_exit(EXIT_FAILURE);
 	}
-	MC_command_t cmd = MC_create_command(OPEN_REGION_COMMIT, MC_get_region_id(command), MC_get_role(command),
-					     MC_get_command_id(command));
+	mregion_t mregion = MREG_deserialize_region(MC_get_buffer(command), MC_get_buffer_size(command));
+	MC_command_t cmd =
+		MC_create_command(OPEN_REGION_COMMIT, mregion, MC_get_role(command), MC_get_command_id(command));
 	char *master_mail_path =
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_LEADER_PATH, KRM_MAIL_TITLE);
 	log_debug("Replying to master:");

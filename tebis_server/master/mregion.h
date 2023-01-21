@@ -10,6 +10,19 @@ extern mregion_t MREG_create_region(const char *min_key, const char *max_key, co
 				    enum krm_region_status status);
 
 /**
+ * @brief Serializes and returns the buffer and its size
+ * @param pointer to the region object
+ * @param buffer which is the destination where to serialize the object
+ * @param buffer_size size of the buffer
+ * @return size of the object
+ */
+uint32_t MREG_serialize_region(mregion_t region, char *buffer, uint32_t buffer_size);
+
+extern mregion_t MREG_deserialize_region(char *buffer, uint32_t buffer_size);
+
+extern uint32_t MREG_get_region_size(void);
+
+/**
  * Deallocates any resources associated with this regions
 */
 extern void MREG_destroy_region(mregion_t region);
@@ -50,4 +63,7 @@ extern void MREG_append_backup_in_region(mregion_t region, char *server);
 
 extern bool MREG_is_server_prefix_in_region_group(char *server, size_t prefix_size, mregion_t region);
 extern void MREG_print_region_configuration(mregion_t region);
+
+extern char *MREG_get_region_min_key(mregion_t mregion);
+extern uint32_t MREG_get_region_min_key_size(mregion_t mregion);
 #endif

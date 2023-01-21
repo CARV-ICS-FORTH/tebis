@@ -32,8 +32,9 @@ set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
 
 # target_link_libraries(test_circular_buffer log ${Zookeeper_LIBRARY})
 
-add_executable(kadmos kadmos.c ../tebis_server/zk_utils.c
-                      ../tebis_server/master/command.c)
+add_executable(
+  kadmos kadmos.c ../tebis_server/zk_utils.c ../tebis_server/master/command.c
+         ../tebis_server/master/mregion.c)
 target_link_libraries(kadmos log ${Zookeeper_LIBRARY})
 
 # Targets with dependencies to Zookeeper should be added in this if block

@@ -1,25 +1,37 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "command.h"
 #include "../metadata.h"
+#include "mregion.h"
 #include <log.h>
 
 struct MC_command {
-	char region_id[KRM_MAX_REGION_ID_SIZE];
 	uint64_t cmd_id;
 	enum server_role role;
 	enum MC_command_code code;
+	uint32_t buffer_size;
+	char buffer[];
 };
 
-MC_command_t MC_create_command(enum MC_command_code code, char *region_id, enum server_role role, uint64_t cmd_id)
+MC_command_t MC_create_command(enum MC_command_code code, mregion_t mregion, enum server_role role, uint64_t cmd_id)
 {
-	if (strlen(region_id) >= KRM_MAX_REGION_ID_SIZE) {
-		log_warn("Region id exceeds max buffer size");
-		return NULL;
-	}
-	MC_command_t cmd = calloc(1UL, sizeof(*cmd));
-	strncpy(cmd->region_id, region_id, KRM_MAX_REGION_ID_SIZE);
+	MC_command_t cmd = calloc(1UL, sizeof(*cmd) + MREG_get_region_size());
+	cmd->buffer_size = MREG_get_region_size();
 	cmd->code = code;
 	cmd->role = role;
 	cmd->cmd_id = cmd_id;
+	MREG_serialize_region(mregion, cmd->buffer, MREG_get_region_size());
 	return cmd;
 }
 
@@ -36,8 +48,9 @@ int MC_get_command_size(void)
 
 void MC_print_command(MC_command_t command)
 {
-	log_info("Command: region_id: %s, cmd_id: %lu role: %d, code %d", command->region_id, command->cmd_id,
-		 command->role, command->code);
+	mregion_t mregion = MREG_deserialize_region(command->buffer, MREG_get_region_size());
+	log_debug("Command: region_id: %s, cmd_id: %lu role: %d, code %d", MREG_get_region_id(mregion), command->cmd_id,
+		  command->role, command->code);
 }
 
 MC_command_code_t MC_get_command_code(MC_command_t command)
@@ -46,7 +59,8 @@ MC_command_code_t MC_get_command_code(MC_command_t command)
 }
 char *MC_get_region_id(MC_command_t command)
 {
-	return command->region_id;
+	mregion_t mregion = MREG_deserialize_region(command->buffer, MREG_get_region_size());
+	return MREG_get_region_id(mregion);
 }
 
 uint64_t MC_get_command_id(MC_command_t command)
@@ -66,4 +80,13 @@ MC_command_t MC_deserialize_command(char *buffer, size_t size)
 		return NULL;
 	}
 	return (MC_command_t)buffer;
+}
+
+char *MC_get_buffer(MC_command_t command)
+{
+	return command->buffer;
+}
+uint32_t MC_get_buffer_size(MC_command_t command)
+{
+	return command->buffer_size;
 }

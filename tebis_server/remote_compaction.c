@@ -16,7 +16,7 @@ extern void on_completion_client(struct rdma_message_context *);
 
 struct rco_db_map_entry {
 	struct db_descriptor *db_desc;
-	struct krm_region_desc *r_desc;
+	struct region_desc *r_desc;
 	struct rco_pool *pool;
 	UT_hash_handle hh;
 };
@@ -47,7 +47,7 @@ struct rco_task {
 	struct ibv_mr remote_mem_buf[RU_MAX_NUM_REPLICAS][MAX_REPLICA_INDEX_BUFFERS];
 	sem_t *sem;
 	struct segment_header *curr_index_segment;
-	struct krm_region_desc *r_desc;
+	struct region_desc *r_desc;
 	// my local buf one2many
 	struct ibv_mr *local_mem_buf[MAX_REPLICA_INDEX_BUFFERS];
 	int local_mem_buf_dirty[MAX_REPLICA_INDEX_BUFFERS];
@@ -948,7 +948,7 @@ static void rco_send_index_to_replicas(struct rco_task *task)
 #endif
 }
 
-void rco_add_db_to_pool(struct rco_pool *pool, struct krm_region_desc *r_desc)
+void rco_add_db_to_pool(struct rco_pool *pool, struct region_desc *r_desc)
 {
 	pthread_mutex_lock(&db_map_lock);
 	struct rco_db_map_entry *e = (struct rco_db_map_entry *)malloc(sizeof(struct rco_db_map_entry));

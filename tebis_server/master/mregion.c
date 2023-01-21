@@ -5,6 +5,7 @@
 #include <uthash.h>
 struct replica_member_info {
 	char hostname[KRM_HOSTNAME_SIZE];
+	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
 	enum server_role role;
 };
 
@@ -38,6 +39,31 @@ mregion_t MREG_create_region(const char *min_key, const char *max_key, const cha
 	region->max_key_size = strlen(max_key);
 	region->status = status;
 	return region;
+}
+
+uint32_t MREG_serialize_region(mregion_t region, char *buffer, uint32_t buffer_size)
+{
+	if (buffer_size < MREG_get_region_size()) {
+		log_fatal("Buffer too small to serial a region object");
+		_exit(EXIT_FAILURE);
+	}
+	memcpy(buffer, region, MREG_get_region_size());
+	uint32_t actual_size = sizeof(*region);
+	return actual_size;
+}
+
+mregion_t MREG_deserialize_region(char *buffer, uint32_t buffer_size)
+{
+	if (buffer_size < sizeof(struct mregion)) {
+		log_fatal("Buffer too small to host an mregion object");
+		_exit(EXIT_FAILURE);
+	}
+	return (mregion_t)buffer;
+}
+
+uint32_t MREG_get_region_size(void)
+{
+	return sizeof(struct mregion);
 }
 
 void MREG_destroy_region(mregion_t region)
@@ -167,4 +193,14 @@ void MREG_print_region_configuration(mregion_t region)
 			 server_role_2_string[region->backup[i].role]);
 	}
 	log_info("\n***************************************************************************");
+}
+
+char *MREG_get_region_min_key(mregion_t mregion)
+{
+	return mregion->min_key;
+}
+
+uint32_t MREG_get_region_min_key_size(mregion_t mregion)
+{
+	return mregion->min_key_size;
 }
