@@ -41,9 +41,10 @@ void MC_destroy_command(MC_command_t command)
 	free(command);
 }
 
-int MC_get_command_size(void)
+int MC_get_command_size(MC_command_t command)
 {
-	return sizeof(struct MC_command);
+	log_debug("Command size is header: %lu payload(mregion): %u", sizeof(struct MC_command), command->buffer_size);
+	return sizeof(struct MC_command) + command->buffer_size;
 }
 
 void MC_print_command(MC_command_t command)
@@ -75,7 +76,8 @@ enum server_role MC_get_role(MC_command_t command)
 
 MC_command_t MC_deserialize_command(char *buffer, size_t size)
 {
-	if (size < sizeof(struct MC_command)) {
+	MC_command_t command = (MC_command_t)buffer;
+	if (size < sizeof(struct MC_command) + command->buffer_size) {
 		log_warn("Buffer too small");
 		return NULL;
 	}
@@ -86,6 +88,7 @@ char *MC_get_buffer(MC_command_t command)
 {
 	return command->buffer;
 }
+
 uint32_t MC_get_buffer_size(MC_command_t command)
 {
 	return command->buffer_size;
