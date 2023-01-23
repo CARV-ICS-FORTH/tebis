@@ -21,6 +21,7 @@
 #define JSON_BUFFER_SIZE (2048)
 #define PROPOSAL_VALUE_LEN (256)
 
+#define MASTER_COMMAND_DEFAULT_SIZE 512
 #define MAX_MAILBOX_PATH_SIZE (256)
 #define MAX_REGION_SERVERS (1024)
 /**
@@ -188,15 +189,16 @@ static void MASTER_mailbox_watcher(zhandle_t *zkh, int type, int state, const ch
 
 	for (int i = 0; i < mails.count; ++i) {
 		char *mail_path = zku_concat_strings(3, path, KRM_SLASH, mails.data[i]);
-		char *cmd_buf = calloc(1UL, MC_get_command_size());
-		int cmd_buf_len = MC_get_command_size();
+		char *cmd_buf = calloc(1UL, MASTER_COMMAND_DEFAULT_SIZE);
+		int cmd_buf_len = MASTER_COMMAND_DEFAULT_SIZE;
 		struct Stat stat = { 0 };
 		int ret_code = zoo_get(master->zhandle, mail_path, 0, cmd_buf, &cmd_buf_len, &stat);
 		if (ret_code != ZOK) {
 			log_fatal("Master failed to fetch mail %s reason: %s", mail_path, zerror(ret_code));
 			_exit(EXIT_FAILURE);
 		}
-		MASTER_process_command_rep((MC_command_t)cmd_buf);
+		MC_command_t command = MC_deserialize_command(cmd_buf, cmd_buf_len);
+		MASTER_process_command_rep(command);
 		ret_code = zoo_delete(master->zhandle, mail_path, -1);
 		if (ret_code != ZOK) {
 			log_fatal("Master failed to delete mail %s reason: %s", mail_path, zerror(ret_code));
@@ -1126,8 +1128,9 @@ static void MASTER_send_open_region_command_to_primary(struct master_s *master, 
 		_exit(EXIT_FAILURE);
 	}
 
+	MREG_print_region_configuration(region);
 	char *zk_path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, mailbox_path, KRM_MAIL_TITLE);
-	int ret_code = zoo_create(master->zhandle, zk_path, (char *)command, MC_get_command_size(),
+	int ret_code = zoo_create(master->zhandle, zk_path, (char *)command, MC_get_command_size(command),
 				  &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE, mail_id, MAX_MAILBOX_PATH_SIZE);
 	if (ZOK != ret_code) {
 		log_fatal("Server: %s failed to send message in the message queue  %s", zk_path, zerror(ret_code));
@@ -1165,6 +1168,7 @@ static void MASTER_assign_regions(struct master_s *master)
 		MREG_set_region_primary_role(region_entry->region, PRIMARY_INFANT);
 		for (int i = 0; i < MREG_get_region_num_of_backups(region_entry->region); ++i)
 			MREG_set_region_backup_role(region_entry->region, i, BACKUP_INFANT);
+		log_debug("Sending open command for region:");
 		MASTER_send_open_region_command_to_primary(master, region_entry->region, command);
 	}
 }
