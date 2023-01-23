@@ -414,10 +414,10 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
  * Searches for a region in the region table of the Region Server. If it finds it returns the position and sets found flag to true. If it does not is sets
  * found to false and returns the position in the array that shoud be present. Caution in case where the region array is empty it returns -1 as its position.
  */
-static int get_region_pos(struct krm_ds_regions const *ds_regions, char *key, uint32_t key_size, bool *found)
+static int regs_get_region_pos(struct krm_ds_regions const *ds_regions, char *key, uint32_t key_size, bool *found)
 {
 	*found = false;
-	if (ds_regions->num_ds_regions)
+	if (0 == ds_regions->num_ds_regions)
 		return -1;
 
 	int start_idx = 0;
@@ -474,14 +474,15 @@ static int krm_insert_ds_region(struct krm_ds_regions *region_table, struct krm_
 static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_desc_t region_desc)
 {
 	bool found = false;
-	int pos = get_region_pos(region_table, region_desc_get_min_key(region_desc),
-				 region_desc_get_min_key_size(region_desc), &found);
+	int pos = regs_get_region_pos(region_table, region_desc_get_min_key(region_desc),
+				      region_desc_get_min_key_size(region_desc), &found);
 
 	if (found) {
 		log_fatal("Region with min key %.*s already present", region_desc_get_min_key_size(region_desc),
 			  region_desc_get_min_key(region_desc));
 		_exit(EXIT_FAILURE);
 	}
+	log_debug("Region pos is %d", pos);
 
 	memmove(&region_table->r_desc[pos + 2], &region_table->r_desc[pos + 1],
 		(region_table->num_ds_regions - (pos + 1)) * sizeof(struct krm_region_desc *));
@@ -495,7 +496,7 @@ static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_
 region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server, char *key, uint32_t key_size)
 {
 	bool found = false;
-	int pos = get_region_pos(region_server->ds_regions, key, key_size, &found);
+	int pos = regs_get_region_pos(region_server->ds_regions, key, key_size, &found);
 	if (-1 == pos) {
 		log_warn("Querying an empty region table returning NULL");
 		return NULL;
@@ -681,17 +682,15 @@ static void regs_announce_server_presence(struct regs_server_desc *region_server
 
 static void regs_handle_master_command(struct regs_server_desc *region_server, MC_command_t command)
 {
-	(void)region_server;
 	log_debug("Region server: %s got the following command", regs_get_server_name(region_server));
 	MC_print_command(command);
-	if (!region_server)
-		regs_open_region(NULL, NULL, 0);
 
 	switch (MC_get_command_code(command)) {
 	case OPEN_REGION_START:
 		log_debug("RegionServer: %s opening region: %s", regs_get_server_name(region_server),
 			  MC_get_region_id(command));
 		mregion_t mregion = MREG_deserialize_region(MC_get_buffer(command), MC_get_buffer_size(command));
+		MREG_print_region_configuration(mregion);
 		regs_open_region(region_server, mregion, MC_get_role(command));
 		break;
 	default:
@@ -711,7 +710,7 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 	for (int i = 0; i < commands.count; ++i) {
 		char *command_path = zku_concat_strings(6, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
 							server->name.kreon_ds_hostname, KRM_SLASH, commands.data[i]);
-		char buffer[512] = { 0 };
+		char buffer[KRM_COMMAND_BUFFER_SIZE] = { 0 };
 		int buf_len = sizeof(buffer);
 		struct Stat stat = { 0 };
 		int ret_code = zoo_get(zkh, command_path, 0, (char *)buffer, &buf_len, &stat);
@@ -720,7 +719,8 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 				  zerror(ret_code));
 			_exit(EXIT_FAILURE);
 		}
-		MC_command_t command = MC_deserialize_command(buffer, sizeof(buffer));
+		log_debug("Buffer from ZK: %d", buf_len);
+		MC_command_t command = MC_deserialize_command(buffer, buf_len);
 		regs_handle_master_command(server, command);
 		free(command_path);
 	}
