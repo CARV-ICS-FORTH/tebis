@@ -13,7 +13,7 @@
 // limitations under the License.
 #ifndef CONFIGURABLES_H
 #define CONFIGURABLES_H
-
+#define KRM_COMMAND_BUFFER_SIZE 1512
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 #define KRM_MAX_REGIONS 1024
