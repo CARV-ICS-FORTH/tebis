@@ -36,7 +36,7 @@ bool append_req_to_region_log(region_log_t region_log, MC_command_t command)
 {
 	char log_entry[KRM_MAX_ZK_PATH_SIZE] = { 0 };
 	int ret_code = zoo_create(region_log->zk_handle, region_log->zk_path, (const char *)command,
-				  MC_get_command_size(), &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE, log_entry,
+				  MC_get_command_size(command), &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE, log_entry,
 				  KRM_MAX_ZK_PATH_SIZE);
 
 	if (ZOK != ret_code) {

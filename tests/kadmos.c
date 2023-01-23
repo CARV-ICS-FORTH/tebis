@@ -62,7 +62,7 @@ static void reply_to_master(zhandle_t *zk_handle, MC_command_t command)
 		zku_concat_strings(4, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_LEADER_PATH, KRM_MAIL_TITLE);
 	log_debug("Replying to master:");
 	MC_print_command(command);
-	int ret_code = zoo_create(zk_handle, master_mail_path, (const char *)cmd, MC_get_command_size(),
+	int ret_code = zoo_create(zk_handle, master_mail_path, (const char *)cmd, MC_get_command_size(cmd),
 				  &ZOO_OPEN_ACL_UNSAFE, ZOO_PERSISTENT | ZOO_SEQUENCE, NULL, -1);
 	if (ZOK != ret_code) {
 		log_fatal("Failed to respond to server:%s reason: %s", master_mail_path, zerror(ret_code));
@@ -86,15 +86,15 @@ static void kadmos_mailbox_watcher(zhandle_t *zk_handle, int type, int state, co
 
 	for (int i = 0; i < mails.count; ++i) {
 		char *mail = zku_concat_strings(3, path, KRM_SLASH, mails.data[i]);
-		char *cmd_buffer = calloc(1UL, MC_get_command_size());
-		int cmd_buffer_len = MC_get_command_size();
+		char *cmd_buffer = calloc(1UL, 512);
+		int cmd_buffer_len = 512;
 		struct Stat stat = { 0 };
 		int ret_code = zoo_get(zk_handle, mail, 0, cmd_buffer, &cmd_buffer_len, &stat);
 		if (ZOK != ret_code) {
 			log_fatal("Failed to fetch email:%s reason %s", mail, zerror(ret_code));
 			_exit(EXIT_FAILURE);
 		}
-		MC_command_t command = (MC_command_t)cmd_buffer;
+		MC_command_t command = MC_deserialize_command(cmd_buffer, cmd_buffer_len);
 
 		reply_to_master(zk_handle, command);
 		ret_code = zoo_delete(zk_handle, mail, -1);

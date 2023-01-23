@@ -38,6 +38,7 @@ mregion_t MREG_create_region(const char *min_key, const char *max_key, const cha
 	memcpy(region->id, region_id, strlen(region_id));
 	region->max_key_size = strlen(max_key);
 	region->status = status;
+	region->num_of_backup = 0;
 	return region;
 }
 
@@ -187,6 +188,7 @@ void MREG_print_region_configuration(mregion_t region)
 	log_info("\n***************************************************************************");
 	log_info("Region: %s has primary: %s with role: %s", region->id, region->primary.hostname,
 		 server_role_2_string[region->primary.role]);
+	assert(region->num_of_backup < KRM_MAX_BACKUPS);
 	log_info("Region has %d backups", region->num_of_backup);
 	for (int i = 0; i < region->num_of_backup; ++i) {
 		log_info("Backup %s has role %s", region->backup[i].hostname,
