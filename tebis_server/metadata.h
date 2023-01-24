@@ -93,7 +93,6 @@ enum tb_kv_category { TEBIS_SMALLORMEDIUM = 0, TEBIS_BIG };
 enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
 /*server to server communication related staff*/
 struct sc_msg_pair {
-#define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 	/*out variables*/
 	struct msg_header *request;
