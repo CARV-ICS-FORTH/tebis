@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "region_desc.h"
+#include "allocator/volume_manager.h"
 #include "master/mregion.h"
 #include "metadata.h"
 #include <log.h>
@@ -80,6 +81,8 @@ region_desc_t region_desc_create(mregion_t mregion, enum server_role server_role
 	region_desc->status = KRM_OPEN;
 	/*We have performed calloc so the code below is useless*/
 	region_desc->replica_log_map = NULL;
+	if (region_desc_get_num_backup(region_desc))
+		region_desc->m_state = calloc(1UL, sizeof(struct ru_master_state));
 	return region_desc;
 }
 
@@ -278,14 +281,44 @@ struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region
 	return &region_desc->m_state->primary_to_backup[backup_id].msg_pair;
 }
 
-struct ru_master_log_buffer *region_desc_get_master_L0_log_buf(region_desc_t region_desc)
+struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t region_desc)
 {
+	if (region_desc->role != PRIMARY_INFANT && region_desc->role != PRIMARY_DEAD &&
+	    region_desc->role != PRIMARY_NEWBIE && region_desc->role != PRIMARY) {
+		log_fatal("This is a replica region not a primary!");
+		_exit(EXIT_FAILURE);
+	}
 	return &region_desc->m_state->l0_recovery_rdma_buf;
 }
 
-struct ru_master_log_buffer *region_desc_get_master_big_log_buf(region_desc_t region_desc)
+struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t region_desc)
 {
+	if (region_desc->role != PRIMARY_INFANT && region_desc->role != PRIMARY_DEAD &&
+	    region_desc->role != PRIMARY_NEWBIE && region_desc->role != PRIMARY) {
+		log_fatal("This is a replica region not a primary!");
+		_exit(EXIT_FAILURE);
+	}
 	return &region_desc->m_state->big_recovery_rdma_buf;
+}
+
+struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t region_desc)
+{
+	if (region_desc->role != BACKUP_INFANT && region_desc->role != BACKUP_DEAD &&
+	    region_desc->role != BACKUP_NEWBIE && region_desc->role != BACKUP) {
+		log_fatal("This is a primary region not a backup!");
+		_exit(EXIT_FAILURE);
+	}
+	return &region_desc->r_state->big_recovery_rdma_buf;
+}
+
+struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc)
+{
+	if (region_desc->role != BACKUP_INFANT && region_desc->role != BACKUP_DEAD &&
+	    region_desc->role != BACKUP_NEWBIE && region_desc->role != BACKUP) {
+		log_fatal("This is a primary region not a backup!");
+		_exit(EXIT_FAILURE);
+	}
+	return &region_desc->r_state->big_recovery_rdma_buf;
 }
 
 enum krm_replica_buf_status region_desc_get_replicas_buf_statius(region_desc_t region_desc)

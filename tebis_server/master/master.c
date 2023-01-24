@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "../../utilities/spin_loop.h"
+#include "../configurables.h"
 #include "../djb2.h"
 #include "../globals.h"
 #include "../metadata.h"
@@ -36,7 +37,7 @@ struct region_table_s {
 };
 
 struct region_server_table_entry_s {
-	region_server_t region_server;
+	mregion_server_t region_server;
 	uint64_t server_key;
 	UT_hash_handle hh;
 	bool slot_in_use;
@@ -61,7 +62,7 @@ static struct region_server_table_s *create_region_server_table(void)
 	return table;
 }
 
-static region_server_t find_server(struct region_server_table_s *table, char *region_server_name)
+static mregion_server_t find_server(struct region_server_table_s *table, char *region_server_name)
 {
 	uint64_t server_key = djb2_hash((unsigned char *)region_server_name, strlen(region_server_name));
 	struct region_server_table_entry_s *server = NULL;
@@ -214,7 +215,7 @@ static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *z
 					  struct krm_server_name *server_name)
 {
 	/*check if you are hostname-RDMA_port belongs to the project*/
-	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, region_server_name);
+	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGION_SERVERS_EPOCHS, KRM_SLASH, region_server_name);
 	struct Stat stat;
 	char buffer[JSON_BUFFER_SIZE];
 	int buffer_len = JSON_BUFFER_SIZE;
@@ -246,9 +247,9 @@ static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *z
 	cJSON *leader = cJSON_GetObjectItem(json, "leader");
 	if (!cJSON_IsString(hostname) || !cJSON_IsString(dataserver_name_retrieved) || !cJSON_IsString(rdma_ip) ||
 	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
-		// cJSON_Delete(json);
+		cJSON_Delete(json);
 		log_warn("Failed to retrieve all of the server info from json. Possible data corruption?");
-		// return false;
+		assert(0);
 	}
 	strncpy(server_name->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
 	strncpy(server_name->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
@@ -371,7 +372,7 @@ static int MASTER_children_comparator(const void *child_1, const void *child_2)
  * @returns the position (>= 0) of the server in the vector or -1 if it does
  * not find it.
  */
-static int MASTER_get_server_pos(struct server_vector_s *server_vector, region_server_t region_server)
+static int MASTER_get_server_pos(struct server_vector_s *server_vector, mregion_server_t region_server)
 {
 	for (int start = 0, end = server_vector->count - 1, middle = (server_vector->count - 1) / 2; start <= end;
 	     middle = (end + start) / 2) {
@@ -580,7 +581,7 @@ struct region_reconfiguration_s {
  * @param server_name is the name of the failed server in the form
  * <hostname>:<port>:<epoch>
  */
-static void MASTER_handle_region_server_failure(struct master_s *master, region_server_t region_server,
+static void MASTER_handle_region_server_failure(struct master_s *master, mregion_server_t region_server,
 						struct region_reconfiguration_s **affected_regions)
 {
 	region_server_iterator_t region_it = RS_create_region_server_iterator(region_server);
@@ -712,7 +713,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	MASTER_mark_servers_dead(master, dead_server_vector);
 
 	for (int i = 0; i < dead_server_vector->count; ++i) {
-		region_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		mregion_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
 		if (!region_server) {
 			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
 			_exit(EXIT_FAILURE);
@@ -725,7 +726,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	for (int i = 0; i < dead_server_vector->count; ++i) {
 		log_debug("Dead server is %s", dead_server_vector->names[i]);
 
-		region_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		mregion_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
 		if (!region_server) {
 			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
 			_exit(EXIT_FAILURE);
@@ -1011,30 +1012,38 @@ static void MASTER_build_region_table(struct master_s *master)
 		MREG_set_region_primary(region_entry->region, cJSON_GetStringValue(primary));
 		MREG_set_region_primary_role(region_entry->region,
 					     master->leadership_clock > 1 ? PRIMARY : PRIMARY_INFANT);
-		region_server_t region_server =
+		mregion_server_t region_server =
 			find_server(master->alive_servers, MREG_get_region_primary(region_entry->region));
 		if (!region_server) {
 			log_fatal("Could not find server %s this should not happen",
 				  MREG_get_region_primary(region_entry->region));
 			_exit(EXIT_FAILURE);
 		}
+
 		RS_add_region_in_server(region_server, region_entry->region,
 					MREG_get_region_primary_role(region_entry->region));
 
-		for (int j = 0; j < cJSON_GetArraySize(backups); ++j) {
-			MREG_set_region_backup(region_entry->region, j,
-					       cJSON_GetStringValue(cJSON_GetArrayItem(backups, j)));
-			MREG_set_region_backup_role(region_entry->region, j,
+		for (int backup_id = 0; backup_id < cJSON_GetArraySize(backups); ++backup_id) {
+			MREG_set_region_backup(region_entry->region, backup_id,
+					       cJSON_GetStringValue(cJSON_GetArrayItem(backups, backup_id)));
+			MREG_set_region_backup_role(region_entry->region, backup_id,
 						    master->leadership_clock > 1 ? BACKUP : BACKUP_INFANT);
-			region_server_t region_server =
-				find_server(master->alive_servers, MREG_get_region_backup(region_entry->region, j));
-			if (!region_server) {
+			mregion_server_t backup_server = find_server(
+				master->alive_servers, MREG_get_region_backup(region_entry->region, backup_id));
+			struct krm_server_name *backup_name = RS_get_region_server_krm_hostname(backup_server);
+
+			if (!backup_server) {
 				log_fatal("Could not find server %s, this should not happen",
-					  MREG_get_region_backup(region_entry->region, j));
+					  MREG_get_region_backup(region_entry->region, backup_id));
 				_exit(EXIT_FAILURE);
 			}
-			RS_add_region_in_server(region_server, region_entry->region,
-						MREG_get_region_backup_role(region_entry->region, j));
+			log_debug("IP address of backup server:%s is %s", backup_name->kreon_ds_hostname,
+				  backup_name->RDMA_IP_addr);
+			MREG_set_region_backup_IP(region_entry->region, backup_id, backup_name->RDMA_IP_addr,
+						  sizeof(backup_name->RDMA_IP_addr));
+
+			RS_add_region_in_server(backup_server, region_entry->region,
+						MREG_get_region_backup_role(region_entry->region, backup_id));
 		}
 		HASH_ADD_PTR(master->region_table, region_key, region_entry);
 
@@ -1116,7 +1125,7 @@ typedef struct {
  */
 static void MASTER_send_open_region_command_to_primary(struct master_s *master, mregion_t region, MC_command_t command)
 {
-	region_server_t region_server = find_server(master->alive_servers, MREG_get_region_primary(region));
+	mregion_server_t region_server = find_server(master->alive_servers, MREG_get_region_primary(region));
 	if (NULL == region_server) {
 		log_fatal("Cannot find server %s in the alive servers table", MREG_get_region_primary(region));
 	}

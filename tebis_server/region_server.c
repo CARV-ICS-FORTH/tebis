@@ -596,7 +596,6 @@ int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *s
 	if (ret_code != ZOK) {
 		log_debug("Cannot find server: %s reason: %s", zk_path, zerror(ret_code));
 		free(zk_path);
-		raise(SIGINT);
 		return ret_code;
 	}
 	free(zk_path);
@@ -704,8 +703,9 @@ static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_
 static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *server, region_desc_t region_desc)
 {
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(region_desc); ++backup_id) {
-		struct connection_rdma *conn =
-			sc_get_data_conn(server, region_desc_get_backup_IP(region_desc, backup_id));
+		struct connection_rdma *conn = sc_get_data_conn(server,
+								region_desc_get_backup_hostname(region_desc, backup_id),
+								region_desc_get_backup_IP(region_desc, backup_id));
 
 		log_debug("Sending GET_RDMA_BUFFERs req to Server %s",
 			  region_desc_get_backup_hostname(region_desc, backup_id));
@@ -754,9 +754,9 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 			(struct s2s_msg_get_rdma_buffer_rep *)(((char *)reply_header) + sizeof(struct msg_header));
 		assert(get_buffer_rep->status == TEBIS_SUCCESS);
 
-		regs_initialize_rdma_buf_metadata(region_desc_get_master_L0_log_buf(region_desc), backup_id,
+		regs_initialize_rdma_buf_metadata(region_desc_get_primary_L0_log_buf(region_desc), backup_id,
 						  get_buffer_rep, TEBIS_L0_RECOVERY_RDMA_BUF);
-		regs_initialize_rdma_buf_metadata(region_desc_get_master_big_log_buf(region_desc), backup_id,
+		regs_initialize_rdma_buf_metadata(region_desc_get_primary_big_log_buf(region_desc), backup_id,
 						  get_buffer_rep, TEBIS_BIG_RECOVERY_RDMA_BUF);
 
 		sc_free_rpc_pair(&get_log_buffer);
@@ -892,8 +892,6 @@ static void regs_register_server(struct regs_server_desc *region_server)
 	log_debug("Constructing my Tebis name: %s ...", region_server->name.kreon_ds_hostname);
 	int ret_code = regs_lookup_server_info(region_server, region_server->name.kreon_ds_hostname, &server_info);
 	uint64_t epoch = ret_code == ZOK ? ++server_info.epoch : 1;
-	regs_update_server_info(region_server, &server_info);
-	++region_server->name.epoch;
 
 	char tebis_name[KRM_HOSTNAME_SIZE] = { 0 };
 	if (snprintf(tebis_name, KRM_HOSTNAME_SIZE, "%s:%lu", region_server->name.kreon_ds_hostname, epoch) < 0) {
@@ -903,6 +901,8 @@ static void regs_register_server(struct regs_server_desc *region_server)
 	memcpy(region_server->name.kreon_ds_hostname, tebis_name, KRM_HOSTNAME_SIZE);
 	regs_get_IP_addresses(region_server);
 	log_debug("Everything ok I decided that my Tebis name is %s", regs_get_server_name(region_server));
+	regs_update_server_info(region_server, &region_server->name);
+	++region_server->name.epoch;
 }
 
 static void regs_init_zookeeper(struct regs_server_desc *region_server)
@@ -936,7 +936,7 @@ static bool regs_am_I_part_of_the_cluster(struct regs_server_desc *region_server
 
 static void *regs_run_region_server(void *args)
 {
-	pthread_setname_np(pthread_self(), "rserverd");
+	pthread_setname_np(pthread_self(), "rserver");
 	zoo_set_debug_level(ZOO_LOG_LEVEL_INFO);
 
 	struct regs_server_desc *region_server = (struct regs_server_desc *)args;
@@ -1069,12 +1069,14 @@ void regs_send_flush_commands(struct regs_server_desc const *server, struct krm_
 	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(r_desc); ++i) {
 		if (region_desc_get_flush_cmd_status(r_desc, i) == RU_BUFFER_UNINITIALIZED) {
 			/*allocate and send command*/
-			struct connection_rdma *r_conn = sc_get_data_conn(server, region_desc_get_backup_IP(r_desc, i));
+			struct connection_rdma *conn = sc_get_data_conn(server,
+									region_desc_get_backup_hostname(r_desc, i),
+									region_desc_get_backup_IP(r_desc, i));
 			/*send flush req and piggyback it with the seg id num*/
 			uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + region_desc_get_min_key_size(r_desc);
 			uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
 			region_desc_set_flush_msg_pair(
-				r_desc, i, sc_allocate_rpc_pair(r_conn, req_size, rep_size, FLUSH_COMMAND_REQ));
+				r_desc, i, sc_allocate_rpc_pair(conn, req_size, rep_size, FLUSH_COMMAND_REQ));
 
 			struct sc_msg_pair *flush_cmd = region_desc_get_flush_msg_pair(r_desc, i);
 			if (flush_cmd->stat != ALLOCATION_IS_SUCCESSFULL) {
@@ -1090,7 +1092,7 @@ void regs_send_flush_commands(struct regs_server_desc const *server, struct krm_
 			struct s2s_msg_flush_cmd_req *f_req =
 				(struct s2s_msg_flush_cmd_req *)((char *)req_header + sizeof(struct msg_header));
 			regs_fill_flush_request(r_desc, f_req, task);
-			__send_rdma_message(r_conn, req_header, NULL);
+			__send_rdma_message(conn, req_header, NULL);
 			region_desc_set_primary2backup_buffer_stat(r_desc, i, RU_BUFFER_REQUESTED);
 			// r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
 		}
@@ -1124,8 +1126,8 @@ void regs_wait_for_flush_replies(struct krm_work_task *task)
 	for (uint32_t i = 0; i < region_desc_get_num_backup(task->r_desc); ++i) {
 		// re-zero the metadat of the flushed segment
 		struct ru_master_log_buffer *flushed_log = task->insert_metadata.log_type == BIG ?
-								   region_desc_get_master_big_log_buf(r_desc) :
-								   region_desc_get_master_L0_log_buf(r_desc);
+								   region_desc_get_primary_big_log_buf(r_desc) :
+								   region_desc_get_primary_L0_log_buf(r_desc);
 		// if (task->insert_metadata.log_type == BIG)
 		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
 		// if (task->insert_metadata.log_type == BIG)
@@ -1172,8 +1174,8 @@ static void regs_wait_for_replication_turn(struct krm_work_task *task)
 	// if (task->kv_category == TEBIS_BIG)
 	// 	rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *rdma_buffer_to_fill = task->kv_category == TEBIS_BIG ?
-								   region_desc_get_master_big_log_buf(task->r_desc) :
-								   region_desc_get_master_L0_log_buf(task->r_desc);
+								   region_desc_get_primary_big_log_buf(task->r_desc) :
+								   region_desc_get_primary_L0_log_buf(task->r_desc);
 
 	task->kreon_operation_status = REPLICATE;
 	if (!regs_buffer_have_enough_space(rdma_buffer_to_fill, task))
@@ -1202,14 +1204,14 @@ void regs_replicate_task(struct regs_server_desc const *server, struct krm_work_
 	// if (task->kv_category == TEBIS_BIG)
 	// 	r_buf = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *r_buf = task->kv_category == TEBIS_BIG ?
-						     region_desc_get_master_big_log_buf(r_desc) :
-						     region_desc_get_master_L0_log_buf(r_desc);
+						     region_desc_get_primary_big_log_buf(r_desc) :
+						     region_desc_get_primary_L0_log_buf(r_desc);
 
 	uint32_t remote_offset = r_buf->segment.curr_end;
 	task->replicated_bytes = &r_buf->segment.replicated_bytes;
 	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(r_desc); ++i) {
-		struct connection_rdma *r_conn = sc_get_data_conn(server, region_desc_get_backup_IP(r_desc, i));
-
+		struct connection_rdma *r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i),
+								  region_desc_get_backup_IP(r_desc, i));
 		client_rdma_init_message_context(&task->msg_ctx[i], NULL);
 
 		task->msg_ctx[i].args = task;
@@ -1559,9 +1561,8 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("I am a backup for region %s", region_desc_get_id(region_desc));
-
 	region_desc = region_desc_create(mregion, MREG_get_region_backup_role(mregion, get_log_buffer->backup_id));
+	log_debug("I am a backup for region %s", region_desc_get_id(region_desc));
 
 	regs_open_region((struct regs_server_desc *)region_server_desc, mregion,
 			 MREG_get_region_backup_role(mregion, get_log_buffer->backup_id));
@@ -1577,10 +1578,10 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 		(struct s2s_msg_get_rdma_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
 	rep->status = TEBIS_SUCCESS;
 
-	struct ru_master_log_buffer *log_buffer = region_desc_get_master_L0_log_buf(region_desc);
-	rep->l0_recovery_mr = *log_buffer->segment.mr;
-	log_buffer = region_desc_get_master_big_log_buf(region_desc);
-	rep->big_recovery_mr = *log_buffer->segment.mr;
+	struct ru_replica_rdma_buffer *log_buffer = region_desc_get_backup_L0_log_buf(region_desc);
+	rep->l0_recovery_mr = *log_buffer->mr;
+	log_buffer = region_desc_get_backup_big_log_buf(region_desc);
+	rep->big_recovery_mr = *log_buffer->mr;
 
 	regs_fill_reply_header(task->reply_msg, task,
 			       sizeof(struct s2s_msg_get_rdma_buffer_rep) + (sizeof(struct ibv_mr)),

@@ -130,7 +130,8 @@ static void send_index_flush_L0(struct send_index_context *context, uint64_t sma
 	struct connection_rdma *r_conn = NULL;
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
+		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i),
+					  region_desc_get_backup_IP(r_desc, i));
 		uint32_t flush_L0_request_size = sizeof(struct s2s_msg_flush_L0_req);
 		uint32_t flush_L0_reply_size = sizeof(struct s2s_msg_flush_L0_rep);
 
@@ -182,7 +183,9 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 	struct connection_rdma *r_conn = NULL;
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
+		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i),
+					  region_desc_get_backup_IP(r_desc, i));
+
 		uint32_t get_buffer_request_size = sizeof(struct s2s_msg_replica_index_get_buffer_req);
 		uint32_t get_buffer_reply_size = sizeof(struct s2s_msg_replica_index_get_buffer_rep);
 
@@ -237,8 +240,9 @@ static void send_index_reg_write_primary_compaction_buffer(struct send_index_con
 	assert(context && wcursor);
 
 	// TODO: develop a better way to find the protection domain
-	struct connection_rdma *r_conn =
-		sc_get_compaction_conn(context->server, region_desc_get_backup_hostname(context->r_desc, 0));
+	struct connection_rdma *r_conn = sc_get_compaction_conn(context->server,
+								region_desc_get_backup_hostname(context->r_desc, 0),
+								region_desc_get_backup_IP(context->r_desc, 0));
 
 	char *wcursor_segment_buffer_offt = wcursor_get_cursor_buffer(wcursor, 0, 0);
 	uint32_t wcursor_segment_buffer_size = wcursor_get_segment_buffer_size(wcursor);
@@ -261,7 +265,8 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	struct connection_rdma *r_conn = NULL;
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
+		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i),
+					  region_desc_get_backup_IP(r_desc, i));
 		uint32_t send_index_close_compaction_request_size = sizeof(struct s2s_msg_close_compaction_request);
 		uint32_t send_index_close_compaction_reply_size = sizeof(struct s2s_msg_close_compaction_reply);
 
@@ -388,7 +393,8 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i));
+		r_conn = sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, i),
+					  region_desc_get_backup_IP(r_desc, i));
 		uint32_t send_index_swap_levels_request_size = sizeof(struct s2s_msg_swap_levels_request);
 		uint32_t send_index_swap_levels_reply_size = sizeof(struct s2s_msg_swap_levels_reply);
 

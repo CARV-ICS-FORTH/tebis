@@ -47,6 +47,7 @@ extern char *MREG_get_region_backup(mregion_t region, int backup_id);
 extern void MREG_set_region_backup(mregion_t region, int backup_id, char *hostname);
 
 extern char *MREG_get_region_backup_IP(mregion_t region, int backup_id);
+void MREG_set_region_backup_IP(mregion_t region, int backup_id, char *IP_address, size_t IP_address_len);
 
 /**
  * Returns the number of backups for this region

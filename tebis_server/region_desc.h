@@ -62,11 +62,9 @@ void region_desc_set_primary2backup_buffer_stat(region_desc_t region_desc, int b
 void region_desc_set_primary2backup_msg_pair(region_desc_t region_desc, int backup_id, struct sc_msg_pair msg_pair);
 struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region_desc, int backup_id);
 
-struct ru_master_log_buffer *region_desc_get_master_log_buffer(region_desc_t region_desc);
+struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t region_desc);
+struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t region_desc);
 
-struct ru_master_log_buffer *region_desc_get_master_L0_log_buf(region_desc_t region_desc);
-
-struct ru_master_log_buffer *region_desc_get_master_big_log_buf(region_desc_t region_desc);
 enum krm_replica_buf_status region_desc_get_replicas_buf_statius(region_desc_t region_desc);
 void region_desc_set_replicas_buf_statius(region_desc_t region_desc, enum krm_replica_buf_status status);
 
@@ -100,5 +98,9 @@ void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, ui
 mregion_t region_desc_get_mregion(region_desc_t region_desc);
 
 char *region_desc_get_backup_IP(region_desc_t region_desc, int backup_id);
+
+struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t region_desc);
+
+struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc);
 
 #endif

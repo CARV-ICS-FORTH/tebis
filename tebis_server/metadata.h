@@ -192,11 +192,11 @@ struct ru_replica_state {
 };
 
 struct krm_server_name {
-	char hostname[KRM_HOSTNAME_SIZE + 1];
+	char hostname[KRM_HOSTNAME_SIZE];
 	/*kreon hostname - RDMA port*/
-	char kreon_ds_hostname[KRM_HOSTNAME_SIZE * 2];
-	char kreon_leader[KRM_HOSTNAME_SIZE + 1];
-	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE + 1];
+	char kreon_ds_hostname[KRM_HOSTNAME_SIZE];
+	char kreon_leader[KRM_HOSTNAME_SIZE];
+	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];
 	uint32_t kreon_ds_hostname_length;
 	uint64_t epoch;
 };
@@ -329,8 +329,10 @@ int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
 					enum message_type type);
-struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *mydesc, char *hostname);
-struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *mydesc, char *hostname);
+struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname,
+					 char *IP_address);
+struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
+					       char *IP_address);
 void sc_free_rpc_pair(struct sc_msg_pair *p);
 void *run_master(void *args);
 #endif /* METADATA_H */

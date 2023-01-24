@@ -17,8 +17,7 @@
 const uint32_t S2S_MSG_SIZE = S2S_MSG_SIZE_VALUE;
 
 struct sc_conn_per_server {
-	uint64_t hash_key;
-	struct krm_server_name server;
+	uint64_t server_key;
 	struct connection_rdma *conn;
 	UT_hash_handle hh;
 };
@@ -213,50 +212,36 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	pthread_mutex_unlock(&p->conn->buffer_lock);
 }
 
-extern int krm_zk_get_server_name(char *dataserver_name, struct regs_server_desc const *my_desc,
-				  struct krm_server_name *dst, int *zk_rc);
-
 static struct connection_rdma *sc_get_conn(struct regs_server_desc const *region_server, char *hostname,
-					   struct sc_conn_per_server **sc_root_cps)
+					   char *IP_address, struct sc_conn_per_server **sc_root_cps)
 {
-	struct sc_conn_per_server *cps = NULL;
-	uint64_t key;
+	struct sc_conn_per_server *connection = NULL;
 
-	key = djb2_hash((unsigned char *)hostname, strlen(hostname));
-	HASH_FIND_PTR(*sc_root_cps, &key, cps);
-	if (cps == NULL) {
-		pthread_mutex_lock(&conn_map_lock);
-		HASH_FIND_PTR(*sc_root_cps, &key, cps);
-		if (cps == NULL) {
-			/*ok update server info from zookeeper*/
-			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
-			int ret_code = regs_lookup_server_info((struct regs_server_desc *const)region_server, hostname,
-							       &cps->server);
-			if (ret_code != ZOK) {
-				log_fatal("Failed to refresh info for server %s reason: %s", hostname,
-					  zerror(ret_code));
-				_exit(EXIT_FAILURE);
-			}
-			char *IP = cps->server.RDMA_IP_addr;
-			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(region_server), &IP, 1,
-									      MASTER_TO_REPLICA_CONNECTION);
+	uint64_t server_key = djb2_hash((unsigned char *)hostname, strlen(hostname));
+	HASH_FIND_PTR(*sc_root_cps, &server_key, connection);
+	if (connection)
+		return connection->conn;
 
-			/*init list here*/
-			cps->hash_key = key;
-			HASH_ADD_PTR(*sc_root_cps, hash_key, cps);
-		}
-		pthread_mutex_unlock(&conn_map_lock);
-	}
+	pthread_mutex_lock(&conn_map_lock);
+	log_debug("Creating connection for hostname: %s with IP address: %s", hostname, IP_address);
+	connection = (struct sc_conn_per_server *)calloc(1UL, sizeof(struct sc_conn_per_server));
+	connection->conn = crdma_client_create_connection_list_hosts(ds_get_channel(region_server), &IP_address, 1,
+								     MASTER_TO_REPLICA_CONNECTION);
 
-	return cps->conn;
+	/*init list here*/
+	connection->server_key = server_key;
+	HASH_ADD_PTR(*sc_root_cps, server_key, connection);
+	pthread_mutex_unlock(&conn_map_lock);
+
+	return connection->conn;
 }
 
-struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *mydesc, char *hostname)
+struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname, char *IP_address)
 {
-	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
+	return sc_get_conn(region_server, hostname, IP_address, &sc_root_data_cps);
 }
 
-struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *mydesc, char *hostname)
+struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname, char *IP_address)
 {
-	return sc_get_conn(mydesc, hostname, &sc_root_compaction_cps);
+	return sc_get_conn(region_server, hostname, IP_address, &sc_root_compaction_cps);
 }

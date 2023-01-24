@@ -160,6 +160,18 @@ char *MREG_get_region_backup_IP(mregion_t region, int backup_id)
 {
 	return backup_id >= region->num_of_backup ? NULL : region->backup[backup_id].RDMA_IP_addr;
 }
+void MREG_set_region_backup_IP(mregion_t region, int backup_id, char *IP_address, size_t IP_address_len)
+{
+	if (backup_id > region->num_of_backup) {
+		log_warn("What are you doing? Invalid backup id");
+		return;
+	}
+	if (IP_address_len > KRM_MAX_RDMA_IP_SIZE) {
+		log_fatal("Overflow of RDMA_IP_addr given: %lu actual: %d", IP_address_len, KRM_MAX_RDMA_IP_SIZE);
+		_exit(EXIT_FAILURE);
+	}
+	memcpy(region->backup[backup_id].RDMA_IP_addr, IP_address, IP_address_len);
+}
 
 void MREG_set_region_backup(mregion_t region, int backup_id, char *hostname)
 {
