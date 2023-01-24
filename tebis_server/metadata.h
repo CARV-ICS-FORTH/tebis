@@ -68,7 +68,7 @@ enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REG
 
 enum krm_work_task_status {
 	/*overall_status*/
-	TASK_START = 0,
+	TASK_START = 1,
 	TASK_COMPLETE,
 	/*mutation operations related*/
 	GET_RSTATE,

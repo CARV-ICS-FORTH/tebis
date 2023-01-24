@@ -241,7 +241,8 @@ int region_desc_enter_parallax(region_desc_t region_desc, struct krm_work_task *
 	case WAIT_FOR_FLUSH_REPLIES:
 		break;
 	default:
-		log_fatal("Unhandled state");
+		log_fatal("Unhandled state: %d", task->kreon_operation_status);
+		assert(0);
 		_exit(EXIT_FAILURE);
 	}
 	pthread_rwlock_unlock(&region_desc->kreon_lock);

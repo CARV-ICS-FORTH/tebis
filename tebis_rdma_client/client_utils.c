@@ -1,4 +1,5 @@
 #include "client_utils.h"
+#include "../tebis_server/configurables.h"
 #include "../tebis_server/djb2.h"
 #include "../tebis_server/globals.h"
 #include "../tebis_server/zk_utils.h"
@@ -99,7 +100,8 @@ exit:
 
 static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_name *dst)
 {
-	char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
+	// char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
+	char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGION_SERVERS_EPOCHS, KRM_SLASH, dataserver_name);
 	struct Stat stat;
 	char buffer[2048];
 	int buffer_len = 2048;

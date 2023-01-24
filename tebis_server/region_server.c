@@ -515,7 +515,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 	const char *error_message = NULL;
 	db_options.options[REPLICA_MODE].value = 1;
 	db_options.options[PRIMARY_MODE].value = 0;
-	db_options.options[LEVEL0_SIZE].value = globals_get_l0_size();
+	db_options.options[LEVEL0_SIZE].value = globals_get_l0_size() * 1024 * 1024;
 	par_handle parallax_db = par_open(&db_options, &error_message);
 	region_desc_set_db(region_desc, parallax_db);
 	if (error_message) {
@@ -524,6 +524,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 	}
 
 	regs_insert_region_desc(region_server->ds_regions, region_desc);
+	region_desc_increase_lsn(region_desc);
 	return region_desc;
 }
 
@@ -1164,6 +1165,7 @@ static void regs_wait_for_replication_turn(struct krm_work_task *task)
 {
 	assert(task);
 	int64_t lsn = get_lsn_id(put_msg_get_lsn_offset(task->msg));
+	log_debug("LSN got %ld next: %ld", lsn, region_desc_get_next_lsn(task->r_desc));
 	if (lsn != region_desc_get_next_lsn(task->r_desc))
 		return; /*its not my turn yet*/
 
@@ -1361,30 +1363,32 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 		}
 	}
 
-	// if (!regs_init_replica_connections(region_server_desc, task))
-	// 	return;
+	if (task->kreon_operation_status == TASK_START)
+		task->kreon_operation_status = INS_TO_KREON;
 
 	if (!region_desc_enter_parallax(task->r_desc, task))
 		return;
 	regs_insert_kv_pair(region_server_desc, task);
-	if (task->kreon_operation_status == TASK_COMPLETE) {
-		region_desc_leave_parallax(task->r_desc);
+	log_debug("task status is %d", task->kreon_operation_status);
+	if (task->kreon_operation_status != TASK_COMPLETE)
+		return;
 
-		/*prepare the reply*/
-		task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
-							task->msg->offset_reply_in_recv_buffer);
+	region_desc_leave_parallax(task->r_desc);
 
-		uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
-		if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
-			regs_fill_reply_header(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
-			msg_put_rep *put_rep = (msg_put_rep *)((char *)task->reply_msg + sizeof(msg_header));
-			put_rep->status = TEBIS_SUCCESS;
-			set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-		} else {
-			log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
-				  task->msg->reply_length_in_recv_buffer);
-			_exit(EXIT_FAILURE);
-		}
+	/*prepare the reply*/
+	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+						task->msg->offset_reply_in_recv_buffer);
+
+	uint32_t actual_reply_size = sizeof(msg_header) + sizeof(msg_put_rep) + TU_TAIL_SIZE;
+	if (task->msg->reply_length_in_recv_buffer >= actual_reply_size) {
+		regs_fill_reply_header(task->reply_msg, task, sizeof(msg_put_rep), PUT_REPLY);
+		msg_put_rep *put_rep = (msg_put_rep *)((char *)task->reply_msg + sizeof(msg_header));
+		put_rep->status = TEBIS_SUCCESS;
+		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	} else {
+		log_fatal("SERVER: mr CLIENT reply space not enough  size %" PRIu32 " FIX XXX TODO XXX\n",
+			  task->msg->reply_length_in_recv_buffer);
+		_exit(EXIT_FAILURE);
 	}
 }
 
