@@ -3,7 +3,6 @@
 
 #include "messages.h"
 #include "send_index/send_index_callbacks.h"
-#include <bits/pthreadtypes.h>
 #define KRM_HOSTNAME_SIZE 128
 #define IP_SIZE 4
 #include "../tebis_rdma/rdma.h"

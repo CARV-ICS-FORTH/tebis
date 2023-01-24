@@ -315,10 +315,12 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 			.reply_size = reply_size,
 			.request_type = REPLICA_INDEX_FLUSH_REQ,
 		};
-		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] == false);
 		r_desc->send_index_flush_index_segment_rpc[i][level_id][clock] =
 			send_index_allocate_msg_pair(send_index_allocation_info);
+
+		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] == false);
 		r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] = true;
+
 		struct sc_msg_pair *msg_pair = &r_desc->send_index_flush_index_segment_rpc[i][level_id][clock];
 		send_index_fill_flush_index_segment(msg_pair->request, r_desc, wcursor, height, level_id, clock, i);
 		send_index_fill_reply_fields(msg_pair, r_conn);
@@ -330,6 +332,8 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 			_exit(EXIT_FAILURE);
 		}
 
+		// if is_last is true then we are in the flushing stage of the wcursor compaction, and we spin for the last segments
+		// to be written in the replicas
 		if (is_last)
 			wcursor_spin_for_buffer_status(wcursor);
 	}
@@ -409,7 +413,6 @@ void send_index_swap_levels_callback(void *context, uint32_t src_level_id)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
-	// for now use the same logic as close compaction
 	send_index_swap_levels(send_index_cxt, src_level_id);
 }
 
@@ -422,11 +425,10 @@ void send_index_compaction_wcursor_flush_segment_callback(void *context, struct 
 	send_index_send_segment(send_index_cxt, wcursor, buf_size, height, level_id, clock, is_last);
 }
 
-void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t level_id, uint32_t height, uint32_t clock)
+void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t level_id, uint32_t clock)
 {
-	(void)height;
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
-	//log_debug("i got all the replies wowwwwww for height %u clock %u", height, clock);
+	//log_debug("i got all the replies for level %u", level_id);
 	struct krm_region_desc *r_desc = send_index_cxt->r_desc;
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] == true);

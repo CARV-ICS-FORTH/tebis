@@ -1662,7 +1662,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("Starting compaction for level %u", req->level_id);
+	log_debug("Starting compaction for level %u at region %s", req->level_id, r_desc->region->id);
 	uint32_t dst_level_id = req->level_id + 1;
 
 	//initialize and reg write buffers for recieving the primary's segments ready to be flushed.
@@ -1716,7 +1716,6 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("Flush segment for level %u", req->level_id);
 	uint32_t dst_level_id = req->level_id + 1;
 
 	//wcursor_write_index_segment(r_desc->r_state->write_cursor_segments[dst_level_id], height);
@@ -1725,7 +1724,6 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	uint64_t reply_value = WCURSOR_STATUS_OK;
 	char *reply_address = (char *)r_desc->r_state->index_segment_flush_replies[dst_level_id]->addr;
 	memcpy(reply_address, &reply_value, sizeof(uint64_t));
-	log_debug("Replying at offset %lu", (uint64_t)req->reply_offt);
 	//rdma write it back to the primary's write cursor status buffers
 	while (1) {
 		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
@@ -1835,7 +1833,7 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
-	log_debug("Ending compaction for level %u", req->level_id);
+	log_debug("Closing compaction for region %s level %u", r_desc->region->id, req->level_id);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 
@@ -1869,7 +1867,7 @@ static void execute_replica_index_swap_levels(struct krm_server_desc const *myde
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 
-	log_debug("Swap levels for level %u", req->level_id);
+	log_debug("Swap levels for region %s level %u", r_desc->region->id, req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
