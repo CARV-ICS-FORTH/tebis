@@ -184,6 +184,9 @@ struct s2s_msg_replica_index_get_buffer_req {
 	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t level_id;
+	uint32_t num_rows;
+	uint32_t num_cols;
+	uint32_t entry_size;
 	uint8_t tree_id;
 };
 
@@ -194,13 +197,17 @@ struct s2s_msg_replica_index_get_buffer_rep {
 
 struct s2s_msg_replica_index_flush_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
-	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t height;
+	uint32_t level_id;
+	uint32_t clock;
+	volatile char *reply_offt;
+	uint32_t reply_size;
+	struct ibv_mr mr_of_primary;
 };
 
 struct s2s_msg_replica_index_flush_rep {
-	uint64_t uuid;
+	int64_t uuid; //not used for now
 };
 
 struct s2s_msg_close_compaction_request {

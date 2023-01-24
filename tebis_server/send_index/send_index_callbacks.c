@@ -1,12 +1,15 @@
 #include "send_index_callbacks.h"
 #include "../../common/common.h"
 #include "../metadata.h"
+#include "btree/index_node.h"
 #include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_uuid_checker.h"
 #include <infiniband/verbs.h>
 #include <log.h>
+#include <pthread.h>
 #include <rdma/rdma_verbs.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 static void send_index_fill_flush_L0_request(msg_header *request_header, struct krm_region_desc *r_desc)
@@ -19,7 +22,8 @@ static void send_index_fill_flush_L0_request(msg_header *request_header, struct 
 }
 
 static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, struct krm_region_desc *r_desc,
-						    uint32_t level_id, uint8_t tree_id)
+						    uint32_t level_id, uint8_t tree_id,
+						    struct wcursor_level_write_cursor *new_level_cursor)
 {
 	struct s2s_msg_replica_index_get_buffer_req *req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((char *)request_header + sizeof(struct msg_header));
@@ -27,6 +31,9 @@ static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, 
 	strcpy(req->region_key, r_desc->region->min_key);
 	req->level_id = level_id;
 	req->tree_id = tree_id;
+	req->num_rows = wcursor_get_number_of_rows(new_level_cursor);
+	req->num_cols = wcursor_get_number_of_cols(new_level_cursor);
+	req->entry_size = wcursor_get_compaction_index_entry_size(new_level_cursor);
 	req->uuid = (uint64_t)req;
 }
 
@@ -53,13 +60,20 @@ static void send_index_fill_swap_levels_request(msg_header *request_header, stru
 }
 
 static void send_index_fill_flush_index_segment(msg_header *request_header, struct krm_region_desc *r_desc,
-						uint32_t height)
+						struct wcursor_level_write_cursor *wcursor, uint32_t height,
+						uint32_t level_id, uint32_t clock, uint32_t replica_id)
 {
 	struct s2s_msg_replica_index_flush_req *f_req =
 		(struct s2s_msg_replica_index_flush_req *)((char *)request_header + sizeof(struct msg_header));
 	f_req->height = height;
-	memcpy(f_req->region_key, r_desc->region->min_key, f_req->region_key_size);
+	f_req->level_id = level_id;
+	f_req->clock = clock;
 	f_req->region_key_size = r_desc->region->min_key_size;
+	strcpy(f_req->region_key, r_desc->region->min_key);
+	/*related for the reply part*/
+	f_req->mr_of_primary = *r_desc->local_buffer[level_id];
+	f_req->reply_size = wcursor_segment_buffer_status_size(wcursor);
+	f_req->reply_offt = wcursor_segment_buffer_get_status_addr(wcursor, height, clock, replica_id);
 }
 
 static void send_index_fill_reply_fields(struct sc_msg_pair *msg_pair, struct connection_rdma *r_conn)
@@ -141,13 +155,13 @@ static void send_index_flush_L0(struct send_index_context *context)
 }
 
 static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_context *context, uint32_t level_id,
-							uint8_t tree_id)
+							uint8_t tree_id,
+							struct wcursor_level_write_cursor *new_level_cursor)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
 	struct krm_server_desc *server = context->server;
 	assert(r_desc && server);
 	struct connection_rdma *r_conn = NULL;
-
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
 		r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 		uint32_t get_buffer_request_size = sizeof(struct s2s_msg_replica_index_get_buffer_req);
@@ -165,7 +179,7 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 
 		// send the msg
-		send_index_fill_get_rdma_buffer_request(msg_pair->request, r_desc, level_id, tree_id);
+		send_index_fill_get_rdma_buffer_request(msg_pair->request, r_desc, level_id, tree_id, new_level_cursor);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = (uint64_t)r_desc->region;
 
@@ -192,7 +206,8 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 }
 
 static void send_index_reg_write_primary_compaction_buffer(struct send_index_context *context,
-							   struct wcursor_level_write_cursor *wcursor)
+							   struct wcursor_level_write_cursor *wcursor,
+							   uint32_t level_id)
 {
 	assert(context && wcursor);
 
@@ -200,11 +215,11 @@ static void send_index_reg_write_primary_compaction_buffer(struct send_index_con
 	struct connection_rdma *r_conn =
 		sc_get_compaction_conn(context->server, context->r_desc->region->backups[0].kreon_ds_hostname);
 
-	char *wcursor_segment_buffer_offt = wcursor_get_segment_buffer_offt(wcursor);
+	char *wcursor_segment_buffer_offt = wcursor_get_cursor_buffer(wcursor, 0, 0);
 	uint32_t wcursor_segment_buffer_size = wcursor_get_segment_buffer_size(wcursor);
-	context->r_desc->local_buffer =
+	context->r_desc->local_buffer[level_id] =
 		rdma_reg_write(r_conn->rdma_cm_id, wcursor_segment_buffer_offt, wcursor_segment_buffer_size);
-	if (context->r_desc->local_buffer == NULL) {
+	if (context->r_desc->local_buffer[level_id] == NULL) {
 		log_fatal("Failed to reg memory");
 		_exit(EXIT_FAILURE);
 	}
@@ -218,6 +233,8 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	struct connection_rdma *r_conn = NULL;
 
 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
+		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][0] == false);
+		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][1] == false);
 		r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
 		uint32_t send_index_close_compaction_request_size = sizeof(struct s2s_msg_close_compaction_request);
 		uint32_t send_index_close_compaction_reply_size = sizeof(struct s2s_msg_close_compaction_reply);
@@ -253,33 +270,37 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	}
 }
 
-static void send_index_replicate_index_segment(struct send_index_context *context, char *buf, uint32_t buf_size)
+/* static void send_index_replicate_index_segment(struct send_index_context *context, */
+/* 					       struct wcursor_level_write_cursor *wcursor, uint32_t buf_size, */
+/* 					       uint32_t level_id, uint32_t height, uint32_t clock) */
+/* { */
+/* 	struct krm_region_desc *r_desc = context->r_desc; */
+/* 	struct krm_server_desc *server = context->server; */
+/* 	assert(r_desc && server); */
+/* 	int ret = 0; */
+/* 	char *primary_buffer = wcursor_get_cursor_buffer(wcursor, height, clock); */
+/* 	uint32_t number_of_columns = wcursor_get_number_of_cols(wcursor); */
+/* 	uint32_t entry_size = wcursor_get_number_of_rows(wcursor); */
+
+/* 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) { */
+/* 		uint32_t row_size_of_backup = entry_size * number_of_columns; */
+/* 		char *backup_buffer = (char *)r_desc->remote_mem_buf[i][level_id].addr + */
+/* 				      ((height * row_size_of_backup) + (clock * entry_size)); */
+/* 		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname); */
+/* 		while (1) { */
+/* 			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, primary_buffer, buf_size, */
+/* 					      r_desc->local_buffer[level_id], IBV_SEND_SIGNALED, */
+/* 					      (uint64_t)backup_buffer, r_desc->remote_mem_buf[i][level_id].rkey); */
+/* 			if (!ret) */
+/* 				break; */
+/* 		} */
+/* 	} */
+/* } */
+
+static void send_index_send_flush_index_segment(struct send_index_context *context,
+						struct wcursor_level_write_cursor *wcursor, uint32_t level_id,
+						uint32_t clock, uint32_t height, bool is_last)
 {
-	(void)buf;
-	assert(0);
-	struct krm_region_desc *r_desc = context->r_desc;
-	struct krm_server_desc *server = context->server;
-	assert(r_desc && server);
-	int ret = 0;
-
-	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
-		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
-
-		// XXX TODO XXX remove [0], temporary for compilation issues
-		while (1) {
-			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, r_desc->local_buffer->addr, buf_size,
-					      r_desc->local_buffer, IBV_SEND_SIGNALED,
-					      (uint64_t)r_desc->remote_mem_buf[i]->addr,
-					      r_desc->remote_mem_buf[i]->rkey);
-			if (!ret)
-				break;
-		}
-	}
-}
-
-static void send_index_send_flush_index_segment(struct send_index_context *context, uint32_t height)
-{
-	assert(0);
 	struct krm_region_desc *r_desc = context->r_desc;
 	struct krm_server_desc *server = context->server;
 	assert(r_desc && server);
@@ -288,31 +309,40 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		uint32_t request_size = sizeof(struct s2s_msg_replica_index_flush_req);
 		uint32_t reply_size = sizeof(struct s2s_msg_replica_index_flush_rep);
 
-		// allocate the flush L0 msg, retry until success
-		struct sc_msg_pair msg_pair =
-			sc_allocate_rpc_pair(r_conn, request_size, reply_size, REPLICA_INDEX_FLUSH_REQ);
-		while (msg_pair.stat != ALLOCATION_IS_SUCCESSFULL) {
-			msg_pair = sc_allocate_rpc_pair(r_conn, request_size, reply_size, REPLICA_INDEX_FLUSH_REQ);
-		}
+		struct send_index_allocate_msg_pair_info send_index_allocation_info = {
+			.conn = r_conn,
+			.request_size = request_size,
+			.reply_size = reply_size,
+			.request_type = REPLICA_INDEX_FLUSH_REQ,
+		};
+		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] == false);
+		r_desc->send_index_flush_index_segment_rpc[i][level_id][clock] =
+			send_index_allocate_msg_pair(send_index_allocation_info);
+		r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] = true;
+		struct sc_msg_pair *msg_pair = &r_desc->send_index_flush_index_segment_rpc[i][level_id][clock];
+		send_index_fill_flush_index_segment(msg_pair->request, r_desc, wcursor, height, level_id, clock, i);
+		send_index_fill_reply_fields(msg_pair, r_conn);
+		msg_pair->request->session_id = (uint64_t)r_desc->region;
 
-		send_index_fill_flush_index_segment(msg_pair.request, r_desc, height);
-
-		send_index_fill_reply_fields(&msg_pair, r_conn);
-
-		if (__send_rdma_message(r_conn, msg_pair.request, NULL) != TEBIS_SUCCESS) {
+		//send the msg
+		if (__send_rdma_message(r_conn, msg_pair->request, NULL) != TEBIS_SUCCESS) {
 			log_fatal("failed to send message");
 			_exit(EXIT_FAILURE);
 		}
+
+		if (is_last)
+			wcursor_spin_for_buffer_status(wcursor);
 	}
 }
 
-static void send_index_send_segment(struct send_index_context *context, char *buf, uint32_t buf_size, uint32_t height)
+static void send_index_send_segment(struct send_index_context *context, struct wcursor_level_write_cursor *wcursor,
+				    uint32_t buf_size, uint32_t height, uint32_t level_id, uint32_t clock, bool is_last)
 {
-	assert(0);
+	(void)buf_size;
 	/* rdma_write index segment to replicas */
-	send_index_replicate_index_segment(context, buf, buf_size);
+	//send_index_replicate_index_segment(context, wcursor, buf_size, level_id, height, clock);
 	/* send control msg to flush the index segment to replicas */
-	send_index_send_flush_index_segment(context, height);
+	send_index_send_flush_index_segment(context, wcursor, level_id, clock, height, is_last);
 }
 
 static void send_index_swap_levels(struct send_index_context *context, uint32_t level_id)
@@ -364,8 +394,8 @@ void send_index_compaction_started_callback(void *context, uint32_t src_level_id
 	if (!src_level_id)
 		send_index_flush_L0(send_index_cxt);
 
-	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id);
-	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level);
+	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id, new_level);
+	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level, src_level_id);
 }
 
 void send_index_compaction_ended_callback(void *context, uint32_t src_level_id)
@@ -383,19 +413,26 @@ void send_index_swap_levels_callback(void *context, uint32_t src_level_id)
 	send_index_swap_levels(send_index_cxt, src_level_id);
 }
 
-void send_index_compaction_wcursor_flush_segment_callback(void *context, uint32_t level_id, uint32_t height,
-							  uint32_t buf_size, int is_last_segment)
+void send_index_compaction_wcursor_flush_segment_callback(void *context, struct wcursor_level_write_cursor *wcursor,
+							  uint32_t level_id, uint32_t height, uint32_t buf_size,
+							  uint32_t clock, bool is_last)
 {
-	(void)context;
-	(void)level_id;
-	(void)height;
-	(void)buf_size;
-	(void)is_last_segment;
-	return;
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
-	char *buf = NULL;
-	send_index_send_segment(send_index_cxt, buf, buf_size, height);
+	send_index_send_segment(send_index_cxt, wcursor, buf_size, height, level_id, clock, is_last);
+}
+
+void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t level_id, uint32_t height, uint32_t clock)
+{
+	(void)height;
+	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
+	//log_debug("i got all the replies wowwwwww for height %u clock %u", height, clock);
+	struct krm_region_desc *r_desc = send_index_cxt->r_desc;
+	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
+		assert(r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] == true);
+		sc_free_rpc_pair(&r_desc->send_index_flush_index_segment_rpc[i][level_id][clock]);
+		r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] = false;
+	}
 }
 
 void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region_desc *r_desc)
@@ -412,6 +449,8 @@ void send_index_init_callbacks(struct krm_server_desc *server, struct krm_region
 	send_index_callback_functions.swap_levels_cb = send_index_swap_levels_callback;
 	send_index_callback_functions.comp_write_cursor_flush_segment_cb =
 		send_index_compaction_wcursor_flush_segment_callback;
+	send_index_callback_functions.comp_write_cursor_got_flush_replies_cb =
+		send_index_compaction_wcursor_got_flush_replies;
 
 	parallax_init_callbacks(r_desc->db, &send_index_callback_functions, cxt);
 }

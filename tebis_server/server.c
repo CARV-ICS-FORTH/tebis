@@ -14,6 +14,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "allocator/log_structures.h"
+#include "btree/conf.h"
 #include "btree/kv_pairs.h"
 #include "btree/level_write_cursor.h"
 #include "btree/lsn.h"
@@ -443,11 +444,15 @@ void *worker_thread_kernel(void *args)
 		}
 		/*process task*/
 		handle_task(&root_server->numa_servers[worker->root_server_id]->meta_server, job);
+		enum message_type type = job->msg->msg_type;
 		switch (job->kreon_operation_status) {
 		case TASK_COMPLETE:
 
 			zero_rendezvous_locations(job->msg);
-			__send_rdma_message(job->conn, job->reply_msg, NULL);
+			// Replica index flush requests have already rdma writed there response to the status their according status fields
+			if (type != REPLICA_INDEX_FLUSH_REQ) {
+				__send_rdma_message(job->conn, job->reply_msg, NULL);
+			}
 			switch (job->task_type) {
 			case KRM_CLIENT_TASK:
 				__sync_fetch_and_sub(&root_server->numa_servers[worker->root_server_id]
@@ -1659,10 +1664,25 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 
 	log_debug("Starting compaction for level %u", req->level_id);
 	uint32_t dst_level_id = req->level_id + 1;
-	struct send_index_create_compactions_rdma_buffer_params params = {
-		.level_id = req->level_id, .tree_id = req->tree_id, .conn = task->conn, .r_desc = r_desc
+
+	//initialize and reg write buffers for recieving the primary's segments ready to be flushed.
+	//The buffers follow Parallax compaction index
+	struct send_index_create_compactions_rdma_buffer_params create_buffers_params = {
+		.level_id = req->level_id,
+		.tree_id = req->tree_id,
+		.conn = task->conn,
+		.r_desc = r_desc,
+		.number_of_rows = req->num_rows,
+		.number_of_columns = req->num_cols,
+		.size_of_entry = req->entry_size
 	};
-	send_index_create_compactions_rdma_buffer(params);
+	send_index_create_compactions_rdma_buffer(create_buffers_params);
+	// also initialize a buffer for sending the flush replies to the primary
+	// we need to reg write this memory region since replicas rdma write segment flush replies into primary's status buffers
+	struct send_index_create_mr_for_segment_replies_params create_flush_reply_mr_params = {
+		.conn = task->conn, .level_id = req->level_id, .r_desc = r_desc
+	};
+	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
 
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1683,12 +1703,39 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 
 static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
-	(void)mydesc;
-	(void)task;
+	assert(mydesc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_FLUSH_REQ);
-	log_debug("Closing index flush req for parallax no replication porting");
-	assert(0);
-	_exit(EXIT_FAILURE);
+	assert(globals_get_send_index());
+
+	struct s2s_msg_replica_index_flush_req *req =
+		(struct s2s_msg_replica_index_flush_req *)((uint64_t)task->msg + sizeof(struct msg_header));
+
+	struct krm_region_desc *r_desc = krm_get_region(mydesc, req->region_key, req->region_key_size);
+	if (r_desc == NULL) {
+		log_fatal("no hosted region found for min key %s", req->region_key);
+		_exit(EXIT_FAILURE);
+	}
+
+	log_debug("Flush segment for level %u", req->level_id);
+	uint32_t dst_level_id = req->level_id + 1;
+
+	//wcursor_write_index_segment(r_desc->r_state->write_cursor_segments[dst_level_id], height);
+
+	//rdma write to primary's status
+	uint64_t reply_value = WCURSOR_STATUS_OK;
+	char *reply_address = (char *)r_desc->r_state->index_segment_flush_replies[dst_level_id]->addr;
+	memcpy(reply_address, &reply_value, sizeof(uint64_t));
+	log_debug("Replying at offset %lu", (uint64_t)req->reply_offt);
+	//rdma write it back to the primary's write cursor status buffers
+	while (1) {
+		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
+					  r_desc->r_state->index_segment_flush_replies[dst_level_id], IBV_SEND_SIGNALED,
+					  (uint64_t)req->reply_offt, req->mr_of_primary.rkey);
+		if (!ret)
+			break;
+	}
+
+	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 static void execute_test_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
@@ -1790,6 +1837,7 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 
 	log_debug("Ending compaction for level %u", req->level_id);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
+	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

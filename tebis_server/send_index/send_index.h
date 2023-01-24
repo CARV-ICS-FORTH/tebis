@@ -9,6 +9,16 @@ struct send_index_create_compactions_rdma_buffer_params {
 	connection_rdma *conn;
 	uint32_t tree_id;
 	uint32_t level_id;
+	uint32_t number_of_rows;
+	uint32_t number_of_columns;
+	uint32_t size_of_entry;
+};
+
+/*parameters for function send_index_create_mr_for_segment_replies*/
+struct send_index_create_mr_for_segment_replies_params {
+	struct krm_region_desc *r_desc;
+	connection_rdma *conn;
+	uint32_t level_id;
 };
 
 /**
@@ -21,5 +31,9 @@ uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_c
 
 void send_index_create_compactions_rdma_buffer(struct send_index_create_compactions_rdma_buffer_params params);
 
+void send_index_create_mr_for_segment_replies(struct send_index_create_mr_for_segment_replies_params params);
+
 void send_index_close_compactions_rdma_buffer(struct krm_region_desc *r_desc, uint32_t level_id);
+
+void send_index_close_mr_for_segment_replies(struct krm_region_desc *r_desc, uint32_t level_id);
 #endif // SEND_INDEX_H_

@@ -24,7 +24,7 @@
 
 uint64_t ds_hash_key;
 
-par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_type)
+par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_type, uint32_t num_of_backups)
 {
 	disable_gc();
 
@@ -38,6 +38,8 @@ par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_
 		// open DB as backup
 		db_options.options[PRIMARY_MODE].value = 0;
 		db_options.options[REPLICA_MODE].value = 1;
+		db_options.options[NUMBER_OF_REPLICAS].value = num_of_backups;
+		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
 	}
 
 	const char *error_message = NULL;
@@ -790,7 +792,8 @@ static void krm_process_msg(struct krm_server_desc *server, struct krm_msg *msg)
 #endif
 			/*open the db*/
 			/*TODO this should change l0_size and GF according to globals variable. Watch develop branch for more*/
-			r_desc->db = open_db(globals_get_dev(), r_desc->region->id, msg->type);
+			uint32_t num_of_backups = r_desc->region->num_of_backup;
+			r_desc->db = open_db(globals_get_dev(), r_desc->region->id, msg->type, num_of_backups);
 			if (globals_get_send_index())
 				send_index_init_callbacks(server, r_desc);
 
@@ -1302,7 +1305,9 @@ void *krm_metadata_server(void *args)
 
 				// open the db
 				// TODO replace db_open with custom db open as should be
-				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_BACKUP);
+				uint32_t num_of_backups = r_desc->region->num_of_backup;
+				r_desc->db = open_db(globals_get_dev(), r_desc->region->id, KRM_OPEN_REGION_AS_BACKUP,
+						     num_of_backups);
 				if (globals_get_send_index())
 					send_index_init_callbacks(my_desc, r_desc);
 				r_desc->status = KRM_OPEN;
