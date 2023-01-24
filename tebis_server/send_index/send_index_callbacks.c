@@ -270,32 +270,33 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	}
 }
 
-/* static void send_index_replicate_index_segment(struct send_index_context *context, */
-/* 					       struct wcursor_level_write_cursor *wcursor, uint32_t buf_size, */
-/* 					       uint32_t level_id, uint32_t height, uint32_t clock) */
-/* { */
-/* 	struct krm_region_desc *r_desc = context->r_desc; */
-/* 	struct krm_server_desc *server = context->server; */
-/* 	assert(r_desc && server); */
-/* 	int ret = 0; */
-/* 	char *primary_buffer = wcursor_get_cursor_buffer(wcursor, height, clock); */
-/* 	uint32_t number_of_columns = wcursor_get_number_of_cols(wcursor); */
-/* 	uint32_t entry_size = wcursor_get_number_of_rows(wcursor); */
+static void send_index_replicate_index_segment(struct send_index_context *context,
+					       struct wcursor_level_write_cursor *wcursor, uint32_t buf_size,
+					       uint32_t level_id, uint32_t height, uint32_t clock)
+{
+	struct krm_region_desc *r_desc = context->r_desc;
+	struct krm_server_desc *server = context->server;
+	assert(r_desc && server);
+	int ret = 0;
+	char *primary_buffer = wcursor_get_cursor_buffer(wcursor, height, clock);
+	uint32_t number_of_columns = wcursor_get_number_of_cols(wcursor);
+	uint32_t entry_size = wcursor_get_compaction_index_entry_size(wcursor);
 
-/* 	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) { */
-/* 		uint32_t row_size_of_backup = entry_size * number_of_columns; */
-/* 		char *backup_buffer = (char *)r_desc->remote_mem_buf[i][level_id].addr + */
-/* 				      ((height * row_size_of_backup) + (clock * entry_size)); */
-/* 		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname); */
-/* 		while (1) { */
-/* 			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, primary_buffer, buf_size, */
-/* 					      r_desc->local_buffer[level_id], IBV_SEND_SIGNALED, */
-/* 					      (uint64_t)backup_buffer, r_desc->remote_mem_buf[i][level_id].rkey); */
-/* 			if (!ret) */
-/* 				break; */
-/* 		} */
-/* 	} */
-/* } */
+	for (uint32_t i = 0; i < r_desc->region->num_of_backup; ++i) {
+		uint32_t row_size_of_backup = entry_size * number_of_columns;
+		char *backup_buffer = (char *)r_desc->remote_mem_buf[i][level_id].addr +
+				      ((height * row_size_of_backup) + (clock * entry_size));
+		//log_debug("Trying to write at remote offt %lu", (uint64_t)backup_buffer);
+		struct connection_rdma *r_conn = sc_get_data_conn(server, r_desc->region->backups[i].kreon_ds_hostname);
+		while (1) {
+			ret = rdma_post_write(r_conn->rdma_cm_id, NULL, primary_buffer, buf_size,
+					      r_desc->local_buffer[level_id], IBV_SEND_SIGNALED,
+					      (uint64_t)backup_buffer, r_desc->remote_mem_buf[i][level_id].rkey);
+			if (!ret)
+				break;
+		}
+	}
+}
 
 static void send_index_send_flush_index_segment(struct send_index_context *context,
 						struct wcursor_level_write_cursor *wcursor, uint32_t level_id,
@@ -342,9 +343,8 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 static void send_index_send_segment(struct send_index_context *context, struct wcursor_level_write_cursor *wcursor,
 				    uint32_t buf_size, uint32_t height, uint32_t level_id, uint32_t clock, bool is_last)
 {
-	(void)buf_size;
 	/* rdma_write index segment to replicas */
-	//send_index_replicate_index_segment(context, wcursor, buf_size, level_id, height, clock);
+	send_index_replicate_index_segment(context, wcursor, buf_size, level_id, height, clock);
 	/* send control msg to flush the index segment to replicas */
 	send_index_send_flush_index_segment(context, wcursor, level_id, clock, height, is_last);
 }

@@ -55,6 +55,8 @@ void send_index_create_compactions_rdma_buffer(struct send_index_create_compacti
 		log_fatal("Failed to reg memory");
 		_exit(EXIT_FAILURE);
 	}
+	//log_debug("Index buffers bounds are [%lu,%lu]", (uint64_t)backup_segment_index,
+	//	  (uint64_t)backup_segment_index + backup_segment_index_size);
 }
 
 void send_index_create_mr_for_segment_replies(struct send_index_create_mr_for_segment_replies_params params)
