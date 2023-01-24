@@ -150,9 +150,13 @@ typedef struct msg_multi_get_rep {
 /*server2server used for replication*/
 /*msg pair for initializing remote log buffers*/
 struct s2s_msg_get_rdma_buffer_req {
-	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	// char region_key[MSG_MAX_REGION_KEY_SIZE];
+	// int buffer_size;
+	// int region_key_size;
 	int buffer_size;
-	int region_key_size;
+	int mregion_buffer_size;
+	int backup_id;
+	char mregion_buffer[];
 };
 
 struct s2s_msg_get_rdma_buffer_rep {
