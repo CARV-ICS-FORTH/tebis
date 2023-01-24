@@ -13,7 +13,8 @@
 #include <rdma/rdma_verbs.h>
 #include <stdint.h>
 #include <stdlib.h>
-const uint32_t S2S_MSG_SIZE = 256;
+
+const uint32_t S2S_MSG_SIZE = S2S_MSG_SIZE_VALUE;
 
 struct sc_conn_per_server {
 	uint64_t hash_key;
@@ -215,7 +216,7 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 extern int krm_zk_get_server_name(char *dataserver_name, struct regs_server_desc const *my_desc,
 				  struct krm_server_name *dst, int *zk_rc);
 
-static struct connection_rdma *sc_get_conn(struct regs_server_desc const *mydesc, char *hostname,
+static struct connection_rdma *sc_get_conn(struct regs_server_desc const *region_server, char *hostname,
 					   struct sc_conn_per_server **sc_root_cps)
 {
 	struct sc_conn_per_server *cps = NULL;
@@ -229,14 +230,15 @@ static struct connection_rdma *sc_get_conn(struct regs_server_desc const *mydesc
 		if (cps == NULL) {
 			/*ok update server info from zookeeper*/
 			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
-			int ret_code =
-				regs_lookup_server_info((struct regs_server_desc *const)mydesc, hostname, &cps->server);
+			int ret_code = regs_lookup_server_info((struct regs_server_desc *const)region_server, hostname,
+							       &cps->server);
 			if (ret_code != ZOK) {
-				log_fatal("Failed to refresh info for server %s", hostname);
+				log_fatal("Failed to refresh info for server %s reason: %s", hostname,
+					  zerror(ret_code));
 				_exit(EXIT_FAILURE);
 			}
 			char *IP = cps->server.RDMA_IP_addr;
-			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(mydesc), &IP, 1,
+			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(region_server), &IP, 1,
 									      MASTER_TO_REPLICA_CONNECTION);
 
 			/*init list here*/
