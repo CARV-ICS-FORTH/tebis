@@ -97,4 +97,8 @@ void region_desc_set_flush_index_segment_msg_pair(region_desc_t region_desc, uin
 
 void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint8_t level_id,
 						   uint8_t clock_dimension);
+mregion_t region_desc_get_mregion(region_desc_t region_desc);
+
+char *region_desc_get_backup_IP(region_desc_t region_desc, int backup_id);
+
 #endif

@@ -148,6 +148,11 @@ char *region_desc_get_backup_hostname(region_desc_t region_desc, int backup_id)
 	return MREG_get_region_backup(region_desc->mregion, backup_id);
 }
 
+char *region_desc_get_backup_IP(region_desc_t region_desc, int backup_id)
+{
+	return MREG_get_region_backup_IP(region_desc->mregion, backup_id);
+}
+
 struct sc_msg_pair *region_desc_get_msg_pair(region_desc_t region_desc, int backup_id, int level_id)
 {
 	return &region_desc->rpc[backup_id][level_id];
@@ -401,4 +406,8 @@ void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, ui
 	}
 	sc_free_rpc_pair(&region_desc->send_index_flush_index_segment_rpc[backup_id][level_id][clock_dimension]);
 	region_desc->send_index_flush_index_segment_rpc_in_use[backup_id][level_id][clock_dimension] = false;
+}
+mregion_t region_desc_get_mregion(region_desc_t region_desc)
+{
+	return region_desc->mregion;
 }

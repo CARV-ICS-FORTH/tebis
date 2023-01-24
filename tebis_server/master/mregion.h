@@ -45,6 +45,9 @@ extern void MREG_set_region_primary_role(mregion_t region, enum server_role role
 */
 extern char *MREG_get_region_backup(mregion_t region, int backup_id);
 extern void MREG_set_region_backup(mregion_t region, int backup_id, char *hostname);
+
+extern char *MREG_get_region_backup_IP(mregion_t region, int backup_id);
+
 /**
  * Returns the number of backups for this region
 */

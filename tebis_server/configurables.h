@@ -37,6 +37,8 @@
 #define KRM_ALIVE_SERVERS_PATH "/alive_region_servers"
 #define KRM_ALIVE_LEADER_PATH "/alive_leader"
 #define KRM_REGIONS_PATH "/regions"
+#define S2S_MSG_SIZE_VALUE 512
+
 //new master staff
 #define KRM_ELECTIONS_PATH "/elections"
 #define KRM_LEADER_CLOCK "/clock"

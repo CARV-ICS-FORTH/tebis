@@ -1,4 +1,5 @@
 #include "mregion.h"
+#include "../configurables.h"
 #include "../metadata.h"
 #include <limits.h>
 #include <log.h>
@@ -15,7 +16,7 @@ struct mregion {
 	char max_key[KRM_MAX_KEY_SIZE];
 	struct replica_member_info primary;
 
-	struct replica_member_info backup[RU_MAX_NUM_REPLICAS];
+	struct replica_member_info backup[KRM_MAX_BACKUPS];
 	uint32_t min_key_size;
 	uint32_t max_key_size;
 	int num_of_backup;
@@ -25,6 +26,9 @@ struct mregion {
 mregion_t MREG_create_region(const char *min_key, const char *max_key, const char *region_id,
 			     enum krm_region_status status)
 {
+	// _Static_assert(sizeof(struct s2s_msg_get_rdma_buffer_req) + sizeof(struct mregion) <= S2S_MSG_SIZE_VALUE,
+	// 	       "MRegion object too large cannot fit in RDMA S2S communication");
+
 	mregion_t region = calloc(1UL, sizeof(*region));
 
 	if (0 == strcmp(region->min_key, "-oo")) {
@@ -150,6 +154,11 @@ void MREG_set_region_primary(mregion_t region, char *hostname)
 char *MREG_get_region_backup(mregion_t region, int backup_id)
 {
 	return backup_id >= region->num_of_backup ? NULL : region->backup[backup_id].hostname;
+}
+
+char *MREG_get_region_backup_IP(mregion_t region, int backup_id)
+{
+	return backup_id >= region->num_of_backup ? NULL : region->backup[backup_id].RDMA_IP_addr;
 }
 
 void MREG_set_region_backup(mregion_t region, int backup_id, char *hostname)
