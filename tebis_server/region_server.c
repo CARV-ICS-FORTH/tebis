@@ -947,8 +947,6 @@ static void *regs_run_region_server(void *args)
 
 	sem_wait(&region_server->wake_up);
 
-	region_server->state = KRM_BOOTING;
-
 	while (1) {
 		struct klist_node *node = NULL;
 
@@ -959,7 +957,6 @@ static void *regs_run_region_server(void *args)
 			sem_wait(&region_server->wake_up);
 			continue;
 		}
-		region_server->state = KRM_PROCESSING_MSG;
 		regs_process_command(region_server, (struct krm_msg *)node->data);
 		free(node->data);
 		free(node);

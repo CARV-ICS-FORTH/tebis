@@ -27,7 +27,6 @@ struct regs_server_desc {
 	uint8_t IP[IP_SIZE];
 	uint8_t RDMA_IP[IP_SIZE];
 	enum krm_server_role role;
-	enum krm_server_state state;
 	uint8_t zconn_state;
 	int RDMA_port;
 	/*entry in the root table of my dad (numa_server)*/
