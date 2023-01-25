@@ -26,8 +26,8 @@ struct mregion {
 mregion_t MREG_create_region(const char *min_key, const char *max_key, const char *region_id,
 			     enum krm_region_status status)
 {
-	// _Static_assert(sizeof(struct s2s_msg_get_rdma_buffer_req) + sizeof(struct mregion) <= S2S_MSG_SIZE_VALUE,
-	// 	       "MRegion object too large cannot fit in RDMA S2S communication");
+	_Static_assert(sizeof(struct s2s_msg_get_rdma_buffer_req) + sizeof(struct mregion) <= S2S_MSG_SIZE_VALUE,
+		       "MRegion object too large cannot fit in RDMA S2S communication");
 
 	mregion_t region = calloc(1UL, sizeof(*region));
 

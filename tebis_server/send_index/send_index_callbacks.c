@@ -322,8 +322,9 @@ static void send_index_replicate_index_segment(struct send_index_context *contex
 		struct ibv_mr remote_mem = region_desc_get_remote_buf(r_desc, backup_id, level_id);
 		char *backup_buffer = (char *)remote_mem.addr + ((height * row_size_of_backup) + (clock * entry_size));
 		//log_debug("Trying to write at remote offt %lu", (uint64_t)backup_buffer);
-		struct connection_rdma *r_conn =
-			sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id));
+		struct connection_rdma *r_conn = sc_get_data_conn(server,
+								  region_desc_get_backup_hostname(r_desc, backup_id),
+								  region_desc_get_backup_IP(r_desc, backup_id));
 		while (1) {
 			struct ibv_mr *local_mem = region_desc_get_primary_local_rdma_buffer(r_desc, level_id);
 
@@ -343,8 +344,9 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 	struct regs_server_desc *server = context->server;
 	assert(r_desc && server);
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
-		struct connection_rdma *r_conn =
-			sc_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id));
+		struct connection_rdma *r_conn = sc_get_data_conn(server,
+								  region_desc_get_backup_hostname(r_desc, backup_id),
+								  region_desc_get_backup_IP(r_desc, backup_id));
 		uint32_t request_size = sizeof(struct s2s_msg_replica_index_flush_req);
 		uint32_t reply_size = sizeof(struct s2s_msg_replica_index_flush_rep);
 
