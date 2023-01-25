@@ -37,17 +37,6 @@ enum server_role {
 enum krm_region_role { KRM_PRIMARY, KRM_BACKUP };
 enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH, KRM_HALTED };
 
-// enum krm_msg_type {
-// 	KRM_OPEN_REGION_AS_PRIMARY = 1,
-// 	KRM_ACK_OPEN_PRIMARY,
-// 	KRM_NACK_OPEN_PRIMARY,
-// 	KRM_OPEN_REGION_AS_BACKUP,
-// 	KRM_ACK_OPEN_BACKUP,
-// 	KRM_NACK_OPEN_BACKUP,
-// 	KRM_CLOSE_REGION,
-// 	KRM_BUILD_PRIMARY
-// };
-
 enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REGION_EXISTS };
 
 enum krm_work_task_status {
@@ -203,67 +192,11 @@ struct krm_segment_entry {
 	UT_hash_handle hh;
 };
 
-enum di_decode_stage {
-	DI_INIT,
-	DI_CHECK_NEXT_ENTRY,
-	DI_PROCEED,
-	DI_LEAF_NODE,
-	DI_INDEX_NODE_FIRST_IN,
-	DI_INDEX_NODE_LAST_IN,
-	DI_INDEX_NODE_LEFT_CHILD,
-	DI_INDEX_NODE_PIVOT,
-	DI_INDEX_NODE_RIGHT_CHILD,
-	DI_CHANGE_SEGMENT,
-	DI_ADVANCE_CURSOR,
-	DI_COMPLETE
-};
-
-struct di_buffer {
-	struct region_desc *r_desc;
-	char *data;
-	uint64_t primary_offt;
-	uint64_t replica_offt;
-	uint32_t size;
-	uint32_t offt;
-	uint32_t curr_entry;
-	int fd;
-	uint8_t level_id;
-	uint8_t allocated;
-	enum di_decode_stage state;
-};
-
 enum krm_replica_buf_status { KRM_BUFS_UNINITIALIZED = 0, KRM_BUFS_INITIALIZING, KRM_BUFS_READY };
 
 struct krm_ds_regions {
 	struct region_desc *r_desc[KRM_MAX_DS_REGIONS];
 	int num_ds_regions;
-};
-
-struct krm_leader_regions {
-	struct krm_region regions[KRM_MAX_REGIONS];
-	int num_regions;
-};
-
-struct krm_leader_region_state {
-	pthread_mutex_t region_list_lock;
-	struct krm_server_name server_id;
-	struct krm_region *region;
-	enum krm_region_role role;
-	enum krm_region_status status;
-};
-
-struct krm_leader_ds_region_map {
-	uint64_t hash_key;
-	struct krm_leader_region_state lr_state;
-	UT_hash_handle hh;
-};
-
-struct krm_leader_ds_map {
-	uint64_t hash_key;
-	struct krm_server_name server_id;
-	struct krm_leader_ds_region_map *region_map;
-	uint32_t num_regions;
-	UT_hash_handle hh;
 };
 
 struct krm_msg {
@@ -278,37 +211,6 @@ struct krm_msg {
 int krm_get_server_info(struct regs_server_desc *server_desc, char *hostname, struct krm_server_name *server);
 
 struct channel_rdma *ds_get_channel(struct regs_server_desc const *my_desc);
-
-/*remote compaction related staff*/
-struct rco_task_queue {
-	pthread_t cnxt;
-	pthread_mutex_t queue_lock;
-	pthread_cond_t queue_monitor;
-	int my_id;
-	int sleeping;
-	struct tebis_klist *task_queue;
-};
-
-struct rco_pool {
-	pthread_mutex_t pool_lock;
-	struct regs_server_desc *rco_server;
-	int curr_worker_id;
-	int num_workers;
-	struct rco_task_queue worker_queue[];
-};
-#define RCO_POOL_SIZE 1
-struct rco_pool *rco_init_pool(struct regs_server_desc *server, int pool_size);
-void rco_add_db_to_pool(struct rco_pool *pool, struct region_desc *r_desc);
-//int rco_send_index_to_group(struct bt_compaction_callback_args *c);
-int rco_flush_last_log_segment(void *handle);
-void di_set_cursor_buf(char *buf);
-
-int rco_init_index_transfer(uint64_t db_id, uint8_t level_id);
-int rco_destroy_local_rdma_buffer(uint64_t db_id, uint8_t level_id);
-//int rco_send_index_segment_to_replicas(uint64_t db_id, uint64_t dev_offt, struct segment_header *seg, uint32_t size,
-//				       uint8_t level_id, struct node_header *root);
-//void di_rewrite_index_with_explicit_IO(struct segment_header *memory_segment, struct krm_region_desc *r_desc,
-//				       uint64_t primary_seg_offt, uint8_t level_id);
 
 /*server to server communication staff*/
 struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
