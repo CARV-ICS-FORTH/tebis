@@ -34,8 +34,6 @@ enum server_role {
 	ROLE_NUM
 };
 
-enum krm_server_role { KRM_LEADER, KRM_DATASERVER };
-
 enum krm_region_role { KRM_PRIMARY, KRM_BACKUP };
 enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH, KRM_HALTED };
 
