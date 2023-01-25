@@ -16,12 +16,6 @@
 
 const uint32_t S2S_MSG_SIZE = S2S_MSG_SIZE_VALUE;
 
-struct sc_conn_per_server {
-	uint64_t server_key;
-	struct connection_rdma *conn;
-	UT_hash_handle hh;
-};
-
 struct fill_request_msg_info {
 	struct msg_header *request;
 	uint32_t request_size;
@@ -29,9 +23,7 @@ struct fill_request_msg_info {
 	uint32_t req_type;
 	struct msg_header *reply;
 };
-struct sc_conn_per_server *sc_root_data_cps = NULL;
-struct sc_conn_per_server *sc_root_compaction_cps = NULL;
-static pthread_mutex_t conn_map_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void fill_request_msg(connection_rdma *conn, struct fill_request_msg_info msg_info)
 {
 	msg_info.request->payload_length = 0;
@@ -210,38 +202,4 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
 	pthread_mutex_unlock(&p->conn->allocation_lock);
 	pthread_mutex_unlock(&p->conn->buffer_lock);
-}
-
-static struct connection_rdma *sc_get_conn(struct regs_server_desc const *region_server, char *hostname,
-					   char *IP_address, struct sc_conn_per_server **sc_root_cps)
-{
-	struct sc_conn_per_server *connection = NULL;
-
-	uint64_t server_key = djb2_hash((unsigned char *)hostname, strlen(hostname));
-	HASH_FIND_PTR(*sc_root_cps, &server_key, connection);
-	if (connection)
-		return connection->conn;
-
-	pthread_mutex_lock(&conn_map_lock);
-	log_debug("Creating connection for hostname: %s with IP address: %s", hostname, IP_address);
-	connection = (struct sc_conn_per_server *)calloc(1UL, sizeof(struct sc_conn_per_server));
-	connection->conn = crdma_client_create_connection_list_hosts(ds_get_channel(region_server), &IP_address, 1,
-								     MASTER_TO_REPLICA_CONNECTION);
-
-	/*init list here*/
-	connection->server_key = server_key;
-	HASH_ADD_PTR(*sc_root_cps, server_key, connection);
-	pthread_mutex_unlock(&conn_map_lock);
-
-	return connection->conn;
-}
-
-struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname, char *IP_address)
-{
-	return sc_get_conn(region_server, hostname, IP_address, &sc_root_data_cps);
-}
-
-struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname, char *IP_address)
-{
-	return sc_get_conn(region_server, hostname, IP_address, &sc_root_compaction_cps);
 }

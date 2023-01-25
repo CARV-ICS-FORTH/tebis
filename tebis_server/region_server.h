@@ -14,6 +14,13 @@
 #ifndef REGION_SERVER_H
 #define REGION_SERVER_H
 #include "metadata.h"
+#include "work_task.h"
+
+struct regs_conn_per_server {
+	uint64_t server_key;
+	struct connection_rdma *conn;
+	UT_hash_handle hh;
+};
 
 struct regs_server_desc {
 	struct krm_server_name name;
@@ -30,6 +37,9 @@ struct regs_server_desc {
 	int RDMA_port;
 	/*entry in the root table of my dad (numa_server)*/
 	int root_server_id;
+	struct regs_conn_per_server *root_data_conn_map;
+	struct sc_conn_per_server *root_compaction_conn_map;
+	pthread_mutex_t conn_map_lock;
 	// /*filled only by the leader server*/
 	// struct krm_leader_regions *ld_regions;
 	// struct krm_leader_ds_map *dataservers_map;
@@ -85,25 +95,27 @@ char *regs_get_server_name(struct regs_server_desc *region_server);
 int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *server_hostname,
 			    struct krm_server_name *server_info);
 
-void regs_execute_put_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
-void regs_execute_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
-void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
-void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
-void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
-void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+void regs_execute_put_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_get_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
 void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *region_server_desc,
-					       struct krm_work_task *task);
-void regs_execute_no_op(struct regs_server_desc const *mydesc, struct krm_work_task *task);
-void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+					       struct work_task *task);
+void regs_execute_no_op(struct regs_server_desc const *mydesc, struct work_task *task);
+void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
 
-void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_server_desc,
-					  struct krm_work_task *task);
-void regs_execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct krm_work_task *task);
-void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc, struct krm_work_task *task);
+void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct work_task *task);
+void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc, struct work_task *task);
 
 void regs_execute_send_index_close_compaction(struct regs_server_desc const *region_server_desc,
-					      struct krm_work_task *task);
+					      struct work_task *task);
 
-void regs_execute_replica_index_swap_levels(struct regs_server_desc const *region_server_desc,
-					    struct krm_work_task *task);
+void regs_execute_replica_index_swap_levels(struct regs_server_desc const *region_server_desc, struct work_task *task);
+struct connection_rdma *regs_get_data_conn(struct regs_server_desc const *region_server, char *hostname,
+					   char *IP_address);
+struct connection_rdma *regs_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
+						 char *IP_address);
 #endif

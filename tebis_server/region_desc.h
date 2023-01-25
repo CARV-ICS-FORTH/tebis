@@ -15,6 +15,7 @@
 #define REGION_DESC_H
 #include "master/mregion.h"
 #include "metadata.h"
+#include "work_task.h"
 #include <include/parallax/parallax.h>
 #include <stdint.h>
 typedef struct region_desc *region_desc_t;
@@ -52,7 +53,7 @@ void region_desc_set_remote_buf(region_desc_t region_desc, int backup_id, struct
 struct ibv_mr *region_desc_get_primary_local_rdma_buffer(region_desc_t region_desc, uint8_t level_id);
 void region_desc_set_primary_local_rdma_buffer(region_desc_t region_desc, uint8_t level_id,
 					       struct ibv_mr *local_buffer);
-int region_desc_enter_parallax(region_desc_t region_desc, struct krm_work_task *task);
+int region_desc_enter_parallax(region_desc_t region_desc, struct work_task *task);
 void region_desc_leave_parallax(region_desc_t region_desc);
 
 enum ru_remote_buffer_status region_desc_get_primary2backup_buffer_stat(region_desc_t region_desc, int backup_id);

@@ -6,6 +6,7 @@
 #include "configurables.h"
 #include "messages.h"
 #include "send_index/send_index_callbacks.h"
+#include "server_communication.h"
 #include "uthash.h"
 #include <btree/conf.h>
 #include <include/parallax/parallax.h>
@@ -39,71 +40,9 @@ enum krm_region_status { KRM_OPEN, KRM_OPENING, KRM_FRESH, KRM_HALTED };
 
 enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REGION_EXISTS };
 
-enum krm_work_task_status {
-	/*overall_status*/
-	TASK_START = 1,
-	TASK_COMPLETE,
-	/*mutation operations related*/
-	GET_RSTATE,
-	INIT_LOG_BUFFERS,
-	INS_TO_KREON,
-	REPLICATE,
-	WAIT_FOR_REPLICATION_TURN,
-	WAIT_FOR_REPLICATION_COMPLETION,
-	ALL_REPLICAS_ACKED,
-	SEND_FLUSH_COMMANDS,
-	WAIT_FOR_FLUSH_REPLIES,
-	TASK_GET_KEY,
-	TASK_MULTIGET,
-	TASK_DELETE_KEY,
-	TASK_NO_OP,
-	TASK_FLUSH_L0,
-	TASK_CLOSE_COMPACTION,
-};
-
 enum tb_kv_category { TEBIS_SMALLORMEDIUM = 0, TEBIS_BIG };
 
 enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
-/*server to server communication related staff*/
-struct sc_msg_pair {
-#define IP_SIZE 4
-	/*out variables*/
-	struct msg_header *request;
-	struct msg_header *reply;
-	struct connection_rdma *conn;
-	enum circular_buffer_op_status stat;
-};
-
-enum krm_work_task_type { KRM_CLIENT_TASK, KRM_SERVER_TASK };
-
-struct krm_work_task {
-	/*from client*/
-	struct rdma_message_context msg_ctx[RU_MAX_NUM_REPLICAS];
-	volatile uint64_t *replicated_bytes;
-	struct par_put_metadata insert_metadata;
-	uint32_t last_replica_to_ack;
-	uint64_t msg_payload_size;
-	/*possible messages to other server generated from this task*/
-	struct sc_msg_pair communication_buf;
-	struct channel_rdma *channel;
-	struct connection_rdma *conn;
-	msg_header *msg;
-	struct region_desc *r_desc;
-	struct kv_splice *kv;
-	enum tb_kv_category kv_category; /*XXX TODO make these a struct XXX*/
-	uint32_t triggering_msg_offset;
-	msg_header *reply_msg;
-	msg_header *flush_segment_request;
-	struct krm_replica_index_state *index;
-	int server_id;
-	int thread_id;
-	int error_code;
-	//int suspended;
-	int seg_id_to_flush;
-	uint64_t rescheduling_counter;
-	enum krm_work_task_type task_type;
-	enum krm_work_task_status kreon_operation_status;
-};
 
 enum ru_remote_buffer_status {
 	RU_BUFFER_UNINITIALIZED,
@@ -212,13 +151,13 @@ int krm_get_server_info(struct regs_server_desc *server_desc, char *hostname, st
 
 struct channel_rdma *ds_get_channel(struct regs_server_desc const *my_desc);
 
-/*server to server communication staff*/
-struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
-					enum message_type type);
-struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname,
-					 char *IP_address);
-struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
-					       char *IP_address);
-void sc_free_rpc_pair(struct sc_msg_pair *p);
+// /*server to server communication staff*/
+// struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
+// 					enum message_type type);
+// struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname,
+// 					 char *IP_address);
+// struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
+// 					       char *IP_address);
+// void sc_free_rpc_pair(struct sc_msg_pair *p);
 void *run_master(void *args);
 #endif /* METADATA_H */

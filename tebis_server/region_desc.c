@@ -15,6 +15,7 @@
 #include "allocator/volume_manager.h"
 #include "master/mregion.h"
 #include "metadata.h"
+#include "server_communication.h"
 #include <log.h>
 #include <rdma/rdma_verbs.h>
 struct region_desc {
@@ -226,7 +227,7 @@ struct ibv_mr *region_desc_get_primary_local_rdma_buffer(region_desc_t region_de
 	return region_desc->local_buffer[level_id];
 }
 
-int region_desc_enter_parallax(region_desc_t region_desc, struct krm_work_task *task)
+int region_desc_enter_parallax(region_desc_t region_desc, struct work_task *task)
 {
 	if (region_desc == NULL) {
 		log_fatal("NULL region?");

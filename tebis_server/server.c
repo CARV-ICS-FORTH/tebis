@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include "allocator/log_structures.h"
 #include "btree/conf.h"
@@ -25,13 +24,9 @@
 #include "region_server.h"
 #include "send_index/send_index_rewriter.h"
 #include "send_index/send_index_uuid_checker/send_index_uuid_checker.h"
-#include <include/parallax/parallax.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#endif
+#include "work_task.h"
 #include <alloca.h>
+#include <include/parallax/parallax.h>
 #include <infiniband/verbs.h>
 #include <limits.h>
 #include <pthread.h>
@@ -39,10 +34,14 @@
 #include <rdma/rdma_verbs.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "../tebis_rdma/rdma.h"
 #include "../tebis_rdma_client/msg_factory.h"
@@ -99,7 +98,7 @@ struct ds_spinning_thread {
 	struct ds_task_buffer_pool resume_task_pool;
 	pthread_mutex_t conn_list_lock;
 	SIMPLE_CONCURRENT_LIST *conn_list;
-	struct krm_work_task *server_tasks;
+	struct work_task *server_tasks;
 	uint64_t num_of_outstanding_client_req;
 	int num_workers;
 	int next_worker_to_submit_job;
@@ -138,8 +137,8 @@ struct ds_root_server {
 /*root of everything*/
 static struct ds_root_server *root_server = NULL;
 
-static void handle_task(struct regs_server_desc const *mydesc, struct krm_work_task *task);
-static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task);
+static void handle_task(struct regs_server_desc const *mydesc, struct work_task *task);
+static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct work_task *task);
 
 static void crdma_server_create_connection_inuse(struct connection_rdma *conn, struct channel_rdma *channel,
 						 connection_type type)
@@ -384,7 +383,7 @@ uint32_t no_ops_acks_send = 0;
 
 void *worker_thread_kernel(void *args)
 {
-	struct krm_work_task *job = NULL;
+	struct work_task *job = NULL;
 	struct ds_worker_thread *worker;
 	const size_t spin_time_usec = globals_get_worker_spin_time_usec();
 
@@ -467,7 +466,7 @@ static inline int worker_queued_jobs(struct ds_worker_thread *worker)
 	return utils_queue_used_slots(&worker->work_queue);
 }
 
-static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct krm_work_task *task)
+static void ds_put_resume_task(struct ds_spinning_thread *spinner, struct work_task *task)
 {
 	pthread_mutex_lock(&(spinner->resume_task_pool.tbp_lock));
 	if (utils_queue_push(&(spinner->resume_task_pool.task_buffers), task) == NULL) {
@@ -504,9 +503,9 @@ static int ds_is_server2server_job(struct msg_header *msg)
  *  TODO refactor task mechanism. Now when task is NULL means that we have to insert the task in a workers queue
  *  while when task is not NULL we have to resume a task */
 static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct connection_rdma *conn, msg_header *msg,
-				struct krm_work_task *task)
+				struct work_task *task)
 {
-	struct krm_work_task *job = NULL;
+	struct work_task *job = NULL;
 	int is_server_message = ds_is_server2server_job(msg);
 	uint8_t is_task_resumed = 0;
 
@@ -516,7 +515,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 		is_task_resumed = 0;
 		if (is_server_message) {
 			/*TODO XXX check this again*/
-			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			job = (struct work_task *)calloc(1, sizeof(struct work_task));
 			job->task_type = KRM_SERVER_TASK;
 		} else {
 			if (spinner->num_of_outstanding_client_req > MAX_OUTSTANDING_REQUESTS) {
@@ -524,7 +523,7 @@ static int assign_job_to_worker(struct ds_spinning_thread *spinner, struct conne
 				return TEBIS_FAILURE;
 			}
 			__sync_fetch_and_add(&spinner->num_of_outstanding_client_req, 1);
-			job = (struct krm_work_task *)calloc(1, sizeof(struct krm_work_task));
+			job = (struct work_task *)calloc(1, sizeof(struct work_task));
 			job->task_type = KRM_CLIENT_TASK;
 		}
 	} else { /*we have to resume a task*/
@@ -633,7 +632,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 	uint32_t b_detection = 0;
 	pthread_mutex_lock(&spinner->resume_task_pool.tbp_lock);
 
-	struct krm_work_task *task = utils_queue_pop(&spinner->resume_task_pool.task_buffers);
+	struct work_task *task = utils_queue_pop(&spinner->resume_task_pool.task_buffers);
 	while (task) {
 		// log_info("Rescheduling task");
 
@@ -900,7 +899,7 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_in
  * For each message type Tebis process it via a specific data path.
  * We treat all tasks related to network  as paths that may fail, and we can resume later.
  */
-static void handle_task(struct regs_server_desc const *mydesc, struct krm_work_task *task)
+static void handle_task(struct regs_server_desc const *mydesc, struct work_task *task)
 {
 	enum message_type type;
 	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)
