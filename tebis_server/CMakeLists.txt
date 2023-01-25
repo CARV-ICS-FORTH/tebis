@@ -20,7 +20,6 @@ add_executable(
   tebis_server
   server.c
   region_desc.c
-  metadata_server.c
   build_index/build_index.c
   send_index/send_index.c
   send_index/send_index_callbacks.c
@@ -35,7 +34,6 @@ add_executable(
   master/mregion_server.c
   master/command.c
   region_server.c
-  remote_compaction.c
   deserialize_index.c
   zk_utils.c
   djb2.c
