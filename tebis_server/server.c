@@ -1717,8 +1717,17 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 	}
 
 	uint32_t dst_level_id = req->level_id + 1;
+	struct send_index_flush_index_segment_params flush_index_segment = {
+		.level_id = req->level_id,
+		.height = req->height,
+		.clock = req->clock,
+		.size_of_entry = req->entry_size,
+		.number_of_columns = req->number_of_columns,
+		.is_last_segment = req->is_last_segment,
+		.r_desc = r_desc
 
-	//wcursor_write_index_segment(r_desc->r_state->write_cursor_segments[dst_level_id], height);
+	};
+	send_index_flush_index_segment(flush_index_segment);
 
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;

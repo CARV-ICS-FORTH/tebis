@@ -10,6 +10,7 @@
 #include <infiniband/verbs.h>
 #include <inttypes.h>
 #include <semaphore.h>
+#include <stdbool.h>
 #include <time.h>
 
 #define MSG_MAX_REGION_KEY_SIZE 64
@@ -198,9 +199,12 @@ struct s2s_msg_replica_index_get_buffer_rep {
 struct s2s_msg_replica_index_flush_req {
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
+	uint32_t number_of_columns;
+	uint32_t entry_size;
 	uint32_t height;
-	uint32_t level_id;
 	uint32_t clock;
+	uint32_t level_id;
+	bool is_last_segment;
 	volatile char *reply_offt;
 	uint32_t reply_size;
 	struct ibv_mr mr_of_primary;

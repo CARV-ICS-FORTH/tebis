@@ -28,6 +28,21 @@ uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_c
 	return replica_new_segment_offt;
 }
 
+void send_index_flush_index_segment(struct send_index_flush_index_segment_params params)
+{
+	uint32_t dst_level_id = params.level_id + 1;
+	char *starting_offt_segment_to_flush = params.r_desc->r_state->index_buffer[dst_level_id]->addr;
+	uint32_t backup_index_buffer_row_size = params.size_of_entry * params.number_of_columns;
+	char *segment_to_flush = starting_offt_segment_to_flush + ((params.height * backup_index_buffer_row_size) +
+								   (params.clock * params.size_of_entry));
+	struct wappender_append_index_segment_params append_index_params = { .height = params.height,
+									     .buffer = segment_to_flush,
+									     .buffer_size = params.size_of_entry,
+									     .is_last_segment =
+										     params.is_last_segment };
+	wappender_append_index_segment(params.r_desc->r_state->wappender[dst_level_id], append_index_params);
+}
+
 void send_index_create_compactions_rdma_buffer(struct send_index_create_compactions_rdma_buffer_params params)
 {
 	uint32_t dst_level_id = params.level_id + 1;

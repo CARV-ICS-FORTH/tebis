@@ -61,14 +61,18 @@ static void send_index_fill_swap_levels_request(msg_header *request_header, stru
 
 static void send_index_fill_flush_index_segment(msg_header *request_header, struct krm_region_desc *r_desc,
 						struct wcursor_level_write_cursor *wcursor, uint32_t height,
-						uint32_t level_id, uint32_t clock, uint32_t replica_id)
+						uint32_t level_id, uint32_t clock, uint32_t replica_id,
+						bool is_last_segment)
 {
 	struct s2s_msg_replica_index_flush_req *f_req =
 		(struct s2s_msg_replica_index_flush_req *)((char *)request_header + sizeof(struct msg_header));
+	f_req->entry_size = wcursor_get_compaction_index_entry_size(wcursor);
+	f_req->number_of_columns = wcursor_get_number_of_cols(wcursor);
 	f_req->height = height;
 	f_req->level_id = level_id;
 	f_req->clock = clock;
 	f_req->region_key_size = r_desc->region->min_key_size;
+	f_req->is_last_segment = is_last_segment;
 	strcpy(f_req->region_key, r_desc->region->min_key);
 	/*related for the reply part*/
 	f_req->mr_of_primary = *r_desc->local_buffer[level_id];
@@ -323,7 +327,8 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] = true;
 
 		struct sc_msg_pair *msg_pair = &r_desc->send_index_flush_index_segment_rpc[i][level_id][clock];
-		send_index_fill_flush_index_segment(msg_pair->request, r_desc, wcursor, height, level_id, clock, i);
+		send_index_fill_flush_index_segment(msg_pair->request, r_desc, wcursor, height, level_id, clock, i,
+						    is_last);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = (uint64_t)r_desc->region;
 
