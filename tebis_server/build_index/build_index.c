@@ -42,6 +42,7 @@ void build_index_procedure(struct region_desc *r_desc, enum log_category log_typ
 {
 	struct build_index_task build_index_task;
 	struct ru_replica_state *replica_state = region_desc_get_replica_state(r_desc);
+	assert(replica_state);
 	build_index_task.rdma_buffer = replica_state->l0_recovery_rdma_buf.mr->addr;
 	if (log_type == BIG)
 		build_index_task.rdma_buffer = replica_state->big_recovery_rdma_buf.mr->addr;

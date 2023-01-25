@@ -55,7 +55,8 @@ static void *regs_run_region_server(void *args);
 
 struct regs_server_desc *regs_create_server(void)
 {
-	return calloc(1UL, sizeof(struct regs_server_desc));
+	struct regs_server_desc *region_server_desc = calloc(1UL, sizeof(struct regs_server_desc));
+	return region_server_desc;
 }
 
 void regs_destroy_server(struct regs_server_desc *region_server)
@@ -443,36 +444,12 @@ static int regs_get_region_pos(struct krm_ds_regions const *ds_regions, char *ke
 	return ret_code < 0 ? --middle : middle;
 }
 
-#if 0
-/**
-  * Inserts a region in the region table. If the region is already present it reports an error.
-  * @param server_desc the Region Server descriptor
-  * @param r_desc the descriptor of the new region
-  * @
-  */
-static int krm_insert_ds_region(struct krm_ds_regions *region_table, struct krm_region_desc *region_desc)
-{
-	/*XXX TODO XXX needs a lock, remove lamprot counter*/
-	bool found = false;
-	int pos = get_region_pos(region_table, region_desc->region->min_key, region_desc->region->min_key_size, &found);
-
-	if (found) {
-		log_fatal("Region with min key %.*s already present", region_desc->region->min_key_size,
-			  region_desc->region->min_key);
-		_exit(EXIT_FAILURE);
-	}
-
-	memmove(&region_table->r_desc[pos + 2], &region_table->r_desc[pos + 1],
-		(region_table->num_ds_regions - (pos + 1)) * sizeof(struct krm_region_desc *));
-	region_table->r_desc[pos + 1] = region_desc;
-	++region_table->num_ds_regions;
-	return KRM_SUCCESS;
-	/**XXX NEEDS UNLOCK remove lamport counters***/
-}
-#endif
-
 static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_desc_t region_desc)
 {
+	if (region_table->num_ds_regions >= KRM_MAX_DS_REGIONS) {
+		log_fatal("Cannot insert another regions array is full can host up to %u regions", KRM_MAX_DS_REGIONS);
+		_exit(EXIT_FAILURE);
+	}
 	bool found = false;
 	int pos = regs_get_region_pos(region_table, region_desc_get_min_key(region_desc),
 				      region_desc_get_min_key_size(region_desc), &found);
@@ -496,12 +473,12 @@ static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_
 region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server, char *key, uint32_t key_size)
 {
 	bool found = false;
-	int pos = regs_get_region_pos(region_server->ds_regions, key, key_size, &found);
+	int pos = regs_get_region_pos(&region_server->ds_regions, key, key_size, &found);
 	if (-1 == pos) {
 		log_warn("Querying an empty region table returning NULL");
 		return NULL;
 	}
-	return region_server->ds_regions->r_desc[pos];
+	return region_server->ds_regions.r_desc[pos];
 }
 
 region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t mregion, enum server_role server_role)
@@ -523,7 +500,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 		_exit(EXIT_FAILURE);
 	}
 
-	regs_insert_region_desc(region_server->ds_regions, region_desc);
+	regs_insert_region_desc(&region_server->ds_regions, region_desc);
 	region_desc_increase_lsn(region_desc);
 	return region_desc;
 }
@@ -923,8 +900,6 @@ static void regs_init_server_state(struct regs_server_desc *server)
 
 	sem_init(&server->wake_up, 0, 0);
 	server->msg_list = tebis_klist_init();
-	/*init ds_regions table*/
-	server->ds_regions = (struct krm_ds_regions *)calloc(1, sizeof(struct krm_ds_regions));
 }
 
 static bool regs_am_I_part_of_the_cluster(struct regs_server_desc *region_server_desc)
@@ -1165,7 +1140,7 @@ static void regs_wait_for_replication_turn(struct krm_work_task *task)
 {
 	assert(task);
 	int64_t lsn = get_lsn_id(put_msg_get_lsn_offset(task->msg));
-	log_debug("LSN got %ld next: %ld", lsn, region_desc_get_next_lsn(task->r_desc));
+	// log_debug("LSN got %ld next: %ld", lsn, region_desc_get_next_lsn(task->r_desc));
 	if (lsn != region_desc_get_next_lsn(task->r_desc))
 		return; /*its not my turn yet*/
 
@@ -1369,7 +1344,7 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 	if (!region_desc_enter_parallax(task->r_desc, task))
 		return;
 	regs_insert_kv_pair(region_server_desc, task);
-	log_debug("task status is %d", task->kreon_operation_status);
+	// log_debug("task status is %d", task->kreon_operation_status);
 	if (task->kreon_operation_status != TASK_COMPLETE)
 		return;
 
@@ -1510,13 +1485,14 @@ void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, 
 
 void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct krm_work_task *task)
 {
-	(void)region_server_desc;
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
 	// log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct region_desc *r_desc =
 		regs_get_region_desc(region_server_desc, flush_req->region_key, flush_req->region_key_size);
+	log_debug("Flushing region: %s with min key %s r_desc is %lu", region_desc_get_id((r_desc)),
+		  region_desc_get_min_key(r_desc), (unsigned long)r_desc);
 	if (region_desc_get_replica_state(r_desc) == NULL) {
 		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
@@ -1565,15 +1541,16 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 		_exit(EXIT_FAILURE);
 	}
 
-	region_desc = region_desc_create(mregion, MREG_get_region_backup_role(mregion, get_log_buffer->backup_id));
-	log_debug("I am a backup for region %s", region_desc_get_id(region_desc));
-
-	regs_open_region((struct regs_server_desc *)region_server_desc, mregion,
-			 MREG_get_region_backup_role(mregion, get_log_buffer->backup_id));
-
-	region_desc_lock_region_mngmt(region_desc);
+	region_desc = regs_open_region((struct regs_server_desc *)region_server_desc, mregion,
+				       MREG_get_region_backup_role(mregion, get_log_buffer->backup_id));
+	log_debug("I am a backup for region %s region_desc is %lu", region_desc_get_id(region_desc),
+		  (unsigned long)region_desc);
 
 	region_desc_init_replica_state(region_desc, get_log_buffer->buffer_size, task->conn->rdma_cm_id);
+	struct ru_replica_state *state = region_desc_get_replica_state(region_desc);
+	log_debug("Mr got is %p", state->l0_recovery_rdma_buf.mr->addr);
+
+	region_desc_lock_region_mngmt(region_desc);
 
 	region_desc_unlock_region_mngmt(region_desc);
 	task->reply_msg = (void *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +

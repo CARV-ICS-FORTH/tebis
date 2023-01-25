@@ -35,7 +35,7 @@ struct regs_server_desc {
 	// /*filled only by the leader server*/
 	// struct krm_leader_regions *ld_regions;
 	// struct krm_leader_ds_map *dataservers_map;
-	struct krm_ds_regions *ds_regions;
+	struct krm_ds_regions ds_regions;
 };
 
 /**

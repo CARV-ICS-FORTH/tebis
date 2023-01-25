@@ -52,6 +52,26 @@ struct region_desc {
 	enum krm_region_status status;
 };
 
+static const char *region_desc_role_to_string(region_desc_t region_desc)
+{
+	static const char *region_desc_roles[ROLE_NUM] = { "FAULTY_ROLE",    "PRIMARY",	      "PRIMARY_NEWBIE",
+							   "PRIMARY_INFANT", "PRIMARY_DEAD",  "BACKUP",
+							   "BACKUP_NEWBIE",  "BACKUP_INFANT", "BACKUP_DEAD" };
+	return region_desc_roles[region_desc->role];
+}
+
+static bool region_desc_is_primary(region_desc_t region_desc)
+{
+	if (region_desc->role == PRIMARY_INFANT || region_desc->role == PRIMARY_DEAD ||
+	    region_desc->role == PRIMARY_NEWBIE || region_desc->role == PRIMARY)
+		return true;
+	if (region_desc->role == BACKUP_INFANT || region_desc->role == BACKUP_DEAD ||
+	    region_desc->role == BACKUP_NEWBIE || region_desc->role == BACKUP)
+		return false;
+	log_fatal("Corrupted role in region");
+	_exit(EXIT_FAILURE);
+}
+
 par_handle *region_desc_get_db(region_desc_t region_desc)
 {
 	return region_desc->db;
@@ -114,11 +134,22 @@ static struct ru_replica_rdma_buffer region_desc_initialize_rdma_buffer(uint32_t
 	/*initialize the replicas rdma buffer*/
 	struct ru_replica_rdma_buffer rdma_buf = { .rdma_buf_size = size,
 						   .mr = rdma_reg_write(rdma_cm_id, addr, size) };
+	if (NULL == rdma_buf.mr) {
+		log_fatal("Failed to register memory");
+		perror("Reason");
+		_exit(EXIT_FAILURE);
+	}
+
 	return rdma_buf;
 }
 
 void region_desc_init_replica_state(region_desc_t region_desc, size_t size, struct rdma_cm_id *rdma_cm_id)
 {
+	if (region_desc_is_primary(region_desc)) {
+		log_fatal("Region's role is %s not a backup!", region_desc_role_to_string(region_desc));
+		_exit(EXIT_FAILURE);
+	}
+
 	region_desc->r_state = calloc(1UL, sizeof(struct ru_replica_state));
 	/*initalize l0_recovery_buffer*/
 	region_desc->r_state->l0_recovery_rdma_buf = region_desc_initialize_rdma_buffer(size, rdma_cm_id);
@@ -128,6 +159,10 @@ void region_desc_init_replica_state(region_desc_t region_desc, size_t size, stru
 
 struct ru_replica_state *region_desc_get_replica_state(region_desc_t region_desc)
 {
+	if (region_desc_is_primary(region_desc)) {
+		log_fatal("Region's role is %s not a backup!", region_desc_role_to_string(region_desc));
+		_exit(EXIT_FAILURE);
+	}
 	return region_desc->r_state;
 }
 
@@ -284,9 +319,8 @@ struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region
 
 struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t region_desc)
 {
-	if (region_desc->role != PRIMARY_INFANT && region_desc->role != PRIMARY_DEAD &&
-	    region_desc->role != PRIMARY_NEWBIE && region_desc->role != PRIMARY) {
-		log_fatal("This is a replica region not a primary!");
+	if (!region_desc_is_primary(region_desc)) {
+		log_fatal("Region must have primary role not a backup!");
 		_exit(EXIT_FAILURE);
 	}
 	return &region_desc->m_state->l0_recovery_rdma_buf;
@@ -294,9 +328,8 @@ struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t re
 
 struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t region_desc)
 {
-	if (region_desc->role != PRIMARY_INFANT && region_desc->role != PRIMARY_DEAD &&
-	    region_desc->role != PRIMARY_NEWBIE && region_desc->role != PRIMARY) {
-		log_fatal("This is a replica region not a primary!");
+	if (!region_desc_is_primary(region_desc)) {
+		log_fatal("Region must have a primary role not a backup!");
 		_exit(EXIT_FAILURE);
 	}
 	return &region_desc->m_state->big_recovery_rdma_buf;
@@ -304,8 +337,7 @@ struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t r
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t region_desc)
 {
-	if (region_desc->role != BACKUP_INFANT && region_desc->role != BACKUP_DEAD &&
-	    region_desc->role != BACKUP_NEWBIE && region_desc->role != BACKUP) {
+	if (region_desc_is_primary(region_desc)) {
 		log_fatal("This is a primary region not a backup!");
 		_exit(EXIT_FAILURE);
 	}
@@ -314,8 +346,7 @@ struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t r
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc)
 {
-	if (region_desc->role != BACKUP_INFANT && region_desc->role != BACKUP_DEAD &&
-	    region_desc->role != BACKUP_NEWBIE && region_desc->role != BACKUP) {
+	if (region_desc_is_primary(region_desc)) {
 		log_fatal("This is a primary region not a backup!");
 		_exit(EXIT_FAILURE);
 	}
