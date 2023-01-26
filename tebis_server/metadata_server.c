@@ -38,10 +38,12 @@ par_handle open_db(const char *path, const char *db_name, enum krm_msg_type msg_
 		// open DB as backup
 		db_options.options[PRIMARY_MODE].value = 0;
 		db_options.options[REPLICA_MODE].value = 1;
+	}
+	if (globals_get_send_index()) {
 		db_options.options[NUMBER_OF_REPLICAS].value = num_of_backups;
 		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
+		db_options.options[WCURSOR_SPIN_FOR_FLUSH_REPLIES].value = 1;
 	}
-
 	const char *error_message = NULL;
 	par_handle handle = par_open(&db_options, &error_message);
 	if (error_message) {
