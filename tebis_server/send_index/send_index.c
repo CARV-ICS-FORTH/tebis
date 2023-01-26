@@ -1,15 +1,34 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "send_index.h"
+#include "../metadata.h"
 #include "../region_desc.h"
-#include "btree/btree.h"
+#include "../tebis_rdma/rdma.h"
 #include "btree/conf.h"
-#include "btree/index_node.h"
 #include "btree/level_write_appender.h"
-#include "btree/level_write_cursor.h"
 #include "send_index_callbacks.h"
 #include "send_index_rewriter.h"
+#include <assert.h>
+#include <infiniband/verbs.h>
 #include <log.h>
+#include <parallax/parallax.h>
+#include <parallax/structures.h>
 #include <rdma/rdma_verbs.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
+// IWYU pragma: no_forward_declare region_desc
 
 uint64_t send_index_flush_rdma_buffer(struct region_desc *r_desc, enum log_category log_type)
 {

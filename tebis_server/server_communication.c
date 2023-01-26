@@ -1,18 +1,28 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#include "server_communication.h"
+#include "../tebis_rdma/rdma.h"
 #include "../utilities/circular_buffer.h"
 #include "conf.h"
-#include "djb2.h"
-#include "globals.h"
+#include "configurables.h"
 #include "messages.h"
-#include "metadata.h"
-#include "region_server.h"
-#include "uthash.h"
-#include <infiniband/verbs.h>
+#include <assert.h>
 #include <log.h>
 #include <pthread.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 const uint32_t S2S_MSG_SIZE = S2S_MSG_SIZE_VALUE;
 

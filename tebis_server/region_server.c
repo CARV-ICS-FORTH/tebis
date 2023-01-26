@@ -11,39 +11,56 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#include "master/mregion.h"
-#include "parallax/structures.h"
 #define _GNU_SOURCE
+#include "region_server.h"
+#include "../tebis_rdma/memory_region_pool.h"
+#include "../tebis_rdma/rdma.h"
 #include "../tebis_rdma_client/msg_factory.h"
+#include "../utilities/circular_buffer.h"
 #include "../utilities/spin_loop.h"
-#include "allocator/volume_manager.h"
 #include "build_index/build_index.h"
+#include "conf.h"
 #include "djb2.h"
 #include "globals.h"
 #include "list.h"
 #include "master/command.h"
+#include "master/mregion.h"
+#include "messages.h"
 #include "metadata.h"
+#include "parallax/structures.h"
 #include "region_desc.h"
-#include "region_server.h"
 #include "send_index/send_index.h"
+#include "send_index/send_index_callbacks.h"
 #include "send_index/send_index_uuid_checker.h"
+#include "server_communication.h"
+#include "work_task.h"
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
+#include <btree/conf.h>
 #include <btree/gc.h>
 #include <btree/kv_pairs.h>
+#include <btree/lsn.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
 #include <include/parallax/parallax.h>
-#include <libgen.h>
+#include <infiniband/verbs.h>
+#include <inttypes.h>
 #include <log.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <rdma/rdma_verbs.h>
-#include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <uthash.h>
 #include <zookeeper/zookeeper.h>
 #include <zookeeper/zookeeper.jute.h>
+// IWYU pragma: no_forward_declare region_desc
+
 uint64_t ds_hash_key;
 
 char *regs_get_server_name(struct regs_server_desc *region_server)
@@ -102,22 +119,6 @@ void regs_set_rdma_port(struct regs_server_desc *region_server, int port)
 static uint64_t regs_get_server_epoch(struct regs_server_desc *region_server)
 {
 	return region_server->name.epoch;
-}
-
-par_handle open_db(const char *path)
-{
-	disable_gc();
-	par_db_options db_options = { .volume_name = (char *)path,
-				      .create_flag = PAR_CREATE_DB,
-				      .db_name = "tebis_storage_engine",
-				      .options = par_get_default_options() };
-	const char *error_message = NULL;
-	par_handle handle = par_open(&db_options, &error_message);
-	if (error_message) {
-		log_fatal("Error uppon opening the DB, error %s", error_message);
-		_exit(EXIT_FAILURE);
-	}
-	return handle;
 }
 
 static void regs_get_IP_addresses(struct regs_server_desc *server)
@@ -485,16 +486,34 @@ region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server,
 region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t mregion, enum server_role server_role)
 {
 	region_desc_t region_desc = region_desc_create(mregion, server_role);
+
 	disable_gc();
-	par_db_options db_options = { .volume_name = (char *)globals_get_dev(),
+
+	par_db_options db_options = { .volume_name = globals_get_dev(),
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = region_desc_get_id(region_desc),
 				      .options = par_get_default_options() };
+	db_options.options[LEVEL0_SIZE].value = KB(globals_get_l0_size());
+	db_options.options[GROWTH_FACTOR].value = globals_get_growth_factor();
+	if (server_role == BACKUP_DEAD || server_role == BACKUP_INFANT || server_role == BACKUP_NEWBIE ||
+	    server_role == BACKUP) {
+		// open DB as backup
+		db_options.options[PRIMARY_MODE].value = 0;
+		db_options.options[REPLICA_MODE].value = 1;
+	}
+
+	if (globals_get_send_index()) {
+		db_options.options[NUMBER_OF_REPLICAS].value = region_desc_get_num_backup(region_desc);
+		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
+		db_options.options[WCURSOR_SPIN_FOR_FLUSH_REPLIES].value = 1;
+	}
 	const char *error_message = NULL;
-	db_options.options[REPLICA_MODE].value = 1;
-	db_options.options[PRIMARY_MODE].value = 0;
-	db_options.options[LEVEL0_SIZE].value = globals_get_l0_size() * 1024 * 1024;
 	par_handle parallax_db = par_open(&db_options, &error_message);
+	if (error_message) {
+		log_fatal("Error uppon opening the DB, error %s", error_message);
+		_exit(EXIT_FAILURE);
+	}
+
 	region_desc_set_db(region_desc, parallax_db);
 	if (error_message) {
 		log_fatal("Error uppon opening DB: %s, error %s", region_desc_get_id(region_desc), error_message);
@@ -949,7 +968,7 @@ static void *regs_run_region_server(void *args)
 	sem_wait(&region_server->wake_up);
 
 	while (1) {
-		struct klist_node *node = NULL;
+		struct tebis_klist_node *node = NULL;
 
 		pthread_mutex_lock(&region_server->msg_list_lock);
 		node = tebis_klist_remove_first(region_server->msg_list);

@@ -1,13 +1,29 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "build_index.h"
 #include "../rdma_buffer_iterator/rdma_buffer_iterator.h"
 #include "../region_desc.h"
+#include "../tebis_server/metadata.h"
 #include "btree/kv_pairs.h"
-#include "btree/lsn.h"
 #include "log.h"
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
+#include <assert.h>
+#include <infiniband/verbs.h>
 #include <stdlib.h>
 #include <unistd.h>
+// IWYU pragma: no_forward_declare region_desc
 
 static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_desc)
 {

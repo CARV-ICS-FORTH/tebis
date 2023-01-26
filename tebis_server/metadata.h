@@ -151,13 +151,5 @@ int krm_get_server_info(struct regs_server_desc *server_desc, char *hostname, st
 
 struct channel_rdma *ds_get_channel(struct regs_server_desc const *my_desc);
 
-// /*server to server communication staff*/
-// struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t request_size, uint32_t reply_size,
-// 					enum message_type type);
-// struct connection_rdma *sc_get_data_conn(struct regs_server_desc const *region_server, char *hostname,
-// 					 char *IP_address);
-// struct connection_rdma *sc_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
-// 					       char *IP_address);
-// void sc_free_rpc_pair(struct sc_msg_pair *p);
 void *run_master(void *args);
 #endif /* METADATA_H */

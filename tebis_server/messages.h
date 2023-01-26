@@ -13,14 +13,10 @@
 // limitations under the License.
 #ifndef TEBIS_MESSAGES_H
 #define TEBIS_MESSAGES_H
-#include "conf.h"
-#include "include/parallax/parallax.h"
-#include <assert.h>
+#include <include/parallax/structures.h>
 #include <infiniband/verbs.h>
 #include <inttypes.h>
-#include <semaphore.h>
 #include <stdbool.h>
-#include <time.h>
 
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8

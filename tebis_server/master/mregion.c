@@ -1,9 +1,25 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "mregion.h"
 #include "../configurables.h"
 #include "../metadata.h"
-#include <limits.h>
+#include "../tebis_server/messages.h"
+#include <assert.h>
 #include <log.h>
-#include <uthash.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 struct replica_member_info {
 	char hostname[KRM_HOSTNAME_SIZE];
 	char RDMA_IP_addr[KRM_MAX_RDMA_IP_SIZE];

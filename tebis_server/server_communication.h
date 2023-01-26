@@ -15,6 +15,8 @@
 #define SERVER_COMMUNICATION_H
 #include "../utilities/circular_buffer.h"
 #include "messages.h"
+#include <stdint.h>
+struct connection_rdma;
 
 /*server to server communication related staff*/
 struct sc_msg_pair {

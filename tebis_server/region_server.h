@@ -13,8 +13,14 @@
 // limitations under the License.
 #ifndef REGION_SERVER_H
 #define REGION_SERVER_H
+#include "configurables.h"
 #include "metadata.h"
-#include "work_task.h"
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdint.h>
+#include <uthash.h>
+#include <zookeeper.h>
+struct work_task;
 
 struct regs_conn_per_server {
 	uint64_t server_key;

@@ -14,6 +14,7 @@
 #include "../tebis_server/master/command.h"
 #include "../tebis_server/metadata.h"
 #include "../tebis_server/zk_utils.h"
+#include <assert.h>
 #include <fcntl.h>
 #include <log.h>
 #include <pthread.h>

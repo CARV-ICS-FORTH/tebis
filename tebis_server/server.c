@@ -12,51 +12,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #define _GNU_SOURCE
-#include "allocator/log_structures.h"
-#include "btree/conf.h"
-#include "btree/kv_pairs.h"
-#include "btree/level_write_appender.h"
-#include "btree/level_write_cursor.h"
-#include "btree/lsn.h"
+#include "../tebis_rdma/memory_region_pool.h"
+#include "../utilities/simple_concurrent_list.h"
 #include "conf.h"
-#include "parallax/structures.h"
 #include "region_desc.h"
 #include "region_server.h"
 #include "send_index/send_index_rewriter.h"
 #include "send_index/send_index_uuid_checker/send_index_uuid_checker.h"
 #include "work_task.h"
-#include <alloca.h>
-#include <include/parallax/parallax.h>
+#include <assert.h>
+#include <errno.h>
 #include <infiniband/verbs.h>
-#include <limits.h>
+#include <log.h>
 #include <pthread.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
+#include <sched.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../tebis_rdma/rdma.h"
-#include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/queue.h"
-#include "../utilities/spin_loop.h"
-#include "build_index/build_index.h"
 #include "djb2.h"
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
-#include "send_index/send_index.h"
 #include "stats.h"
-#include <btree/btree.h>
-#include <log.h>
-#include <scanner/scanner.h>
+#// IWYU pragma: no_forward_declare timespec
 
 #ifdef CHECKSUM_DATA_MESSAGES
 #include "djb2.h"
@@ -384,11 +372,11 @@ uint32_t no_ops_acks_send = 0;
 void *worker_thread_kernel(void *args)
 {
 	struct work_task *job = NULL;
-	struct ds_worker_thread *worker;
+	struct ds_worker_thread *worker = NULL;
 	const size_t spin_time_usec = globals_get_worker_spin_time_usec();
 
 	worker = (struct ds_worker_thread *)args;
-	char name[16];
+	char name[16] = { 0 };
 	strcpy(name, "ds_worker");
 	int idx = strlen(name);
 	sprintf(&name[idx], "%d", worker->worker_id);
@@ -628,7 +616,7 @@ static void ds_check_idle_workers(struct ds_spinning_thread *spinner)
 static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 {
 	/*check for resumed tasks to be rescheduled*/
-	uint32_t total_halted_tasks = 0;
+	// uint32_t total_halted_tasks = 0;
 	uint32_t b_detection = 0;
 	pthread_mutex_lock(&spinner->resume_task_pool.tbp_lock);
 
@@ -644,7 +632,7 @@ static void ds_resume_halted_tasks(struct ds_spinning_thread *spinner)
 			b_detection = 1;
 		}
 
-		++total_halted_tasks;
+		// ++total_halted_tasks;
 		int rc = assign_job_to_worker(spinner, task->conn, task->msg, task);
 		if (rc == TEBIS_FAILURE) {
 			log_fatal("Failed to reschedule task");

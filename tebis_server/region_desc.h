@@ -15,9 +15,14 @@
 #define REGION_DESC_H
 #include "master/mregion.h"
 #include "metadata.h"
-#include "work_task.h"
-#include <include/parallax/parallax.h>
+#include "server_communication.h"
+#include <infiniband/verbs.h>
+#include <parallax/structures.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+struct rdma_cm_id;
+struct work_task;
 typedef struct region_desc *region_desc_t;
 
 region_desc_t region_desc_create(mregion_t mregion, enum server_role server_role);

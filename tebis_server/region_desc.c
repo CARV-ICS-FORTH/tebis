@@ -12,12 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "region_desc.h"
-#include "allocator/volume_manager.h"
+#include "../tebis_rdma/rdma.h"
+#include "configurables.h"
 #include "master/mregion.h"
 #include "metadata.h"
 #include "server_communication.h"
+#include "work_task.h"
+#include <assert.h>
+#include <btree/conf.h>
 #include <log.h>
+#include <parallax/structures.h>
+#include <pthread.h>
+#include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <uthash.h>
+// IWYU pragma: no_forward_declare rdma_cm_id
+
 struct region_desc {
 	pthread_mutex_t region_mgmnt_lock;
 	pthread_rwlock_t kreon_lock;

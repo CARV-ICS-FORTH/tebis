@@ -1,15 +1,28 @@
-#define _GNU_SOURCE /* See feature_test_macros(7) */
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#define _GNU_SOURCE
+
 #include "rdma.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/simple_concurrent_list.h"
 #include "memory_region_pool.h"
-#include <arpa/inet.h>
 #include <assert.h>
-#include <ctype.h>
 #include <errno.h>
-#include <getopt.h>
-#include <immintrin.h>
 #include <infiniband/verbs.h>
-#include <limits.h>
-#include <malloc.h>
+#include <log.h>
 #include <pthread.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
@@ -18,21 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <unistd.h>
-
-#include "../tebis_server/djb2.h"
-#include "../tebis_server/globals.h"
-#include "../tebis_server/messages.h"
-#include "../tebis_server/metadata.h"
-#include "get_clock.h"
-
-#include "../utilities/circular_buffer.h"
-#include "../utilities/simple_concurrent_list.h"
-#include "../utilities/spin_loop.h"
-#include <log.h>
 
 #define CTX_HANDSHAKE_SUCCESS 0
 #define CTX_HANDSHAKE_FAILURE 1

@@ -1,20 +1,38 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "send_index_callbacks.h"
 #include "../../common/common.h"
-#include "../metadata.h"
+#include "../conf.h"
 #include "../region_desc.h"
 #include "../region_server.h"
-#include "../work_task.h"
-#include "allocator/volume_manager.h"
-#include "btree/index_node.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/messages.h"
+#include "../tebis_server/server_communication.h"
+#include "../utilities/circular_buffer.h"
 #include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_uuid_checker/send_index_uuid_checker.h"
+#include <assert.h>
 #include <infiniband/verbs.h>
 #include <log.h>
-#include <pthread.h>
 #include <rdma/rdma_verbs.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 static void send_index_fill_flush_L0_request(msg_header *request_header, region_desc_t r_desc,
 					     uint64_t small_log_tail_dev_offt, uint64_t big_log_tail_dev_offt)

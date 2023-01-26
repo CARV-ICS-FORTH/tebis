@@ -1,8 +1,21 @@
-#pragma once
-#include <limits.h>
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#ifndef TEBIS_RDMA_CLIENT_H
+#define TEBIS_RDMA_CLIENT_H
+
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #define KRC_GET_OFFT_DEFAULT_SIZE 2048
 
 typedef void *krc_scannerp;
@@ -68,3 +81,4 @@ krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *val
 krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				void *context);
 krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context);
+#endif

@@ -15,6 +15,8 @@
 #include "../metadata.h"
 #include "mregion.h"
 #include <log.h>
+#include <stdlib.h>
+#include <string.h>
 
 struct MC_command {
 	uint64_t cmd_id;
