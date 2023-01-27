@@ -84,6 +84,8 @@ extern void MREG_append_backup_in_region(mregion_t region, char *server);
 extern bool MREG_is_server_prefix_in_region_group(char *server, size_t prefix_size, mregion_t region);
 extern void MREG_print_region_configuration(mregion_t region);
 
+extern char *MREG_get_region_max_key(mregion_t mregion);
+extern uint32_t MREG_get_region_max_key_size(mregion_t mregion);
 extern char *MREG_get_region_min_key(mregion_t mregion);
 extern uint32_t MREG_get_region_min_key_size(mregion_t mregion);
 #endif

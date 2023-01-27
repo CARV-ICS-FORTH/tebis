@@ -414,10 +414,13 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 }
 
 /**
- * Searches for a region in the region table of the Region Server. If it finds it returns the position and sets found flag to true. If it does not is sets
- * found to false and returns the position in the array that shoud be present. Caution in case where the region array is empty it returns -1 as its position.
+ * @brief Searches for a region in the region table of the Region Server. If it
+ * finds it returns the position and sets found flag to true. If it does not is
+ * sets found to false and returns the position in the array that shoud be
+ * present. Caution in case where the region array is empty it returns -1 as
+ * its position.
  */
-static int regs_get_region_pos(struct krm_ds_regions const *ds_regions, char *key, uint32_t key_size, bool *found)
+static int regs_get_region_pos(struct regs_regions const *ds_regions, char *key, uint32_t key_size, bool *found)
 {
 	*found = false;
 	if (0 == ds_regions->num_ds_regions)
@@ -443,10 +446,15 @@ static int regs_get_region_pos(struct krm_ds_regions const *ds_regions, char *ke
 			end_idx = middle - 1;
 	}
 
-	return ret_code < 0 ? --middle : middle;
+	int pos = ret_code < 0 ? --middle : middle;
+	*found = zku_key_cmp(region_desc_get_max_key_size(ds_regions->r_desc[pos]),
+			     region_desc_get_max_key(ds_regions->r_desc[pos]), key_size, key) > 0 ?
+			 true :
+			 false;
+	return pos;
 }
 
-static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_desc_t region_desc)
+static bool regs_insert_region_desc(struct regs_regions *region_table, region_desc_t region_desc)
 {
 	if (region_table->num_ds_regions >= KRM_MAX_DS_REGIONS) {
 		log_fatal("Cannot insert another regions array is full can host up to %u regions", KRM_MAX_DS_REGIONS);
@@ -467,7 +475,7 @@ static bool regs_insert_region_desc(struct krm_ds_regions *region_table, region_
 		(region_table->num_ds_regions - (pos + 1)) * sizeof(struct krm_region_desc *));
 	region_table->r_desc[pos + 1] = region_desc;
 	++region_table->num_ds_regions;
-	return true;
+	return found;
 }
 /**
  * Returns r_desc that key should be hosted. Returns NULL if region_table is empty
@@ -480,7 +488,8 @@ region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server,
 		log_warn("Querying an empty region table returning NULL");
 		return NULL;
 	}
-	return region_server->ds_regions.r_desc[pos];
+
+	return found ? region_server->ds_regions.r_desc[pos] : NULL;
 }
 
 region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t mregion, enum server_role server_role)
@@ -803,6 +812,10 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 		log_debug("Buffer from ZK: %d", buf_len);
 		MC_command_t command = MC_deserialize_command(buffer, buf_len);
 		regs_handle_master_command(server, command);
+		if (zoo_delete(zkh, command_path, -1) != ZOK) {
+			log_fatal("Failed to delete command: %s from mailbox", command_path);
+			_exit(EXIT_FAILURE);
+		}
 		free(command_path);
 	}
 }

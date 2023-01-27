@@ -234,6 +234,16 @@ void MREG_print_region_configuration(mregion_t region)
 	log_info("\n***************************************************************************");
 }
 
+char *MREG_get_region_max_key(mregion_t mregion)
+{
+	return mregion->max_key;
+}
+
+uint32_t MREG_get_region_max_key_size(mregion_t mregion)
+{
+	return mregion->max_key_size;
+}
+
 char *MREG_get_region_min_key(mregion_t mregion)
 {
 	return mregion->min_key;

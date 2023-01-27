@@ -52,8 +52,9 @@ int MC_get_command_size(MC_command_t command)
 void MC_print_command(MC_command_t command)
 {
 	mregion_t mregion = MREG_deserialize_region(command->buffer, MREG_get_region_size());
-	log_debug("Command: region_id: %s, cmd_id: %lu role: %d, code %d", MREG_get_region_id(mregion), command->cmd_id,
-		  command->role, command->code);
+	log_debug("Command: region_id: %s, region_min_key: %s region_max_key: %s cmd_id: %lu role: %d, code %d",
+		  MREG_get_region_id(mregion), MREG_get_region_min_key(mregion), MREG_get_region_max_key(mregion),
+		  command->cmd_id, command->role, command->code);
 }
 
 MC_command_code_t MC_get_command_code(MC_command_t command)

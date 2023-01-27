@@ -181,6 +181,16 @@ struct ru_replica_state *region_desc_get_replica_state(region_desc_t region_desc
 	return region_desc->r_state;
 }
 
+char *region_desc_get_max_key(region_desc_t region_desc)
+{
+	return MREG_get_region_max_key(region_desc->mregion);
+}
+
+uint32_t region_desc_get_max_key_size(region_desc_t region_desc)
+{
+	return MREG_get_region_max_key_size(region_desc->mregion);
+}
+
 char *region_desc_get_min_key(region_desc_t region_desc)
 {
 	return MREG_get_region_min_key(region_desc->mregion);

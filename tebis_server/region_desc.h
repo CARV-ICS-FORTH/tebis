@@ -31,6 +31,10 @@ void region_desc_open_parallax_db(region_desc_t region_desc, const char *error_m
 
 char *region_desc_get_id(region_desc_t region_desc);
 
+char *region_desc_get_max_key(region_desc_t region_desc);
+
+uint32_t region_desc_get_max_key_size(region_desc_t region_desc);
+
 char *region_desc_get_min_key(region_desc_t region_desc);
 
 uint32_t region_desc_get_min_key_size(region_desc_t region_desc);

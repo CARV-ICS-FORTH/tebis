@@ -133,11 +133,6 @@ struct krm_segment_entry {
 
 enum krm_replica_buf_status { KRM_BUFS_UNINITIALIZED = 0, KRM_BUFS_INITIALIZING, KRM_BUFS_READY };
 
-struct krm_ds_regions {
-	struct region_desc *r_desc[KRM_MAX_DS_REGIONS];
-	int num_ds_regions;
-};
-
 struct krm_msg {
 	struct krm_region region;
 	char sender[KRM_HOSTNAME_SIZE];

@@ -28,6 +28,10 @@ struct regs_conn_per_server {
 	UT_hash_handle hh;
 };
 
+struct regs_regions {
+	struct region_desc *r_desc[KRM_MAX_DS_REGIONS];
+	int num_ds_regions;
+};
 struct regs_server_desc {
 	struct krm_server_name name;
 	pthread_t region_server_cnxt;
@@ -49,7 +53,7 @@ struct regs_server_desc {
 	// /*filled only by the leader server*/
 	// struct krm_leader_regions *ld_regions;
 	// struct krm_leader_ds_map *dataservers_map;
-	struct krm_ds_regions ds_regions;
+	struct regs_regions ds_regions;
 };
 
 /**
