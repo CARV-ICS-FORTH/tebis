@@ -50,9 +50,6 @@
 #include "djb2.h"
 #endif
 
-#define LOG_SEGMENT_CHUNK (32 * 1024)
-#define MY_MAX_THREADS 2048
-
 #define WORKER_THREAD_PRIORITIES_NUM 4
 #define WORKER_THREAD_HIGH_PRIORITY_TASKS_PER_TURN 1
 #define WORKER_THREAD_NORMAL_PRIORITY_TASKS_PER_TURN 1
@@ -214,10 +211,10 @@ void *socket_thread(void *args)
 		ret = rdma_get_request(listen_id, &request_id);
 		if (ret) {
 			log_fatal("rdma_get_request: %s", strerror(errno));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		new_conn_id = request_id->event->id;
-		conn = (connection_rdma *)malloc(sizeof(connection_rdma));
+		conn = calloc(1UL, sizeof(connection_rdma));
 		qp_init_attr.send_cq = qp_init_attr.recv_cq =
 			ibv_create_cq(channel->context, MAX_WR, (void *)conn, channel->comp_channel, 0);
 		ibv_req_notify_cq(qp_init_attr.send_cq, 0);
@@ -226,7 +223,7 @@ void *socket_thread(void *args)
 		ret = rdma_create_qp(new_conn_id, NULL, &qp_init_attr);
 		if (ret) {
 			log_fatal("rdma_create_qp: %s", strerror(errno));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		connection_type incoming_connection_type = -1;
@@ -245,7 +242,7 @@ void *socket_thread(void *args)
 		ret = rdma_accept(new_conn_id, NULL);
 		if (ret) {
 			log_fatal("rdma_accept: %s", strerror(errno));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		// Block until client sends connection type
@@ -289,7 +286,7 @@ void *socket_thread(void *args)
 			break;
 		default:
 			log_fatal("bad connection type %d", conn->type);
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		assert(conn->rdma_memory_regions);
 
@@ -303,7 +300,7 @@ void *socket_thread(void *args)
 		ret = rdma_post_recv(new_conn_id, &msg_ctx, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
 		if (ret) {
 			log_fatal("rdma_post_recv: %s", strerror(errno));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 
 		// Send memory region information
@@ -311,7 +308,7 @@ void *socket_thread(void *args)
 				     sizeof(struct ibv_mr), send_mr, 0);
 		if (ret) {
 			log_fatal("rdma_post_send: %s", strerror(errno));
-			exit(EXIT_FAILURE);
+			_exit(EXIT_FAILURE);
 		}
 		// Block until client sends memory region information
 		sem_wait(&msg_ctx.wait_for_completion);
@@ -934,7 +931,7 @@ int main(int argc, char *argv[])
 	if (argc != 8) {
 		log_fatal(
 			"Error args are %d! usage: ./kreon_server <device name>"
-			" <zk_host:zk_port>  <RDMA subnet> <TEBIS_L0 size in keys> <growth factor> <send_index or build_index> <server(s) vector>\n "
+			" <zk_host:zk_port>  <RDMA subnet> <TEBIS_L0 size in KB> <growth factor> <send_index or build_index> <server(s) vector>\n "
 			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
 			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
 			argc);
@@ -983,6 +980,7 @@ int main(int argc, char *argv[])
 	char *ptr = NULL;
 	int rdma_port = strtol(rdma_port_token, &ptr, 10);
 	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
+
 	// Spinning thread of server
 	char *token = strtok_r(NULL, ",", &strtok_saveptr);
 	if (token == NULL) {
@@ -1008,11 +1006,11 @@ int main(int argc, char *argv[])
 
 	// now we have all info to allocate ds_numa_server, pin,
 	// and inform the root server
-	struct ds_numa_server *server = (struct ds_numa_server *)calloc(1, sizeof(struct ds_numa_server));
+	struct ds_numa_server *server = calloc(1, sizeof(struct ds_numa_server));
 
 	/*But first let's build each numa server's RDMA channel*/
 	/*RDMA channel staff*/
-	server->channel = (struct channel_rdma *)calloc(1, sizeof(struct channel_rdma));
+	server->channel = (struct channel_rdma *)calloc(1UL, sizeof(struct channel_rdma));
 	if (server->channel == NULL) {
 		log_fatal("malloc failed could do not get memory for channel");
 		_exit(EXIT_FAILURE);
@@ -1057,9 +1055,9 @@ int main(int argc, char *argv[])
 
 	// server->meta_server.RDMA_port = rdma_port;
 
-	for (int j = 0; j < num_workers; j++) {
-		server->spinner.worker[j].worker_id = j;
-		server->spinner.worker[j].cpu_core_id = workers_id[j];
+	for (int worker_id = 0; worker_id < num_workers; worker_id++) {
+		server->spinner.worker[worker_id].worker_id = worker_id;
+		server->spinner.worker[worker_id].cpu_core_id = workers_id[worker_id];
 	}
 	root_server->numa_servers[server_idx] = server;
 
@@ -1127,7 +1125,7 @@ int main(int argc, char *argv[])
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	sem_init(&exit_main, 0, 0);
 
-	log_debug("Server(S) ready");
+	log_debug("Server ready");
 	if (signal(SIGINT, sigint_handler) == SIG_ERR) {
 		log_fatal("can't catch SIGINT");
 		_exit(EXIT_FAILURE);
