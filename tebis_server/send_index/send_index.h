@@ -40,7 +40,7 @@ struct send_index_flush_index_segment_params {
 */
 uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type);
 
-void send_index_flush_index_segment(struct send_index_flush_index_segment_params params);
+uint64_t send_index_flush_index_segment(struct send_index_flush_index_segment_params params);
 
 /**
  * Creates an rdma buffer in which the new compaction index will be stored.
@@ -72,4 +72,6 @@ void send_index_close_compactions_rdma_buffer(struct krm_region_desc *r_desc, ui
  * @param level_id: the source level of the compaction that is taking place
  */
 void send_index_close_mr_for_segment_replies(struct krm_region_desc *r_desc, uint32_t level_id);
+
+void send_index_free_index_HT(struct krm_region_desc *r_desc, uint32_t level_id);
 #endif // SEND_INDEX_H_

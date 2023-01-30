@@ -63,12 +63,13 @@ static void send_index_fill_swap_levels_request(msg_header *request_header, stru
 }
 
 static void send_index_fill_flush_index_segment(msg_header *request_header, struct krm_region_desc *r_desc,
-						struct wcursor_level_write_cursor *wcursor, uint32_t height,
-						uint32_t level_id, uint32_t clock, uint32_t replica_id,
+						uint64_t start_segment_offt, struct wcursor_level_write_cursor *wcursor,
+						uint32_t height, uint32_t level_id, uint32_t clock, uint32_t replica_id,
 						bool is_last_segment)
 {
 	struct s2s_msg_replica_index_flush_req *f_req =
 		(struct s2s_msg_replica_index_flush_req *)((char *)request_header + sizeof(struct msg_header));
+	f_req->primary_segment_offt = start_segment_offt;
 	f_req->entry_size = wcursor_get_compaction_index_entry_size(wcursor);
 	f_req->number_of_columns = wcursor_get_number_of_cols(wcursor);
 	f_req->height = height;
@@ -306,7 +307,7 @@ static void send_index_replicate_index_segment(struct send_index_context *contex
 	}
 }
 
-static void send_index_send_flush_index_segment(struct send_index_context *context,
+static void send_index_send_flush_index_segment(struct send_index_context *context, uint64_t start_segment_offt,
 						struct wcursor_level_write_cursor *wcursor, uint32_t level_id,
 						uint32_t clock, uint32_t height, bool is_last)
 {
@@ -331,8 +332,8 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		r_desc->send_index_flush_index_segment_rpc_in_use[i][level_id][clock] = true;
 
 		struct sc_msg_pair *msg_pair = &r_desc->send_index_flush_index_segment_rpc[i][level_id][clock];
-		send_index_fill_flush_index_segment(msg_pair->request, r_desc, wcursor, height, level_id, clock, i,
-						    is_last);
+		send_index_fill_flush_index_segment(msg_pair->request, r_desc, start_segment_offt, wcursor, height,
+						    level_id, clock, i, is_last);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = (uint64_t)r_desc->region;
 
@@ -349,13 +350,14 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 	}
 }
 
-static void send_index_send_segment(struct send_index_context *context, struct wcursor_level_write_cursor *wcursor,
-				    uint32_t buf_size, uint32_t height, uint32_t level_id, uint32_t clock, bool is_last)
+static void send_index_send_segment(struct send_index_context *context, uint64_t start_segment_offt,
+				    struct wcursor_level_write_cursor *wcursor, uint32_t buf_size, uint32_t height,
+				    uint32_t level_id, uint32_t clock, bool is_last)
 {
 	/* rdma_write index segment to replicas */
 	send_index_replicate_index_segment(context, wcursor, buf_size, level_id, height, clock);
 	/* send control msg to flush the index segment to replicas */
-	send_index_send_flush_index_segment(context, wcursor, level_id, clock, height, is_last);
+	send_index_send_flush_index_segment(context, start_segment_offt, wcursor, level_id, clock, height, is_last);
 }
 
 static void send_index_swap_levels(struct send_index_context *context, uint32_t level_id)
@@ -426,13 +428,15 @@ void send_index_swap_levels_callback(void *context, uint32_t src_level_id)
 	send_index_swap_levels(send_index_cxt, src_level_id);
 }
 
-void send_index_compaction_wcursor_flush_segment_callback(void *context, struct wcursor_level_write_cursor *wcursor,
-							  uint32_t level_id, uint32_t height, uint32_t buf_size,
-							  uint32_t clock, bool is_last)
+void send_index_compaction_wcursor_flush_segment_callback(void *context, uint64_t start_segment_offt,
+							  struct wcursor_level_write_cursor *wcursor, uint32_t level_id,
+							  uint32_t height, uint32_t buf_size, uint32_t clock,
+							  bool is_last)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
-	send_index_send_segment(send_index_cxt, wcursor, buf_size, height, level_id, clock, is_last);
+	send_index_send_segment(send_index_cxt, start_segment_offt, wcursor, buf_size, height, level_id, clock,
+				is_last);
 }
 
 void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t level_id, uint32_t clock)

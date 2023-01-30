@@ -1550,6 +1550,16 @@ static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t pr
 	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 }
 
+static void add_segment_to_index_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+				    uint64_t replica_segment_offt, uint32_t level_id)
+{
+	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
+	entry->primary_segment_offt = primary_segment_offt;
+	entry->replica_segment_offt = replica_segment_offt;
+	HASH_ADD_PTR(r_desc->replica_index_map[level_id], primary_segment_offt, entry);
+}
+
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
@@ -1727,7 +1737,8 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 		.r_desc = r_desc
 
 	};
-	send_index_flush_index_segment(flush_index_segment);
+	uint64_t last_flushed_segment_offt = send_index_flush_index_segment(flush_index_segment);
+	add_segment_to_index_HT(r_desc, req->primary_segment_offt, last_flushed_segment_offt, dst_level_id);
 
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;
@@ -1849,6 +1860,7 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 	log_debug("Closing compaction for region %s level %u", r_desc->region->id, req->level_id);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
+	send_index_free_index_HT(r_desc, req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

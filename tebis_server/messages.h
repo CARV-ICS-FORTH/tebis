@@ -199,6 +199,7 @@ struct s2s_msg_replica_index_get_buffer_rep {
 };
 
 struct s2s_msg_replica_index_flush_req {
+	uint64_t primary_segment_offt;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
 	uint32_t number_of_columns;

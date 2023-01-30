@@ -260,7 +260,7 @@ struct krm_region_desc {
 	/*for replica_role deserializing the index*/
 	pthread_rwlock_t replica_log_map_lock;
 	struct krm_segment_entry *replica_log_map;
-	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
+	struct krm_segment_entry *replica_index_map[MAX_LEVELS];
 	//RDMA related staff for sending the index
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
