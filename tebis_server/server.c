@@ -1538,8 +1538,8 @@ static int8_t is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t
 	return 1;
 }
 
-static void add_segment_into_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-				uint64_t replica_segment_offt)
+static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+				     uint64_t replica_segment_offt)
 {
 	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
 	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
@@ -1571,7 +1571,7 @@ static void execute_flush_command_req(struct krm_server_desc const *mydesc, stru
 		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
 		int8_t segment_exist_in_HT = is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
 		if (!segment_exist_in_HT) {
-			add_segment_into_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
+			add_segment_to_logmap_HT(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
 			zero_rdma_buffer(r_desc, log_type_to_flush);
 		}
 	}
@@ -1807,9 +1807,13 @@ static void execute_flush_L0_op(struct krm_server_desc const *mydesc, struct krm
 
 	task->kreon_operation_status = TASK_FLUSH_L0;
 	// persist the buffers
-	send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
-	send_index_flush_rdma_buffer(r_desc, BIG);
+	uint64_t new_small_log_tail = send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
+	uint64_t new_big_small_log_tail = send_index_flush_rdma_buffer(r_desc, BIG);
 	par_flush_superblock(r_desc->db);
+
+	// append new segments to logmap
+	add_segment_to_logmap_HT(r_desc, flush_req->small_log_tail_dev_offt, new_small_log_tail);
+	add_segment_to_logmap_HT(r_desc, flush_req->big_log_tail_dev_offt, new_big_small_log_tail);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

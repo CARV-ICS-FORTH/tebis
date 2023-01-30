@@ -12,13 +12,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-static void send_index_fill_flush_L0_request(msg_header *request_header, struct krm_region_desc *r_desc)
+static void send_index_fill_flush_L0_request(msg_header *request_header, struct krm_region_desc *r_desc,
+					     uint64_t small_log_tail_dev_offt, uint64_t big_log_tail_dev_offt)
 {
 	struct s2s_msg_flush_L0_req *req =
 		(struct s2s_msg_flush_L0_req *)((char *)request_header + sizeof(struct msg_header));
 	req->region_key_size = r_desc->region->min_key_size;
 	strcpy(req->region_key, r_desc->region->min_key);
 	req->uuid = (uint64_t)req;
+	req->small_log_tail_dev_offt = small_log_tail_dev_offt;
+	req->big_log_tail_dev_offt = big_log_tail_dev_offt;
 }
 
 static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, struct krm_region_desc *r_desc,
@@ -114,7 +117,8 @@ send_index_allocate_msg_pair(struct send_index_allocate_msg_pair_info send_index
 	return msg_pair;
 }
 
-static void send_index_flush_L0(struct send_index_context *context)
+static void send_index_flush_L0(struct send_index_context *context, uint64_t small_log_tail_dev_offt,
+				uint64_t big_log_tail_dev_offt)
 {
 	struct krm_region_desc *r_desc = context->r_desc;
 	struct krm_server_desc *server = context->server;
@@ -138,7 +142,7 @@ static void send_index_flush_L0(struct send_index_context *context)
 
 		// send the msg
 		msg_header *req_header = msg_pair->request;
-		send_index_fill_flush_L0_request(req_header, r_desc);
+		send_index_fill_flush_L0_request(req_header, r_desc, small_log_tail_dev_offt, big_log_tail_dev_offt);
 		req_header->session_id = (uint64_t)r_desc->region;
 
 		if (__send_rdma_message(r_conn, req_header, NULL) != TEBIS_SUCCESS) {
@@ -395,13 +399,14 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 	}
 }
 
-void send_index_compaction_started_callback(void *context, uint32_t src_level_id, uint8_t dst_tree_id,
+void send_index_compaction_started_callback(void *context, uint64_t small_log_tail_dev_offt,
+					    uint64_t big_log_tail_dev_offt, uint32_t src_level_id, uint8_t dst_tree_id,
 					    struct wcursor_level_write_cursor *new_level)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 	//compaction from L0 to L1
 	if (!src_level_id)
-		send_index_flush_L0(send_index_cxt);
+		send_index_flush_L0(send_index_cxt, small_log_tail_dev_offt, big_log_tail_dev_offt);
 
 	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id, new_level);
 	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level, src_level_id);

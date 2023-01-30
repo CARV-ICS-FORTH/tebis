@@ -172,6 +172,8 @@ struct s2s_msg_flush_cmd_rep {
 struct s2s_msg_flush_L0_req {
 	uint64_t uuid;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint64_t small_log_tail_dev_offt;
+	uint64_t big_log_tail_dev_offt;
 	uint32_t region_key_size;
 };
 
