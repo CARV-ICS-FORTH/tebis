@@ -344,3 +344,6 @@ example: build/tebis_server/tebis_server /nvme/par1.dat sith2:2181 192.168.4 128
 # Tests
 cd into folder <BUILD_ROOT_FOLDER>/tests/ and type
 test_krc_api zk_host:zk_port
+
+## Acknowledgements
+We thankfully acknowledge the support of the European Commission under the Horizon 2020 Framework Programme for Research and Innovation through the projects EVOLVE (Grant Agreement ID: 825061). This work is (also) partly supported by project EUPEX, which has received funding from the European High-Performance Computing Joint Undertaking (JU) under grant agreement No 101033975. The JU receives support from the European Union's Horizon 2020 re-search and innovation programme and France, Germany, Italy, Greece, United Kingdom, Czech Republic, Croatia.
