@@ -37,5 +37,7 @@ region_info_t RS_get_next_region_info(region_server_iterator_t iterator);
 mregion_t RS_get_region(region_info_t region_info);
 enum server_role RS_get_role(region_info_t region_info);
 void RS_close_region_server_iterator(region_server_iterator_t iterator);
+int RS_compare(mregion_server_t server_1, mregion_server_t server_2);
+char *RS_get_server_id(mregion_server_t region_server);
 
 #endif

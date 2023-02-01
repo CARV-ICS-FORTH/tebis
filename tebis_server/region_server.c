@@ -157,146 +157,6 @@ static void regs_get_IP_addresses(struct regs_server_desc *server)
 	_exit(EXIT_FAILURE);
 }
 
-#if 0
-static void krm_resend_open_command(struct krm_server_desc *desc, struct krm_region *region, char *kreon_ds_hostname,
-				    enum krm_msg_type type)
-{
-	int mail_id_len = 128;
-	char mail_id[128];
-	struct krm_msg msg;
-	char *path =
-		zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, kreon_ds_hostname, KRM_MAIL_TITLE);
-
-	assert(type == KRM_OPEN_REGION_AS_PRIMARY || type == KRM_OPEN_REGION_AS_BACKUP);
-	msg.type = type;
-	msg.region = *region;
-	strcpy(msg.sender, desc->name.kreon_ds_hostname);
-	msg.epoch = desc->name.epoch;
-
-	int rc = zoo_create(desc->zh, path, (char *)&msg, sizeof(struct krm_msg), &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE,
-			    mail_id, mail_id_len);
-	if (rc != ZOK) {
-		log_fatal("failed to send open region command to path %s with error code %s", path, zku_op2String(rc));
-		_exit(EXIT_FAILURE);
-	}
-	free(path);
-}
-
-
-static void krm_send_open_command(struct krm_server_desc *desc, struct krm_region *region)
-{
-	int rc;
-	uint32_t i;
-	struct krm_msg msg;
-	char *path;
-	struct krm_leader_ds_map *dataserver;
-	struct krm_leader_ds_region_map *region_map;
-	int mail_id_len = 128;
-	char mail_id[128];
-
-	/*check if I, aka the Leader, am the Primary for this region*/
-	if (strcmp(region->primary.kreon_ds_hostname, desc->name.kreon_ds_hostname) == 0) {
-		/*added to the dataservers table, I ll open them later*/
-		ds_hash_key = djb2_hash((unsigned char *)region->primary.kreon_ds_hostname,
-					strlen(region->primary.kreon_ds_hostname));
-		dataserver = NULL;
-		HASH_FIND_PTR(desc->dataservers_map, &ds_hash_key, dataserver);
-		if (dataserver == NULL) {
-			log_fatal("entry missing for DataServer (which is me?) %s", region->primary.kreon_ds_hostname);
-			_exit(EXIT_FAILURE);
-		}
-		region_map = init_region_map(region, KRM_PRIMARY);
-		log_debug("Adding region %s (As a primary) for server %s hash key %lu", region->id,
-			  dataserver->server_id.kreon_ds_hostname, dataserver->hash_key);
-		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
-	} else {
-		path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-					  region->primary.kreon_ds_hostname, KRM_MAIL_TITLE);
-
-		msg.type = KRM_OPEN_REGION_AS_PRIMARY;
-		msg.region = *region;
-		strcpy(msg.sender, desc->name.kreon_ds_hostname);
-		/*fill the epoch which we think the dataserver is*/
-		dataserver = NULL;
-		ds_hash_key = djb2_hash((unsigned char *)region->primary.kreon_ds_hostname,
-					strlen(region->primary.kreon_ds_hostname));
-		HASH_FIND_PTR(desc->dataservers_map, &ds_hash_key, dataserver);
-		if (dataserver == NULL) {
-			log_fatal("entry missing for DataServer %s", region->primary.kreon_ds_hostname);
-			_exit(EXIT_FAILURE);
-		}
-		msg.epoch = dataserver->server_id.epoch;
-		region_map = init_region_map(region, KRM_PRIMARY);
-		log_info("Adding region %s (As a primary) for server %s hash key %lu", region->id,
-			 region->primary.kreon_ds_hostname, region_map->hash_key);
-		HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
-		log_info("Sending open command (as primary) to %s", path);
-
-		rc = zoo_create(desc->zh, path, (char *)&msg, sizeof(struct krm_msg), &ZOO_OPEN_ACL_UNSAFE,
-				ZOO_SEQUENCE, mail_id, mail_id_len);
-
-		if (rc != ZOK) {
-			log_fatal("failed to send open region command to path %s with error code %s", path,
-				  zku_op2String(rc));
-			_exit(EXIT_FAILURE);
-		}
-
-		free(path);
-	}
-	/*The same procedure for backups*/
-	for (i = 0; i < region->num_of_backup; i++) {
-		/*check if I, aka the Leader, am a BackUp for this region*/
-		if (strcmp(region->backups[i].kreon_ds_hostname, desc->name.kreon_ds_hostname) == 0) {
-			log_info("Kreon master Sending open region as backup to myself %s for "
-				 "region %s",
-				 desc->name.kreon_ds_hostname, region->id);
-			dataserver = NULL;
-			/*added to the dataservers table, I ll open them later*/
-			uint64_t hash_key = djb2_hash((unsigned char *)region->backups[i].kreon_ds_hostname,
-						      strlen(region->backups[i].kreon_ds_hostname));
-			HASH_FIND_PTR(desc->dataservers_map, &hash_key, dataserver);
-			if (dataserver == NULL) {
-				log_fatal("entry missing for DataServer (which is me?) %s",
-					  region->primary.kreon_ds_hostname);
-				_exit(EXIT_FAILURE);
-			}
-			region_map = init_region_map(region, KRM_BACKUP);
-			log_info("Adding region %s (As a backup) for server %s hash key %lu", region->id, /*  */
-				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
-			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
-		} else {
-			path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH,
-						  region->backups[i].kreon_ds_hostname, KRM_MAIL_TITLE);
-
-			msg.type = KRM_OPEN_REGION_AS_BACKUP;
-			msg.region = *region;
-			strcpy(msg.sender, desc->name.kreon_ds_hostname);
-			dataserver = NULL;
-			uint64_t hash_key = djb2_hash((unsigned char *)region->backups[i].kreon_ds_hostname,
-						      strlen(region->backups[i].kreon_ds_hostname));
-			HASH_FIND_PTR(desc->dataservers_map, &hash_key, dataserver);
-			if (dataserver == NULL) {
-				log_fatal("entry missing for DataServer %s", region->backups[i].kreon_ds_hostname);
-				_exit(EXIT_FAILURE);
-			}
-			region_map = init_region_map(region, KRM_BACKUP);
-			log_info("Adding region %s (As a backup) for server %s hash key %lu", region->id,
-				 region->backups[i].kreon_ds_hostname, region_map->hash_key);
-			HASH_ADD_PTR(dataserver->region_map, hash_key, region_map);
-			msg.epoch = dataserver->server_id.epoch;
-
-			rc = zoo_create(desc->zh, path, (char *)&msg, sizeof(struct krm_msg), &ZOO_OPEN_ACL_UNSAFE,
-					ZOO_SEQUENCE, mail_id, mail_id_len);
-			if (rc != ZOK) {
-				log_fatal("failed to send open region command to path %s with error code %s", path,
-					  zku_op2String(rc));
-				_exit(EXIT_FAILURE);
-			}
-			free(path);
-		}
-	}
-}
-#endif
 /**
  * Watcher we use to process session events. In particular,
  * when it receives a ZOO_CONNECTED_STATE event, we set the
@@ -783,6 +643,20 @@ static void regs_handle_master_command(struct regs_server_desc *region_server, M
 		region_desc_t region_desc = regs_open_region(region_server, mregion, MC_get_role(command));
 		regs_init_log_buffers_with_replicas(region_server, region_desc);
 		break;
+	case RECONFIGURE_GROUP:
+		log_fatal("Got RECONFIGURE_GROUP command XXX TODO XXX");
+		mregion = MREG_deserialize_region(MC_get_buffer(command), MC_get_buffer_size(command));
+		region_desc = regs_get_region_desc(region_server, MREG_get_region_id(mregion),
+						   strlen(MREG_get_region_id(mregion)));
+		if (NULL == region_desc) {
+			log_fatal("Master commands me to reconfigure region: %s that I don't have",
+				  MREG_get_region_id(mregion));
+			_exit(EXIT_FAILURE);
+		}
+		//close region command
+		//reopen
+		_exit(EXIT_FAILURE);
+		break;
 	default:
 		log_debug("Unhandled case");
 		_exit(EXIT_FAILURE);
@@ -809,7 +683,6 @@ static void command_watcher(zhandle_t *zkh, int type, int state, const char *pat
 				  zerror(ret_code));
 			_exit(EXIT_FAILURE);
 		}
-		log_debug("Buffer from ZK: %d", buf_len);
 		MC_command_t command = MC_deserialize_command(buffer, buf_len);
 		regs_handle_master_command(server, command);
 		if (zoo_delete(zkh, command_path, -1) != ZOK) {

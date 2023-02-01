@@ -123,3 +123,16 @@ enum region_server_status RS_get_region_server_status(mregion_server_t region_se
 {
 	return region_server->status;
 }
+
+int RS_compare(mregion_server_t server_1, mregion_server_t server_2)
+{
+	return memcmp(server_1->server_name.kreon_ds_hostname, server_2->server_name.kreon_ds_hostname,
+		      server_1->server_name.kreon_ds_hostname_length < server_2->server_name.kreon_ds_hostname_length ?
+			      server_1->server_name.kreon_ds_hostname_length :
+			      server_2->server_name.kreon_ds_hostname_length);
+}
+
+char *RS_get_server_id(mregion_server_t region_server)
+{
+	return region_server->server_name.kreon_ds_hostname;
+}

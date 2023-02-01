@@ -1,4 +1,4 @@
-// Copyright [2023] [FORTH-ICS]
+// Copyright [2023] [FORTH-ICS_ns]
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -82,15 +82,85 @@ static struct region_server_table_s *create_region_server_table(void)
 	return table;
 }
 
-static mregion_server_t find_server(struct region_server_table_s *table, char *region_server_name)
+static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *zhandle,
+					  struct krm_server_name *server_name)
+{
+	/*check if you are hostname-RDMA_port belongs to the project*/
+	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGION_SERVERS_EPOCHS, KRM_SLASH, region_server_name);
+	struct Stat stat;
+	char buffer[JSON_BUFFER_SIZE];
+	int buffer_len = JSON_BUFFER_SIZE;
+	int ret_code = zoo_get(zhandle, zk_path, 0, buffer, &buffer_len, &stat);
+
+	if (ret_code != ZOK) {
+		log_warn("Failed fetching info from zookeeper for server %s Reason: %s", zk_path,
+			 zku_op2String(ret_code));
+		free(zk_path);
+		return NULL;
+	}
+
+	// Parse json string with server's krm_server_name struct
+	cJSON *json = cJSON_ParseWithLength(buffer, buffer_len);
+	if (!cJSON_IsObject(json)) {
+		cJSON_Delete(json);
+		log_warn("Failed to parser server json info");
+		return NULL;
+	}
+
+	cJSON *hostname = cJSON_GetObjectItem(json, "hostname");
+	cJSON *tebis_region_server_name = cJSON_GetObjectItem(json, "dataserver_name");
+	cJSON *rdma_ip = cJSON_GetObjectItem(json, "rdma_ip_addr");
+	cJSON *epoch = cJSON_GetObjectItem(json, "epoch");
+	cJSON *leader = cJSON_GetObjectItem(json, "leader");
+	if (!cJSON_IsString(hostname) || !cJSON_IsString(tebis_region_server_name) || !cJSON_IsString(rdma_ip) ||
+	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
+		cJSON_Delete(json);
+		log_warn("Failed to retrieve all of the server info from json. Possible data corruption?");
+		assert(0);
+	}
+	memcpy(server_name->hostname, cJSON_GetStringValue(hostname), strlen(cJSON_GetStringValue(hostname)));
+	memcpy(server_name->kreon_ds_hostname, cJSON_GetStringValue(tebis_region_server_name),
+	       strlen(cJSON_GetStringValue(tebis_region_server_name)));
+
+	log_debug("Fetched info from ZK path: %s hostname of server is: %s", zk_path, server_name->kreon_ds_hostname);
+
+	server_name->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(tebis_region_server_name));
+	memcpy(server_name->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), strlen(cJSON_GetStringValue(rdma_ip)));
+	server_name->epoch = cJSON_GetNumberValue(epoch);
+	memcpy(server_name->kreon_leader, cJSON_GetStringValue(leader), strlen(cJSON_GetStringValue(leader)));
+
+	cJSON_Delete(json);
+	free(zk_path);
+
+	return true;
+}
+
+static mregion_server_t MASTER_find_server(struct region_server_table_entry_s **table, char *region_server_name)
 {
 	uint64_t server_key = djb2_hash((unsigned char *)region_server_name, strlen(region_server_name));
+	log_debug("Searching server:%s  name size: %lu with hash_key: %lu", region_server_name,
+		  strlen(region_server_name), server_key);
 	struct region_server_table_entry_s *server = NULL;
-	HASH_FIND_PTR(table->hash_table_root, &server_key, server);
+	HASH_FIND_PTR(*table, &server_key, server);
 	return server ? server->region_server : NULL;
 }
 
-struct region_server_table_entry_s *allocate_region_server_slot(struct region_server_table_s *table)
+static mregion_server_t MASTER_add_server(zhandle_t *zhandle, struct region_server_table_entry_s **table,
+					  char *region_server_name)
+{
+	struct krm_server_name server_name = { 0 };
+	MASTER_get_region_server_name(region_server_name, zhandle, &server_name);
+	struct region_server_table_entry_s *server_entry = calloc(1UL, sizeof(struct region_server_table_entry_s));
+	mregion_server_t region_server = RS_create_region_server(server_name, DEAD);
+	server_entry->region_server = region_server;
+	server_entry->slot_in_use = true;
+	server_entry->server_key = djb2_hash((unsigned char *)RS_get_server_id(server_entry->region_server),
+					     strlen(RS_get_server_id(server_entry->region_server)));
+	HASH_ADD_PTR(*table, server_key, server_entry);
+	return region_server;
+}
+
+struct region_server_table_entry_s *MASTER_allocate_region_server_slot(struct region_server_table_s *table)
 {
 	for (int i = 0; i < table->capacity; ++i) {
 		if (table->region_servers[i].slot_in_use)
@@ -144,16 +214,8 @@ struct master_s {
 	uint8_t zookeeper_conn_state;
 };
 
-#if 0
-static void clear_region_server_slot(struct region_server *server_table)
-{
-	memset(server_table, 0x00, sizeof(struct region_server));
-	server_table->slot_in_use = true;
-}
-#endif
-
 /**
- * Watcher we use to process session events. In particular,
+ * @brief Watcher we use to process session events. In particular,
  * when it receives a ZOO_CONNECTED_STATE event, we set the
  * connected variable so that we know that the session has
  * been established.
@@ -229,58 +291,6 @@ static void MASTER_mailbox_watcher(zhandle_t *zkh, int type, int state, const ch
 		mail_path = NULL;
 	}
 	MUTEX_UNLOCK(&master->master_lock);
-}
-
-static bool MASTER_get_region_server_name(char *region_server_name, zhandle_t *zhandle,
-					  struct krm_server_name *server_name)
-{
-	/*check if you are hostname-RDMA_port belongs to the project*/
-	char *zk_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGION_SERVERS_EPOCHS, KRM_SLASH, region_server_name);
-	struct Stat stat;
-	char buffer[JSON_BUFFER_SIZE];
-	int buffer_len = JSON_BUFFER_SIZE;
-	int ret_code = zoo_get(zhandle, zk_path, 0, buffer, &buffer_len, &stat);
-
-	if (ret_code != ZOK) {
-		log_warn("Failed fetching info from zookeeper for server %s Reason: %s", zk_path,
-			 zku_op2String(ret_code));
-		free(zk_path);
-		return NULL;
-	}
-
-	log_debug("Fetched info for region server: %s", zk_path);
-
-	free(zk_path);
-
-	// Parse json string with server's krm_server_name struct
-	cJSON *json = cJSON_ParseWithLength(buffer, buffer_len);
-	if (!cJSON_IsObject(json)) {
-		cJSON_Delete(json);
-		log_warn("Failed to parser server json info");
-		return NULL;
-	}
-
-	cJSON *hostname = cJSON_GetObjectItem(json, "hostname");
-	cJSON *dataserver_name_retrieved = cJSON_GetObjectItem(json, "dataserver_name");
-	cJSON *rdma_ip = cJSON_GetObjectItem(json, "rdma_ip_addr");
-	cJSON *epoch = cJSON_GetObjectItem(json, "epoch");
-	cJSON *leader = cJSON_GetObjectItem(json, "leader");
-	if (!cJSON_IsString(hostname) || !cJSON_IsString(dataserver_name_retrieved) || !cJSON_IsString(rdma_ip) ||
-	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
-		cJSON_Delete(json);
-		log_warn("Failed to retrieve all of the server info from json. Possible data corruption?");
-		assert(0);
-	}
-	strncpy(server_name->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
-	strncpy(server_name->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
-	server_name->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
-	strncpy(server_name->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE);
-	server_name->epoch = cJSON_GetNumberValue(epoch);
-	strncpy(server_name->kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE);
-
-	cJSON_Delete(json);
-
-	return true;
 }
 
 /**
@@ -518,7 +528,11 @@ static void MASTER_reconfigure_region(struct master_s *master, mregion_t region)
 		return;
 	MREG_remove_and_upgrade_primary(region);
 	char *new_host = MASTER_choose_random_server(master->alive_servers, region);
-	log_debug("I add backup %s due to faulty primary %s for region:%s", new_host, MREG_get_region_primary(region),
+	if (NULL == new_host) {
+		log_fatal("Sorry data loss for region: %s", MREG_get_region_id(region));
+		_exit(EXIT_FAILURE);
+	}
+	log_debug("I added backup %s due to faulty primary %s for region:%s", new_host, MREG_get_region_primary(region),
 		  MREG_get_region_id(region));
 	MREG_append_backup_in_region(region, new_host);
 }
@@ -594,7 +608,7 @@ struct region_reconfiguration_s {
 };
 
 /**
- * Iterates the regions of the failed server and 1)reconfigures them and 2)
+ * @brief Iterates the regions of the failed server and 1)reconfigures them and 2)
  * sends the appropriate commands to the primary of the corresponding region.
  * Master keeps replica group info in a logical order. In case of a failed server
  * @param master Tebis master
@@ -620,6 +634,8 @@ static void MASTER_handle_region_server_failure(struct master_s *master, mregion
 			continue;
 		updated_region = calloc(1UL, sizeof(*updated_region));
 		updated_region->region = RS_get_region(region_info);
+		log_debug("Adding region %s to affected_regions from failure of server",
+			  MREG_get_region_id(updated_region->region));
 		HASH_ADD_PTR(*affected_regions, region, updated_region);
 	}
 
@@ -657,7 +673,7 @@ static void MASTER_mark_servers_dead(struct master_s *master, struct server_vect
 static void MASTER_add_newbie_servers(struct master_s *master, struct server_vector_s *alive_server_vector)
 {
 	for (int i = 0; i < alive_server_vector->count; ++i) {
-		struct region_server_table_entry_s *newbie = allocate_region_server_slot(master->alive_servers);
+		struct region_server_table_entry_s *newbie = MASTER_allocate_region_server_slot(master->alive_servers);
 		assert(newbie);
 		struct krm_server_name server_name = { 0 };
 		if (!MASTER_get_region_server_name(alive_server_vector->names[i], master->zhandle, &server_name)) {
@@ -667,9 +683,9 @@ static void MASTER_add_newbie_servers(struct master_s *master, struct server_vec
 
 		newbie->region_server = RS_create_region_server(server_name, ALIVE);
 
-		log_debug("Adding server hostname: %s", server_name.kreon_ds_hostname);
+		log_debug("Adding server:%s in alive_servers", server_name.kreon_ds_hostname);
 		newbie->server_key = djb2_hash((const unsigned char *)server_name.kreon_ds_hostname,
-					       strlen(server_name.kreon_ds_hostname));
+					       server_name.kreon_ds_hostname_length);
 		HASH_ADD_PTR(master->alive_servers->hash_table_root, server_key, newbie);
 	}
 }
@@ -693,6 +709,81 @@ static void MASTER_remove_dead_servers(struct master_s *master, struct server_ve
 		RS_destroy_region_server(region_server_entry->region_server);
 		--master->alive_servers->num_elements;
 		memset(region_server_entry, 0x00, sizeof(*region_server_entry));
+	}
+}
+
+static uint64_t MASTER_create_uuid(struct master_s *master)
+{
+	char uuid[KRM_HOSTNAME_SIZE] = { 0 };
+	if (snprintf(uuid, KRM_HOSTNAME_SIZE, "%s:%ld%ld", master->master_hostname, master->leadership_clock,
+		     ++master->command_counter) < 0) {
+		log_fatal("Failed to create uuid");
+		_exit(EXIT_FAILURE);
+	}
+	return djb2_hash((const unsigned char *)uuid, strlen(uuid));
+}
+
+/**
+ * Sends an OPEN region command as primary. Region contains the new region
+ * configuration (the hostnames of the Backups). Primary of the region is
+ * responsible to notify its Backups. hostname is of the form <hostname>:<rdma
+ * port>,clock which is the mailbox path of the Region Server.
+ */
+static void MASTER_send_open_region_command_to_primary(struct master_s *master, mregion_t region, MC_command_t command)
+{
+	mregion_server_t region_server =
+		MASTER_find_server(&master->alive_servers->hash_table_root, MREG_get_region_primary(region));
+	if (NULL == region_server) {
+		log_fatal("Cannot find server %s in the alive servers table", MREG_get_region_primary(region));
+		_exit(EXIT_FAILURE);
+	}
+
+	char mail_id[MAX_MAILBOX_PATH_SIZE] = { 0 };
+	char mailbox_path[MAX_MAILBOX_PATH_SIZE] = { 0 };
+	if (snprintf(mailbox_path, MAX_MAILBOX_PATH_SIZE, "%s", MREG_get_region_primary(region)) < 0) {
+		log_fatal("Failed to create mailbox path");
+		_exit(EXIT_FAILURE);
+	}
+
+	MREG_print_region_configuration(region);
+	char *zk_path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, mailbox_path, KRM_MAIL_TITLE);
+	int ret_code = zoo_create(master->zhandle, zk_path, (char *)command, MC_get_command_size(command),
+				  &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE, mail_id, MAX_MAILBOX_PATH_SIZE);
+	if (ZOK != ret_code) {
+		log_fatal("Server: %s failed to send message in the message queue  %s", zk_path, zerror(ret_code));
+		_exit(EXIT_FAILURE);
+	}
+	log_debug("Send open region as primary command at zk_path %s", mail_id);
+	free(zk_path);
+	zk_path = NULL;
+}
+
+/**
+ * @brief Logs to region log changes in region configuration and annouces the result to current/new region
+ * primary's to take appropriate action
+ */
+static void MASTER_announce_region_reconfiguration(struct master_s *master, struct region_reconfiguration_s *regions)
+{
+	/*Log all new region configuration in Zookeeper*/
+	struct region_reconfiguration_s *updated_region = NULL;
+	struct region_reconfiguration_s *tmp = NULL;
+	HASH_ITER(hh, regions, updated_region, tmp)
+	{
+		log_debug("Boom!");
+		MREG_print_region_configuration(updated_region->region);
+		MC_command_t command = MC_create_command(RECONFIGURE_GROUP, updated_region->region,
+							 MREG_get_region_primary_role(updated_region->region),
+							 MASTER_create_uuid(master));
+
+		if (!RLOG_append_req(master->region_log, command)) {
+			log_fatal("Failed to append region reconfiguration in the region log");
+			_exit(EXIT_FAILURE);
+		}
+		MASTER_send_open_region_command_to_primary(master, updated_region->region, command);
+		MC_destroy_command(command);
+		/*send message to corresponding primary*/
+		HASH_DEL(regions, updated_region);
+		free(updated_region);
 	}
 }
 
@@ -720,9 +811,9 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	alive_servers_path = NULL;
 
 	struct server_vector_s *alive_server_vector = MASTER_copy_from_string_vector(&alive_servers);
-	// log_debug("Real alive servers are total number: %d", alive_server_vector->count);
-	// for (int i = 0; i < alive_server_vector->count; i++)
-	// 	log_debug("Real alive server is %s", alive_server_vector->names[i]);
+	log_debug("Real alive servers are total number: %d", alive_server_vector->count);
+	for (int i = 0; i < alive_server_vector->count; i++)
+		log_debug("Real alive server is %s", alive_server_vector->names[i]);
 
 	struct server_vector_s *dead_server_vector = MASTER_find_dead_servers(master, alive_server_vector);
 
@@ -733,7 +824,8 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	MASTER_mark_servers_dead(master, dead_server_vector);
 
 	for (int i = 0; i < dead_server_vector->count; ++i) {
-		mregion_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		mregion_server_t region_server =
+			MASTER_find_server(&master->alive_servers->hash_table_root, dead_server_vector->names[i]);
 		if (!region_server) {
 			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
 			_exit(EXIT_FAILURE);
@@ -746,7 +838,8 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	for (int i = 0; i < dead_server_vector->count; ++i) {
 		log_debug("Dead server is %s", dead_server_vector->names[i]);
 
-		mregion_server_t region_server = find_server(master->alive_servers, dead_server_vector->names[i]);
+		mregion_server_t region_server =
+			MASTER_find_server(&master->alive_servers->hash_table_root, dead_server_vector->names[i]);
 		if (!region_server) {
 			log_fatal("Where is server %s this should not happen", dead_server_vector->names[i]);
 			_exit(EXIT_FAILURE);
@@ -755,17 +848,7 @@ static void MASTER_region_server_health_watcher(zhandle_t *zkh, int type, int st
 	}
 
 	log_debug("Gathered info about infected regions proceeding to recongifuration");
-	/*Log all new region configuration in Zookeeper*/
-	struct region_reconfiguration_s *updated_region = NULL;
-	struct region_reconfiguration_s *tmp = NULL;
-	HASH_ITER(hh, affected_regions, updated_region, tmp)
-	{
-		MREG_print_region_configuration(updated_region->region);
-		/*log new region configuration in Zookeeper*/
-		/*send message to corresponding primary*/
-		HASH_DEL(affected_regions, updated_region);
-		free(updated_region);
-	}
+	MASTER_announce_region_reconfiguration(master, affected_regions);
 
 	MASTER_remove_dead_servers(master, dead_server_vector);
 	MASTER_deallocate_server_names(dead_server_vector);
@@ -888,7 +971,7 @@ static void init_master(struct master_s *master, int port)
 	char *region_log_path = zku_concat_strings(3, KRM_ROOT_PATH, KRM_REGION_LOG, KRM_REGION_LOG_PREFIX);
 	master->alive_servers = create_region_server_table();
 	master->region_table = NULL;
-	master->region_log = create_region_log(region_log_path, strlen(region_log_path), master->zhandle);
+	master->region_log = RLOG_create_region_log(region_log_path, strlen(region_log_path), master->zhandle);
 	free(region_log_path);
 }
 
@@ -933,14 +1016,14 @@ static void MASTER_increase_leadership_clock(struct master_s *master)
 }
 
 /**
- * This function builds the state of alive region servers in the system. It
+ * @brief This function builds the state of alive region servers in the system. It
  * first fills the size of the total servers. Master uses this information
  * during boot after a graceful shutdown. Then it gets alive servers of the
  * system and sets a watcher to build the table with the alive servers.
  */
-
 static void MASTER_build_server_table(struct master_s *master)
 {
+	log_debug("Building alive servers table...");
 	MUTEX_LOCK(&master->master_lock);
 	struct String_vector alive_servers = { 0 };
 	char *zk_path = zku_concat_strings(2, KRM_ROOT_PATH, KRM_ALIVE_SERVERS_PATH);
@@ -953,7 +1036,8 @@ static void MASTER_build_server_table(struct master_s *master)
 	}
 
 	for (int i = 0; i < alive_servers.count; i++) {
-		struct region_server_table_entry_s *server_entry = allocate_region_server_slot(master->alive_servers);
+		struct region_server_table_entry_s *server_entry =
+			MASTER_allocate_region_server_slot(master->alive_servers);
 		assert(server_entry);
 		struct krm_server_name server_name = { 0 };
 		if (!MASTER_get_region_server_name(alive_servers.data[i], master->zhandle, &server_name)) {
@@ -964,19 +1048,24 @@ static void MASTER_build_server_table(struct master_s *master)
 		server_entry->region_server = RS_create_region_server(server_name, ALIVE);
 		server_entry->server_key =
 			djb2_hash((unsigned char *)server_name.kreon_ds_hostname, server_name.kreon_ds_hostname_length);
-		log_debug("Adding server hostname: %s with hash key %lu", server_name.kreon_ds_hostname,
-			  server_entry->server_key);
+		log_debug("Adding server hostname: %s size_name: %u with hash key %lu", server_name.kreon_ds_hostname,
+			  server_name.kreon_ds_hostname_length, server_entry->server_key);
 		HASH_ADD_PTR(master->alive_servers->hash_table_root, server_key, server_entry);
 	}
 
 	MUTEX_UNLOCK(&master->master_lock);
 	free(zk_path);
-	zk_path = NULL;
+	log_debug("Building alive servers table... DONE");
 }
 
 static void MASTER_build_region_table(struct master_s *master)
 {
 	MUTEX_LOCK(&master->master_lock);
+	/**
+   * During the build up of server table some servers
+   * may have failed as well
+   */
+	struct region_server_table_entry_s *dead_servers = NULL;
 
 	struct String_vector region_names = { 0 };
 	/*read all regions and construct table*/
@@ -1032,12 +1121,20 @@ static void MASTER_build_region_table(struct master_s *master)
 		MREG_set_region_primary(region_entry->region, cJSON_GetStringValue(primary));
 		MREG_set_region_primary_role(region_entry->region,
 					     master->leadership_clock > 1 ? PRIMARY : PRIMARY_INFANT);
-		mregion_server_t region_server =
-			find_server(master->alive_servers, MREG_get_region_primary(region_entry->region));
-		if (!region_server) {
-			log_fatal("Could not find server %s this should not happen",
-				  MREG_get_region_primary(region_entry->region));
-			_exit(EXIT_FAILURE);
+		mregion_server_t region_server = MASTER_find_server(&master->alive_servers->hash_table_root,
+								    MREG_get_region_primary(region_entry->region));
+
+		if (!region_server)
+			region_server =
+				MASTER_find_server(&dead_servers, MREG_get_region_primary(region_entry->region));
+
+		if (NULL == region_server) {
+			log_warn(
+				"Server %s hosting region: %s  as *PRIMARY* is: DEAD acting normal going to handle it at the end",
+				MREG_get_region_primary(region_entry->region),
+				MREG_get_region_id(region_entry->region));
+			region_server = MASTER_add_server(master->zhandle, &dead_servers,
+							  MREG_get_region_primary(region_entry->region));
 		}
 
 		RS_add_region_in_server(region_server, region_entry->region,
@@ -1048,21 +1145,31 @@ static void MASTER_build_region_table(struct master_s *master)
 					       cJSON_GetStringValue(cJSON_GetArrayItem(backups, backup_id)));
 			MREG_set_region_backup_role(region_entry->region, backup_id,
 						    master->leadership_clock > 1 ? BACKUP : BACKUP_INFANT);
-			mregion_server_t backup_server = find_server(
-				master->alive_servers, MREG_get_region_backup(region_entry->region, backup_id));
-			struct krm_server_name *backup_name = RS_get_region_server_krm_hostname(backup_server);
+			region_server = MASTER_find_server(&master->alive_servers->hash_table_root,
+							   MREG_get_region_backup(region_entry->region, backup_id));
 
-			if (!backup_server) {
-				log_fatal("Could not find server %s, this should not happen",
-					  MREG_get_region_backup(region_entry->region, backup_id));
-				_exit(EXIT_FAILURE);
+			if (!region_server)
+				region_server = MASTER_find_server(
+					&dead_servers, MREG_get_region_backup(region_entry->region, backup_id));
+
+			if (NULL == region_server) {
+				log_warn(
+					"Server %s hosting region: %s  as *BACKUP* is: DEAD acting normal going to handle it at the end",
+					MREG_get_region_backup(region_entry->region, backup_id),
+					MREG_get_region_id(region_entry->region));
+				region_server =
+					MASTER_add_server(master->zhandle, &dead_servers,
+							  MREG_get_region_backup(region_entry->region, backup_id));
 			}
-			log_debug("IP address of backup server:%s is %s", backup_name->kreon_ds_hostname,
-				  backup_name->RDMA_IP_addr);
-			MREG_set_region_backup_IP(region_entry->region, backup_id, backup_name->RDMA_IP_addr,
-						  sizeof(backup_name->RDMA_IP_addr));
+			struct krm_server_name backup_name = { 0 };
+			MASTER_get_region_server_name(MREG_get_region_backup(region_entry->region, backup_id),
+						      master->zhandle, &backup_name);
+			log_debug("IP address of backup server:%s is %s", backup_name.kreon_ds_hostname,
+				  backup_name.RDMA_IP_addr);
+			MREG_set_region_backup_IP(region_entry->region, backup_id, backup_name.RDMA_IP_addr,
+						  sizeof(backup_name.RDMA_IP_addr));
 
-			RS_add_region_in_server(backup_server, region_entry->region,
+			RS_add_region_in_server(region_server, region_entry->region,
 						MREG_get_region_backup_role(region_entry->region, backup_id));
 		}
 		HASH_ADD_PTR(master->region_table, region_key, region_entry);
@@ -1071,9 +1178,25 @@ static void MASTER_build_region_table(struct master_s *master)
 		free(region_path);
 	}
 	free(zk_path);
-	replay_region_log(master->region_log);
+	RLOG_replay_log(master->region_log);
+
+	struct region_server_table_entry_s *server_entry = NULL;
+	struct region_server_table_entry_s *tmp = NULL;
+
+	HASH_ITER(hh, dead_servers, server_entry, tmp)
+	{
+		struct region_reconfiguration_s *affected_regions = NULL;
+
+		log_debug("Handling failure of server: %s", RS_get_server_id(server_entry->region_server));
+		MASTER_handle_region_server_failure(master, server_entry->region_server, &affected_regions);
+		MASTER_announce_region_reconfiguration(master, affected_regions);
+		affected_regions = NULL;
+		HASH_DEL(dead_servers, server_entry);
+		free(server_entry->region_server);
+		free(server_entry);
+	}
+
 	MUTEX_UNLOCK(&master->master_lock);
-	log_debug("Successfully Build Region Table");
 }
 
 /**
@@ -1137,49 +1260,6 @@ typedef struct {
 	mregion_t region;
 } region_server_command_t;
 
-/**
- * Sends an OPEN region command as primary. Region contains the new region
- * configuration (the hostnames of the Backups). Primary of the region is
- * responsible to notify its Backups. hostname is of the form <hostname>:<rdma
- * port>,clock which is the mailbox path of the Region Server.
- */
-static void MASTER_send_open_region_command_to_primary(struct master_s *master, mregion_t region, MC_command_t command)
-{
-	mregion_server_t region_server = find_server(master->alive_servers, MREG_get_region_primary(region));
-	if (NULL == region_server) {
-		log_fatal("Cannot find server %s in the alive servers table", MREG_get_region_primary(region));
-	}
-
-	char mail_id[MAX_MAILBOX_PATH_SIZE] = { 0 };
-	char mailbox_path[MAX_MAILBOX_PATH_SIZE] = { 0 };
-	if (snprintf(mailbox_path, MAX_MAILBOX_PATH_SIZE, "%s", MREG_get_region_primary(region)) < 0) {
-		log_fatal("Failed to create mailbox path");
-		_exit(EXIT_FAILURE);
-	}
-
-	MREG_print_region_configuration(region);
-	char *zk_path = zku_concat_strings(5, KRM_ROOT_PATH, KRM_MAILBOX_PATH, KRM_SLASH, mailbox_path, KRM_MAIL_TITLE);
-	int ret_code = zoo_create(master->zhandle, zk_path, (char *)command, MC_get_command_size(command),
-				  &ZOO_OPEN_ACL_UNSAFE, ZOO_SEQUENCE, mail_id, MAX_MAILBOX_PATH_SIZE);
-	if (ZOK != ret_code) {
-		log_fatal("Server: %s failed to send message in the message queue  %s", zk_path, zerror(ret_code));
-		_exit(EXIT_FAILURE);
-	}
-	// log_debug("Send open region as primary command at zk_path %s", mail_id);
-	free(zk_path);
-	zk_path = NULL;
-}
-
-static uint64_t MASTER_create_uuid(struct master_s *master)
-{
-	char uuid[KRM_HOSTNAME_SIZE] = { 0 };
-	if (snprintf(uuid, KRM_HOSTNAME_SIZE, "%s:%ld%ld", master->master_hostname, master->leadership_clock,
-		     ++master->command_counter) < 0) {
-		log_fatal("Failed to create uuid");
-		_exit(EXIT_FAILURE);
-	}
-	return djb2_hash((const unsigned char *)uuid, strlen(uuid));
-}
 static void MASTER_assign_regions(struct master_s *master)
 {
 	struct region_table_s *region_entry = NULL;
@@ -1190,7 +1270,7 @@ static void MASTER_assign_regions(struct master_s *master)
 		MC_command_t command = MC_create_command(OPEN_REGION_START, region_entry->region, PRIMARY_INFANT,
 							 MASTER_create_uuid(master));
 
-		if (!append_req_to_region_log(master->region_log, command)) {
+		if (!RLOG_append_req(master->region_log, command)) {
 			log_fatal("Failed to append to region log ");
 			_exit(EXIT_FAILURE);
 		}
