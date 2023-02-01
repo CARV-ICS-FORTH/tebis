@@ -27,7 +27,7 @@ struct region_log {
 	zhandle_t *zk_handle;
 };
 
-region_log_t create_region_log(char *path, unsigned int path_len, zhandle_t *zhandle)
+region_log_t RLOG_create_region_log(char *path, unsigned int path_len, zhandle_t *zhandle)
 {
 	if (path_len > KRM_MAX_ZK_PATH_SIZE) {
 		log_fatal("path size %d exceeds max path size %lu", path_len, KRM_MAX_ZK_PATH_SIZE);
@@ -46,12 +46,12 @@ void trim_region_log(region_log_t region_log, int64_t max_lsn)
 	(void)max_lsn;
 }
 
-void replay_region_log(region_log_t region_log)
+void RLOG_replay_log(region_log_t region_log)
 {
 	(void)region_log;
 }
 
-bool append_req_to_region_log(region_log_t region_log, MC_command_t command)
+bool RLOG_append_req(region_log_t region_log, MC_command_t command)
 {
 	char log_entry[KRM_MAX_ZK_PATH_SIZE] = { 0 };
 	int ret_code = zoo_create(region_log->zk_handle, region_log->zk_path, (const char *)command,
