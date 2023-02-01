@@ -419,20 +419,12 @@ void *worker_thread_kernel(void *args)
 			if (type != REPLICA_INDEX_FLUSH_REQ) {
 				__send_rdma_message(job->conn, job->reply_msg, NULL);
 			}
-			switch (job->task_type) {
-			case KRM_CLIENT_TASK:
+
+			if (job->task_type == KRM_CLIENT_TASK)
 				__sync_fetch_and_sub(&root_server->numa_servers[worker->root_server_id]
 							      ->spinner.num_of_outstanding_client_req,
 						     1);
-				free(job);
-				break;
-			case KRM_SERVER_TASK:
-				free(job);
-				break;
-			default:
-				log_fatal("Unkown pool type!");
-				_exit(EXIT_FAILURE);
-			}
+			free(job);
 			break;
 
 		default:
@@ -886,11 +878,9 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_in
  */
 static void handle_task(struct regs_server_desc const *mydesc, struct work_task *task)
 {
-	enum message_type type;
+	enum message_type type = task->msg->msg_type;
 	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)
-		type = PUT_REQUEST; /*will handle the IF_EXIST internally*/
-	else
-		type = task->msg->msg_type;
+		type = PUT_REQUEST;
 
 	task_dispatcher[type](mydesc, task);
 
@@ -1125,7 +1115,7 @@ int main(int argc, char *argv[])
 	stats_init(root_server->num_of_numa_servers, server->spinner.num_workers);
 	sem_init(&exit_main, 0, 0);
 
-	log_debug("Server ready");
+	log_debug("Server(S) ready");
 	if (signal(SIGINT, sigint_handler) == SIG_ERR) {
 		log_fatal("can't catch SIGINT");
 		_exit(EXIT_FAILURE);
