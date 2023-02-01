@@ -18,6 +18,7 @@
 #include "configurables.h"
 #include "messages.h"
 #include "metadata.h"
+#include "region_desc.h"
 #include "server_communication.h"
 #include <include/parallax/parallax.h>
 #include <stdint.h>
@@ -57,8 +58,8 @@ struct work_task {
 	struct sc_msg_pair communication_buf;
 	struct channel_rdma *channel;
 	struct connection_rdma *conn;
-	msg_header *msg;
-	struct region_desc *r_desc;
+	struct msg_header *msg;
+	region_desc_t r_desc;
 	struct kv_splice *kv;
 	enum tb_kv_category kv_category; /*XXX TODO make these a struct XXX*/
 	uint32_t triggering_msg_offset;
