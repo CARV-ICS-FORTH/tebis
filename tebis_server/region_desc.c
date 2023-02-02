@@ -39,9 +39,8 @@ struct region_desc {
 	mregion_t mregion;
 	/*for replica_role deserializing the index*/
 	pthread_rwlock_t replica_log_map_lock;
-	struct krm_segment_entry *replica_log_map;
-	//struct krm_segment_entry *replica_index_map[MAX_LEVELS];
-	//rdma related staff for sending the index
+	struct region_desc_map_entry *replica_log_map;
+	struct region_desc_map_entry *replica_index_map[MAX_LEVELS];
 
 //Primary to Backup compaction flush_index_segment
 #define CLOCK_DIMENTIONS 2
@@ -427,29 +426,6 @@ void region_desc_zero_rdma_buffer(region_desc_t region_desc, enum log_category l
 		       region_desc->r_state->big_recovery_rdma_buf.rdma_buf_size);
 }
 
-void region_desc_add_segment_into_HT(region_desc_t region_desc, uint64_t primary_segment_offt,
-				     uint64_t replica_segment_offt)
-{
-	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
-	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
-	entry->primary_segment_offt = primary_segment_offt;
-	entry->replica_segment_offt = replica_segment_offt;
-	pthread_rwlock_wrlock(&region_desc->replica_log_map_lock);
-	HASH_ADD_PTR(region_desc->replica_log_map, primary_segment_offt, entry);
-	pthread_rwlock_unlock(&region_desc->replica_log_map_lock);
-}
-
-int8_t region_desc_is_segment_in_HT_mappings(region_desc_t region_desc, uint64_t primary_segment_offt)
-{
-	struct krm_segment_entry *index_entry;
-
-	pthread_rwlock_rdlock(&region_desc->replica_log_map_lock);
-	HASH_FIND_PTR(region_desc->replica_log_map, &primary_segment_offt, index_entry);
-	pthread_rwlock_unlock(&region_desc->replica_log_map_lock);
-
-	return index_entry != NULL ? 1 : 0;
-}
-
 void region_desc_set_flush_msg_pair(region_desc_t region_desc, int backup_id, struct sc_msg_pair msg_pair)
 {
 	region_desc->m_state->flush_cmd[backup_id].msg_pair = msg_pair;
@@ -500,4 +476,72 @@ void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, ui
 mregion_t region_desc_get_mregion(region_desc_t region_desc)
 {
 	return region_desc->mregion;
+}
+
+struct region_desc_map_entry {
+	uint64_t primary_segment_offt;
+	uint64_t replica_segment_offt;
+	UT_hash_handle hh;
+};
+
+bool region_desc_is_segment_in_logmap(region_desc_t region_desc, uint64_t primary_segment_offt)
+{
+	struct region_desc_map_entry *index_entry;
+
+	pthread_rwlock_rdlock(&region_desc->replica_log_map_lock);
+	HASH_FIND_PTR(region_desc->replica_log_map, &primary_segment_offt, index_entry);
+	pthread_rwlock_unlock(&region_desc->replica_log_map_lock);
+
+	return index_entry ? true : false;
+}
+
+void region_desc_add_to_logmap(region_desc_t region_desc, uint64_t primary_segment_offt, uint64_t replica_segment_offt)
+{
+	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	struct region_desc_map_entry *entry = calloc(1UL, sizeof(struct region_desc_map_entry));
+	entry->primary_segment_offt = primary_segment_offt;
+	entry->replica_segment_offt = replica_segment_offt;
+	pthread_rwlock_wrlock(&region_desc->replica_log_map_lock);
+	HASH_ADD_PTR(region_desc->replica_log_map, primary_segment_offt, entry);
+	pthread_rwlock_unlock(&region_desc->replica_log_map_lock);
+}
+
+uint64_t region_desc_get_logmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt)
+{
+	struct region_desc_map_entry *index_entry;
+
+	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
+
+	return index_entry ? index_entry->replica_segment_offt : 0;
+}
+
+void region_desc_add_to_indexmap(region_desc_t region_desc, uint64_t primary_segment_offt,
+				 uint64_t replica_segment_offt, uint32_t level_id)
+{
+	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
+	struct region_desc_map_entry *entry = calloc(1UL, sizeof(struct region_desc_map_entry));
+	entry->primary_segment_offt = primary_segment_offt;
+	entry->replica_segment_offt = replica_segment_offt;
+	HASH_ADD_PTR(region_desc->replica_index_map[level_id], primary_segment_offt, entry);
+}
+
+uint64_t region_desc_get_indexmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt, uint32_t level_id)
+{
+	struct region_desc_map_entry *index_entry;
+
+	HASH_FIND_PTR(r_desc->replica_index_map[level_id], &primary_segment_offt, index_entry);
+
+	return index_entry ? index_entry->replica_segment_offt : 0;
+}
+
+void region_desc_free_indexmap(region_desc_t r_desc, uint32_t level_id)
+{
+	uint32_t dst_level_id = level_id + 1;
+	struct region_desc_map_entry *current_entry, *tmp;
+
+	HASH_ITER(hh, r_desc->replica_index_map[dst_level_id], current_entry, tmp)
+	{
+		HASH_DEL(r_desc->replica_index_map[dst_level_id], current_entry);
+		free(current_entry);
+	}
 }

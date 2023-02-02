@@ -13,17 +13,17 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <unistd.h>
 #define SEGMENT_START(x) (x - (x % SEGMENT_SIZE))
 
 struct send_index_rewriter {
 	send_index_segment_iterator_t iterator;
-	struct krm_region_desc *r_desc;
+	region_desc_t r_desc;
 };
 
-send_index_rewriter_t send_index_rewriter_init(struct krm_region_desc *r_desc)
+send_index_rewriter_t send_index_rewriter_init(region_desc_t r_desc)
 {
-	struct send_index_rewriter *rewriter =
-		(struct send_index_rewriter *)calloc(1, sizeof(struct send_index_rewriter));
+	struct send_index_rewriter *rewriter = calloc(1UL, sizeof(struct send_index_rewriter));
 	rewriter->r_desc = r_desc;
 	rewriter->iterator = NULL;
 
@@ -49,18 +49,14 @@ static void send_index_rewriter_rewrite_leaf_node(send_index_rewriter_t rewriter
 		uint64_t ptr_segment_offt = SEGMENT_START(old_kv_ptr);
 		uint64_t ptr_shift = old_kv_ptr - ptr_segment_offt;
 
-		struct krm_segment_entry *index_entry;
-		pthread_rwlock_rdlock(&rewriter->r_desc->replica_log_map_lock);
-		HASH_FIND_PTR(rewriter->r_desc->replica_log_map, &ptr_segment_offt, index_entry);
-		pthread_rwlock_unlock(&rewriter->r_desc->replica_log_map_lock);
-
-		if (!index_entry) {
+		uint64_t replica_seg_offt = region_desc_get_logmap_seg(rewriter->r_desc, ptr_segment_offt);
+		if (!replica_seg_offt) {
 			log_fatal("There is no chance we dont have a segment for you already");
 			_exit(EXIT_FAILURE);
 		}
 
 		//translate now
-		uint64_t replica_ptr_offt = index_entry->replica_segment_offt + ptr_shift;
+		uint64_t replica_ptr_offt = replica_seg_offt + ptr_shift;
 		kv_sep2_set_value_offt(seperated_kv, replica_ptr_offt);
 	}
 }
@@ -76,36 +72,36 @@ static void send_index_rewriter_rewrite_index_node(send_index_rewriter_t rewrite
 		uint64_t old_pivot_ptr = pivot_ptr->child_offt;
 		uint64_t child_segment_offt = SEGMENT_START(old_pivot_ptr);
 		uint64_t pivot_shift = old_pivot_ptr - child_segment_offt;
-		struct krm_segment_entry *index_entry;
-		HASH_FIND_PTR(rewriter->r_desc->replica_index_map[level_id], &child_segment_offt, index_entry);
-		if (!index_entry) {
+
+		uint64_t replica_seg_offt =
+			region_desc_get_indexmap_seg(rewriter->r_desc, child_segment_offt, level_id);
+		if (!replica_seg_offt) {
 			log_fatal("There is no chance we dont have a segment for you already");
 			_exit(EXIT_FAILURE);
 		}
+
 		//translate now
-		uint64_t replica_pivot_offt = index_entry->replica_segment_offt + pivot_shift;
+		uint64_t replica_pivot_offt = replica_seg_offt + pivot_shift;
 		pivot_ptr->child_offt = replica_pivot_offt;
 	}
 }
 
-void send_index_rewriter_rewrite_index(send_index_rewriter_t rewriter, struct krm_region_desc *r_desc,
+void send_index_rewriter_rewrite_index(send_index_rewriter_t rewriter, region_desc_t r_desc,
 				       struct segment_header *segment, uint32_t level_id)
 {
 	assert(!rewriter->iterator);
 	rewriter->iterator = send_index_segment_iterator_init(segment);
 	uint64_t next_segment_offt = (uint64_t)segment->next_segment;
 	if (next_segment_offt) {
-		//log_debug("Searching for next seg offt %lu", next_segment_offt);
-		struct krm_segment_entry *index_entry;
-		HASH_FIND_PTR(rewriter->r_desc->replica_index_map[level_id], &next_segment_offt, index_entry);
-		uint64_t replica_next_segment_offt = 0;
-		if (!index_entry) {
-			replica_next_segment_offt = wappender_allocate_space(r_desc->r_state->wappender[level_id]);
-			add_segment_to_index_HT(r_desc, next_segment_offt, replica_next_segment_offt, level_id);
-		} else
-			replica_next_segment_offt = index_entry->replica_segment_offt;
+		uint64_t replica_seg_offt = region_desc_get_indexmap_seg(r_desc, next_segment_offt, level_id);
 
-		segment->next_segment = (void *)replica_next_segment_offt;
+		if (!replica_seg_offt) {
+			struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+			replica_seg_offt = wappender_allocate_space(r_state->wappender[level_id]);
+			region_desc_add_to_indexmap(rewriter->r_desc, next_segment_offt, replica_seg_offt, level_id);
+		}
+
+		segment->next_segment = (void *)replica_seg_offt;
 	}
 	while (send_index_segment_iterator_is_valid(rewriter->iterator)) {
 		switch (send_index_segment_iterator_get_type(rewriter->iterator)) {

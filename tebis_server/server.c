@@ -816,44 +816,7 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 
 int64_t lsn_to_be_replicated = 1;
 
-static int8_t is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt)
-{
-	struct krm_segment_entry *index_entry;
-
-	pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
-	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
-	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-
-	if (!index_entry)
-		return 0;
-	return 1;
-}
-
-static uint64_t get_segment_in_indexHT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-						uint32_t level_id)
-{
-	struct krm_segment_entry *index_entry;
-
-	HASH_FIND_PTR(r_desc->replica_index_map[level_id], &primary_segment_offt, index_entry);
-
-	if (!index_entry)
-		return 0;
-	return index_entry->replica_segment_offt;
-}
-
-static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-				     uint64_t replica_segment_offt)
-{
-	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
-	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
-	entry->primary_segment_offt = primary_segment_offt;
-	entry->replica_segment_offt = replica_segment_offt;
-	pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
-	HASH_ADD_PTR(r_desc->replica_log_map, primary_segment_offt, entry);
-	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-}
-
-typedef void execute_task(struct regs_server_desc const *mydesc, struct krm_work_task *task);
+typedef void execute_task(struct regs_server_desc const *mydesc, struct work_task *task);
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_index_get_buffer_req,
 							 regs_execute_replica_index_flush_req,

@@ -31,7 +31,8 @@
 #include "region_desc.h"
 #include "send_index/send_index.h"
 #include "send_index/send_index_callbacks.h"
-#include "send_index/send_index_uuid_checker.h"
+#include "send_index/send_index_rewriter.h"
+#include "send_index/send_index_uuid_checker/send_index_uuid_checker.h"
 #include "server_communication.h"
 #include "work_task.h"
 #include "zk_utils.h"
@@ -40,6 +41,7 @@
 #include <btree/conf.h>
 #include <btree/gc.h>
 #include <btree/kv_pairs.h>
+#include <btree/level_write_appender.h>
 #include <btree/lsn.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
@@ -1310,66 +1312,50 @@ void regs_execute_get_req(struct regs_server_desc const *region_server_desc, str
 	}
 	uint32_t offset = request_data.offset;
 	uint32_t msg_bytes_to_read = request_data.bytes_to_read;
-	struct krm_segment_entry {
-		uint64_t primary_segment_offt;
-		uint64_t replica_segment_offt;
-		UT_hash_handle hh;
-	};
 	int32_t fetch_value = request_data.fetch_value;
 	// tranlate now
 	if (offset > lookup_value.val_size) {
-		Alitiz struct msg_data_get_reply reply_data = { .key_found = 1,
-								.offset_too_large = 1,
-								.value_size = 0,
-								.value = NULL,
-								.bytes_remaining = lookup_value.val_size };
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 1,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size };
 		create_get_reply_msg(reply_data, task->reply_msg);
 		goto exit;
 	}
 
 	if (!fetch_value) {
-		struct msg_data_get_reply reply_data = {
-			.key_found = 1,
-			.offset_too_large = 0,
-			.value_size = 0,
-			struct krm_segment_entry{ uint64_t primary_segment_offt;
-		uint64_t replica_segment_offt;
-		UT_hash_handle hh;
-	};
-	.value = NULL, .bytes_remaining = lookup_value.val_size - offset
-};
-create_get_reply_msg(reply_data, task->reply_msg);
-goto exit;
-}
-uint32_t value_bytes_remaining = lookup_value.val_size - offset;
-Alitizuint32_t bytes_to_read = value_bytes_remaining;
-bytes_to_read = value_bytes_remaining;
-int32_t bytes_remaining = 0;
-if (msg_bytes_to_read <= value_bytes_remaining) {
-	bytes_to_read = msg_bytes_to_read;
-	bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
-}
+		struct msg_data_get_reply reply_data = { .key_found = 1,
+							 .offset_too_large = 0,
+							 .value_size = 0,
+							 .value = NULL,
+							 .bytes_remaining = lookup_value.val_size - offset };
+		create_get_reply_msg(reply_data, task->reply_msg);
+		goto exit;
+	}
+	uint32_t value_bytes_remaining = lookup_value.val_size - offset;
+	uint32_t bytes_to_read = value_bytes_remaining;
+	bytes_to_read = value_bytes_remaining;
+	int32_t bytes_remaining = 0;
+	if (msg_bytes_to_read <= value_bytes_remaining) {
+		bytes_to_read = msg_bytes_to_read;
+		bytes_remaining = lookup_value.val_size - (offset + bytes_to_read);
+	}
 
-struct msg_data_get_reply reply_data = {
-	.key_found = 1,
-	.offset_too_large = 0,
-	struct krm_segment_entry{ uint64_t primary_segment_offt;
-uint64_t replica_segment_offt;
-UT_hash_handle hh;
-}
-;
-.value_size = bytes_to_read, .value = NULL, .bytes_remaining = bytes_remaining
-}
-;
-create_get_reply_msg(reply_data, task->reply_msg);
+	struct msg_data_get_reply reply_data = { .key_found = 1,
+						 .offset_too_large = 0,
+						 .value_size = bytes_to_read,
+						 .value = NULL,
+						 .bytes_remaining = bytes_remaining };
+	create_get_reply_msg(reply_data, task->reply_msg);
 
 exit:;
-//finally fix the header
-uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
+	//finally fix the header
+	uint32_t payload_length = get_reply_get_payload_size(task->reply_msg);
 
-regs_fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
-set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
-task->kreon_operation_status = TASK_COMPLETE;
+	regs_fill_reply_header(task->reply_msg, task, payload_length, GET_REPLY);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	task->kreon_operation_status = TASK_COMPLETE;
 }
 
 void regs_execute_multi_get_req(struct regs_server_desc const *region_server_desc, struct work_task *task)
@@ -1412,11 +1398,8 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 		region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
 	} else {
 		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
-		int8_t segment_exist_in_HT =
-			region_desc_is_segment_in_HT_mappings(r_desc, flush_req->primary_segment_offt);
-		if (!segment_exist_in_HT) {
-			region_desc_add_segment_into_HT(r_desc, flush_req->primary_segment_offt,
-							replica_new_segment_offt);
+		if (!region_desc_is_segment_in_logmap(r_desc, flush_req->primary_segment_offt)) {
+			region_desc_add_to_logmap(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
 			region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
 		}
 	}
@@ -1517,7 +1500,8 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 		.conn = task->conn, .level_id = req->level_id, .r_desc = r_desc
 	};
 	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
-	r_desc->r_state->index_rewriter[dst_level_id] = send_index_rewriter_init(r_desc);
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+	r_state->index_rewriter[req->level_id + 1] = send_index_rewriter_init(r_desc);
 
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1594,28 +1578,27 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 	}
 	//TODO send dst_level_id
 	uint32_t dst_level_id = req->level_id + 1;
-	uint64_t segment_offt = get_segment_in_indexHT_mappings(r_desc, req->primary_segment_offt, dst_level_id);
+	uint64_t segment_offt = region_desc_get_indexmap_seg(r_desc, req->primary_segment_offt, dst_level_id);
 	log_debug("Searching for index segment %lu", segment_offt);
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	if (!segment_offt) {
-		segment_offt = wappender_allocate_space(r_desc->r_state->wappender[dst_level_id]);
-		add_segment_to_index_HT(r_desc, req->primary_segment_offt, segment_offt, dst_level_id);
+		segment_offt = wappender_allocate_space(r_state->wappender[dst_level_id]);
+		region_desc_add_to_indexmap(r_desc, req->primary_segment_offt, segment_offt, dst_level_id);
 	}
 
-	char *rdma_buffer = r_desc->r_state->index_buffer[dst_level_id]->addr;
+	char *rdma_buffer = r_state->index_buffer[dst_level_id]->addr;
 	uint32_t row_size = req->entry_size * req->number_of_columns;
 	struct segment_header *inmem_segment =
 		(struct segment_header *)&rdma_buffer[req->height * row_size + req->clock * req->entry_size];
 
-	send_index_rewriter_rewrite_index(r_desc->r_state->index_rewriter[dst_level_id], r_desc, inmem_segment,
-					  dst_level_id);
+	send_index_rewriter_rewrite_index(r_state->index_rewriter[dst_level_id], r_desc, inmem_segment, dst_level_id);
 
 	struct wappender_append_index_segment_params flush_index_segment = { .buffer = (char *)inmem_segment,
 									     .buffer_size = req->entry_size,
 									     .segment_offt = segment_offt };
-	wappender_append_index_segment(r_desc->r_state->wappender[dst_level_id], flush_index_segment);
+	wappender_append_index_segment(r_state->wappender[dst_level_id], flush_index_segment);
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;
-	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 
 	char *reply_address = (char *)r_state->index_segment_flush_replies[dst_level_id]->addr;
 	memcpy(reply_address, &reply_value, sizeof(uint64_t));
@@ -1661,8 +1644,8 @@ void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc,
 	par_flush_superblock(region_desc_get_db(r_desc));
 
 	// append new segments to logmap
-	add_segment_to_logmap_HT(r_desc, flush_req->small_log_tail_dev_offt, new_small_log_tail);
-	add_segment_to_logmap_HT(r_desc, flush_req->big_log_tail_dev_offt, new_big_small_log_tail);
+	region_desc_add_to_logmap(r_desc, flush_req->small_log_tail_dev_offt, new_small_log_tail);
+	region_desc_add_to_logmap(r_desc, flush_req->big_log_tail_dev_offt, new_big_small_log_tail);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
@@ -1699,8 +1682,9 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
-	send_index_free_index_HT(r_desc, req->level_id);
-	send_index_rewriter_destroy(&r_desc->r_state->index_rewriter[dst_level_id]);
+	region_desc_free_indexmap(r_desc, req->level_id);
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+	send_index_rewriter_destroy(&r_state->index_rewriter[dst_level_id]);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

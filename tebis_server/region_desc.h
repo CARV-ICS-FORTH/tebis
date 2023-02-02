@@ -113,4 +113,13 @@ struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t r
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc);
 
+//logmap index map staff
+bool region_desc_is_segment_in_logmap(region_desc_t region_desc, uint64_t primary_segment_offt);
+void region_desc_add_to_logmap(region_desc_t region_desc, uint64_t primary_segment_offt, uint64_t replica_segment_offt);
+uint64_t region_desc_get_logmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt);
+void region_desc_add_to_indexmap(region_desc_t region_desc, uint64_t primary_segment_offt,
+				 uint64_t replica_segment_offt, uint32_t level_id);
+
+uint64_t region_desc_get_indexmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt, uint32_t level_id);
+void region_desc_free_indexmap(region_desc_t r_desc, uint32_t level_id);
 #endif

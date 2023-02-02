@@ -55,11 +55,6 @@ struct send_index_flush_index_segment_params {
 */
 uint64_t send_index_flush_rdma_buffer(region_desc_t r_desc, enum log_category log_type);
 
-void send_index_rewrite_index(struct send_index_rewrite_index_params params);
-
-void add_segment_to_index_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-			     uint64_t replica_segment_offt, uint32_t level_id);
-
 /**
  * Creates an rdma buffer in which the new compaction index will be stored.
  * For Parallax, the final compaction index is consisted of MAX_HEIGHT lists of segments, each level is connected with the level above.

@@ -50,22 +50,6 @@ uint64_t send_index_flush_rdma_buffer(struct region_desc *r_desc, enum log_categ
 	return replica_new_segment_offt;
 }
 
-uint64_t send_index_flush_index_segment(struct send_index_flush_index_segment_params params)
-{
-	uint32_t dst_level_id = params.level_id + 1;
-	struct ru_replica_state *r_state = region_desc_get_replica_state(params.r_desc);
-	char *starting_offt_segment_to_flush = r_state->index_buffer[dst_level_id]->addr;
-	uint32_t backup_index_buffer_row_size = params.size_of_entry * params.number_of_columns;
-	char *segment_to_flush = starting_offt_segment_to_flush + ((params.height * backup_index_buffer_row_size) +
-								   (params.clock * params.size_of_entry));
-	struct wappender_append_index_segment_params append_index_params = { .height = params.height,
-									     .buffer = segment_to_flush,
-									     .buffer_size = params.size_of_entry,
-									     .is_last_segment =
-										     params.is_last_segment };
-	wappender_append_index_segment(r_state->wappender[dst_level_id], append_index_params);
-}
-
 void send_index_create_compactions_rdma_buffer(struct send_index_create_compactions_rdma_buffer_params params)
 {
 	uint32_t dst_level_id = params.level_id + 1;
@@ -79,7 +63,7 @@ void send_index_create_compactions_rdma_buffer(struct send_index_create_compacti
 	// acquire a transacation ID (if level > 0) for parallax and initialize a level write appender for the upcoming compaction */
 	par_init_compaction_id(region_desc_get_db(params.r_desc), dst_level_id, params.tree_id);
 	r_state->wappender[dst_level_id] =
-		wappender_init((struct db_handle *)region_desc_get_db(params.r_desc), params.tree_id, dst_level_id);
+		wappender_init((struct db_handle *)region_desc_get_db(params.r_desc), dst_level_id);
 	// assign index buffer aswell
 	char *backup_segment_index = NULL;
 	uint32_t backup_segment_index_size = params.number_of_rows * params.number_of_columns * params.size_of_entry;
@@ -146,16 +130,4 @@ void send_index_close_mr_for_segment_replies(region_desc_t r_desc, uint32_t leve
 	}
 	r_state->index_segment_flush_replies[dst_level_id] = NULL;
 	free(r_state->index_segment_flush_replies[dst_level_id]);
-}
-
-void send_index_free_index_HT(struct krm_region_desc *r_desc, uint32_t level_id)
-{
-	uint32_t dst_level_id = level_id + 1;
-	struct krm_segment_entry *current_entry, *tmp;
-
-	HASH_ITER(hh, r_desc->replica_index_map[dst_level_id], current_entry, tmp)
-	{
-		HASH_DEL(r_desc->replica_index_map[dst_level_id], current_entry);
-		free(current_entry);
-	}
 }

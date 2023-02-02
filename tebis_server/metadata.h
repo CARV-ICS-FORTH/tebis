@@ -125,12 +125,6 @@ struct krm_region {
 	enum krm_region_status stat;
 };
 
-struct krm_segment_entry {
-	uint64_t primary_segment_offt;
-	uint64_t replica_segment_offt;
-	UT_hash_handle hh;
-};
-
 enum krm_replica_buf_status { KRM_BUFS_UNINITIALIZED = 0, KRM_BUFS_INITIALIZING, KRM_BUFS_READY };
 
 struct krm_msg {

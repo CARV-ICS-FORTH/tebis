@@ -380,8 +380,8 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		region_desc_set_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock, msg_pair);
 		msg_pair = region_desc_get_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock);
 
-		send_index_fill_flush_index_segment(msg_pair.request, r_desc, wcursor, height, level_id, clock,
-						    backup_id, is_last);
+		send_index_fill_flush_index_segment(msg_pair.request, r_desc, start_segment_offt, wcursor, height,
+						    level_id, clock, backup_id, is_last);
 		send_index_fill_reply_fields(&msg_pair, r_conn);
 		msg_pair.request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
 
