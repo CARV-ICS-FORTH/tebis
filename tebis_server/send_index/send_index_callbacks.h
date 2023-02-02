@@ -14,12 +14,12 @@
 #ifndef SEND_INDEX_CALLBACKS_H
 #define SEND_INDEX_CALLBACKS_H
 #include <stdint.h>
-struct region_desc;
+typedef struct region_desc *region_desc_t;
 struct regs_server_desc;
 struct wcursor_level_write_cursor;
 
 struct send_index_context {
-	struct region_desc *r_desc;
+	region_desc_t r_desc;
 	struct regs_server_desc *server;
 };
 

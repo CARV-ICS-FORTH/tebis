@@ -391,6 +391,8 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 		_exit(EXIT_FAILURE);
 	}
 
+	send_index_init_callbacks(region_server, region_desc);
+
 	regs_insert_region_desc(&region_server->ds_regions, region_desc);
 	region_desc_increase_lsn(region_desc);
 	return region_desc;
@@ -1468,7 +1470,6 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	assert(region_server_desc && task);
 	assert(task->msg->msg_type == REPLICA_INDEX_GET_BUFFER_REQ);
 	assert(globals_get_send_index());
-	assert(0);
 
 	struct s2s_msg_replica_index_get_buffer_req *req =
 		(struct s2s_msg_replica_index_get_buffer_req *)((uint64_t)task->msg + sizeof(struct msg_header));
@@ -1509,7 +1510,7 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
 	//TODO did not solve this
-	// reply->mr = *r_desc->r_state->index_buffer[dst_level_id];
+	reply->mr = *r_state->index_buffer[req->level_id + 1];
 
 	reply->uuid = req->uuid;
 
@@ -1579,7 +1580,6 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 	//TODO send dst_level_id
 	uint32_t dst_level_id = req->level_id + 1;
 	uint64_t segment_offt = region_desc_get_indexmap_seg(r_desc, req->primary_segment_offt, dst_level_id);
-	log_debug("Searching for index segment %lu", segment_offt);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	if (!segment_offt) {
 		segment_offt = wappender_allocate_space(r_state->wappender[dst_level_id]);

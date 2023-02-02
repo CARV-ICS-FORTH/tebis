@@ -20,7 +20,7 @@
 #include "../tebis_server/messages.h"
 #include "../tebis_server/server_communication.h"
 #include "../utilities/circular_buffer.h"
-#include "btree/level_write_cursor.h"
+#include <btree/level_write_cursor.h>
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_uuid_checker/send_index_uuid_checker.h"
 #include <assert.h>
@@ -384,7 +384,7 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 						    level_id, clock, backup_id, is_last);
 		send_index_fill_reply_fields(&msg_pair, r_conn);
 		msg_pair.request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
-
+		log_debug("Sending flush index segment message");
 		//send the msg
 		if (__send_rdma_message(r_conn, msg_pair.request, NULL) != TEBIS_SUCCESS) {
 			log_fatal("failed to send message");
@@ -500,7 +500,7 @@ void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t lev
 		region_desc_free_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock);
 }
 
-void send_index_init_callbacks(struct regs_server_desc *server, struct region_desc *r_desc)
+void send_index_init_callbacks(struct regs_server_desc *server, region_desc_t r_desc)
 {
 	struct send_index_context *send_index_cxt =
 		(struct send_index_context *)calloc(1, sizeof(struct send_index_context));
