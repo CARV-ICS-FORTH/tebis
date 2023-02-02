@@ -146,12 +146,13 @@ static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_nam
 		cJSON_Delete(server_json);
 		return -1;
 	}
-	strncpy(dst->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
-	strncpy(dst->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
+	strncpy(dst->hostname, cJSON_GetStringValue(hostname), strlen(cJSON_GetStringValue(hostname)));
+	strncpy(dst->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved),
+		strlen(cJSON_GetStringValue(dataserver_name_retrieved)));
 	dst->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
-	strncpy(dst->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE);
+	strncpy(dst->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), strlen(cJSON_GetStringValue(rdma_ip)));
 	dst->epoch = cJSON_GetNumberValue(epoch);
-	strncpy(dst->kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE);
+	strncpy(dst->kreon_leader, cJSON_GetStringValue(leader), strlen(cJSON_GetStringValue(leader)));
 
 	cJSON_Delete(server_json);
 	return 0;
@@ -215,25 +216,25 @@ static uint8_t cu_fetch_region_table(void)
 			log_fatal("Failed to parse json string of region %s", region_path);
 			_exit(EXIT_FAILURE);
 		}
-		struct krm_region r;
-		strncpy(r.id, cJSON_GetStringValue(id), KRM_MAX_REGION_ID_SIZE);
-		strncpy(r.min_key, cJSON_GetStringValue(min_key), KRM_MAX_KEY_SIZE);
-		if (!strcmp(r.min_key, "-oo")) {
-			memset(r.min_key, 0, KRM_MAX_KEY_SIZE);
-			r.min_key_size = 1;
+		struct krm_region region;
+		strncpy(region.id, cJSON_GetStringValue(id), strlen(cJSON_GetStringValue(id)));
+		strncpy(region.min_key, cJSON_GetStringValue(min_key), strlen(cJSON_GetStringValue(min_key)));
+		if (!strcmp(region.min_key, "-oo")) {
+			memset(region.min_key, 0, KRM_MAX_KEY_SIZE);
+			region.min_key_size = 1;
 		} else {
-			r.min_key_size = strlen(r.min_key);
+			region.min_key_size = strlen(region.min_key);
 		}
-		strncpy(r.max_key, cJSON_GetStringValue(max_key), KRM_MAX_KEY_SIZE);
-		r.max_key_size = strlen(r.max_key);
-		r.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
+		strncpy(region.max_key, cJSON_GetStringValue(max_key), strlen(cJSON_GetStringValue(max_key)));
+		region.max_key_size = strlen(region.max_key);
+		region.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
 		// Find primary's krm_server_name struct
-		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary) != 0) {
+		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &region.primary) != 0) {
 			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
 			_exit(EXIT_FAILURE);
 		}
 
-		r_desc.region = r;
+		r_desc.region = region;
 		cu_insert_region(&client_regions, &r_desc);
 
 		cJSON_Delete(region_json);
