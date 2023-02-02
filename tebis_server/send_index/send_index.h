@@ -21,15 +21,13 @@ struct send_index_create_mr_for_segment_replies_params {
 	uint32_t level_id; //the source level of the compaction taking place
 };
 
-/*parameters for function 'send_index_flush_index_segment'*/
-struct send_index_flush_index_segment_params {
+struct send_index_rewrite_index_params {
 	struct krm_region_desc *r_desc; // the region descriptor of the backup
 	uint32_t level_id; // the source level of the compaction taking place
 	uint32_t height; // the row_id  of the compaction index segment to be flushed
 	uint32_t clock; // the col_id of the compaction index segment to be flushed
 	uint32_t number_of_columns; // the width of the compaction index that will be allocated
 	uint32_t size_of_entry; // the size of each cell in the 2D compaction index
-	bool is_last_segment; // is the segment to be flushed the last segment of this height
 };
 
 /**
@@ -40,7 +38,10 @@ struct send_index_flush_index_segment_params {
 */
 uint64_t send_index_flush_rdma_buffer(struct krm_region_desc *r_desc, enum log_category log_type);
 
-uint64_t send_index_flush_index_segment(struct send_index_flush_index_segment_params params);
+void send_index_rewrite_index(struct send_index_rewrite_index_params params);
+
+void add_segment_to_index_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+			     uint64_t replica_segment_offt, uint32_t level_id);
 
 /**
  * Creates an rdma buffer in which the new compaction index will be stored.

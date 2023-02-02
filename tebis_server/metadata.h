@@ -36,6 +36,7 @@
 #define CLOCK_DIMENTIONS 2
 //#define RU_MAX_INDEX_SEGMENTS 4
 typedef struct level_write_appender *level_write_appender_t;
+typedef struct send_index_rewriter *send_index_rewriter_t;
 
 enum krm_zk_conn_state { KRM_INIT, KRM_CONNECTED, KRM_DISCONNECTED, KRM_EXPIRED };
 
@@ -188,6 +189,7 @@ struct ru_replica_state {
 	struct ibv_mr *index_buffer[MAX_LEVELS];
 	struct ibv_mr *index_segment_flush_replies[MAX_LEVELS];
 	level_write_appender_t wappender[MAX_LEVELS];
+	send_index_rewriter_t index_rewriter[MAX_LEVELS];
 	/*rdma buffer keeping small and medium kv categories*/
 	struct ru_replica_rdma_buffer l0_recovery_rdma_buf;
 	/*rdma buffer keepint the big kv category*/

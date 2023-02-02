@@ -1,7 +1,7 @@
 #ifndef SEND_INDEX_UUID_CHECKER_H
 #define SEND_INDEX_UUID_CHECKER_H
-#include "../messages.h"
-#include "../metadata.h"
+#include "../../messages.h"
+#include "../../metadata.h"
 
 /**
  *  @brief Given that the uuid field is piggybacked and initialized for both request and reply, the function validates that the uuids are equal for the server-to-server communication

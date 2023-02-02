@@ -16,11 +16,13 @@
 #include "allocator/log_structures.h"
 #include "btree/conf.h"
 #include "btree/kv_pairs.h"
+#include "btree/level_write_appender.h"
 #include "btree/level_write_cursor.h"
 #include "btree/lsn.h"
 #include "conf.h"
 #include "parallax/structures.h"
-#include "send_index/send_index_uuid_checker.h"
+#include "send_index/send_index_rewriter.h"
+#include "send_index/send_index_uuid_checker/send_index_uuid_checker.h"
 #include <include/parallax/parallax.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1538,6 +1540,18 @@ static int8_t is_segment_in_HT_mappings(struct krm_region_desc *r_desc, uint64_t
 	return 1;
 }
 
+static uint64_t get_segment_in_indexHT_mappings(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
+						uint32_t level_id)
+{
+	struct krm_segment_entry *index_entry;
+
+	HASH_FIND_PTR(r_desc->replica_index_map[level_id], &primary_segment_offt, index_entry);
+
+	if (!index_entry)
+		return 0;
+	return index_entry->replica_segment_offt;
+}
+
 static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
 				     uint64_t replica_segment_offt)
 {
@@ -1548,16 +1562,6 @@ static void add_segment_to_logmap_HT(struct krm_region_desc *r_desc, uint64_t pr
 	pthread_rwlock_wrlock(&r_desc->replica_log_map_lock);
 	HASH_ADD_PTR(r_desc->replica_log_map, primary_segment_offt, entry);
 	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
-}
-
-static void add_segment_to_index_HT(struct krm_region_desc *r_desc, uint64_t primary_segment_offt,
-				    uint64_t replica_segment_offt, uint32_t level_id)
-{
-	//log_debug("Inserting primary seg offt %lu replica seg offt %lu", primary_segment_offt, replica_segment_offt);
-	struct krm_segment_entry *entry = (struct krm_segment_entry *)calloc(1, sizeof(struct krm_segment_entry));
-	entry->primary_segment_offt = primary_segment_offt;
-	entry->replica_segment_offt = replica_segment_offt;
-	HASH_ADD_PTR(r_desc->replica_index_map[level_id], primary_segment_offt, entry);
 }
 
 static void execute_flush_command_req(struct krm_server_desc const *mydesc, struct krm_work_task *task)
@@ -1693,6 +1697,7 @@ static void execute_replica_index_get_buffer_req(struct krm_server_desc const *m
 		.conn = task->conn, .level_id = req->level_id, .r_desc = r_desc
 	};
 	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
+	r_desc->r_state->index_rewriter[dst_level_id] = send_index_rewriter_init(r_desc);
 
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
@@ -1725,21 +1730,27 @@ static void execute_replica_index_flush_req(struct krm_server_desc const *mydesc
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
 	}
-
+	//TODO send dst_level_id
 	uint32_t dst_level_id = req->level_id + 1;
-	struct send_index_flush_index_segment_params flush_index_segment = {
-		.level_id = req->level_id,
-		.height = req->height,
-		.clock = req->clock,
-		.size_of_entry = req->entry_size,
-		.number_of_columns = req->number_of_columns,
-		.is_last_segment = req->is_last_segment,
-		.r_desc = r_desc
+	uint64_t segment_offt = get_segment_in_indexHT_mappings(r_desc, req->primary_segment_offt, dst_level_id);
+	log_debug("Searching for index segment %lu", segment_offt);
+	if (!segment_offt) {
+		segment_offt = wappender_allocate_space(r_desc->r_state->wappender[dst_level_id]);
+		add_segment_to_index_HT(r_desc, req->primary_segment_offt, segment_offt, dst_level_id);
+	}
 
-	};
-	uint64_t last_flushed_segment_offt = send_index_flush_index_segment(flush_index_segment);
-	add_segment_to_index_HT(r_desc, req->primary_segment_offt, last_flushed_segment_offt, dst_level_id);
+	char *rdma_buffer = r_desc->r_state->index_buffer[dst_level_id]->addr;
+	uint32_t row_size = req->entry_size * req->number_of_columns;
+	struct segment_header *inmem_segment =
+		(struct segment_header *)&rdma_buffer[req->height * row_size + req->clock * req->entry_size];
 
+	send_index_rewriter_rewrite_index(r_desc->r_state->index_rewriter[dst_level_id], r_desc, inmem_segment,
+					  dst_level_id);
+
+	struct wappender_append_index_segment_params flush_index_segment = { .buffer = (char *)inmem_segment,
+									     .buffer_size = req->entry_size,
+									     .segment_offt = segment_offt };
+	wappender_append_index_segment(r_desc->r_state->wappender[dst_level_id], flush_index_segment);
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;
 	char *reply_address = (char *)r_desc->r_state->index_segment_flush_replies[dst_level_id]->addr;
@@ -1856,11 +1867,12 @@ static void execute_send_index_close_compaction(struct krm_server_desc const *my
 		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
-
+	uint32_t dst_level_id = req->level_id + 1;
 	log_debug("Closing compaction for region %s level %u", r_desc->region->id, req->level_id);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	send_index_free_index_HT(r_desc, req->level_id);
+	send_index_rewriter_destroy(&r_desc->r_state->index_rewriter[dst_level_id]);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

@@ -4,7 +4,7 @@
 #include "btree/index_node.h"
 #include "btree/level_write_cursor.h"
 #include "parallax_callbacks/parallax_callbacks.h"
-#include "send_index_uuid_checker.h"
+#include "send_index_uuid_checker/send_index_uuid_checker.h"
 #include <infiniband/verbs.h>
 #include <log.h>
 #include <pthread.h>
