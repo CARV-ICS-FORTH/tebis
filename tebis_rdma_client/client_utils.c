@@ -125,9 +125,13 @@ static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_nam
 	char buffer[2048];
 	int buffer_len = 2048;
 	int rc = zoo_get(cu_zh, server_path, 0, buffer, &buffer_len, &stat);
-	free(server_path);
-	if (rc != ZOK)
+
+	if (rc != ZOK) {
+		log_warn("Oops where is info about this guy: %s", server_path);
+		free(server_path);
 		return -1;
+	}
+	free(server_path);
 
 	// Parse json string with server's krm_server_name struct
 	cJSON *server_json = cJSON_ParseWithLength(buffer, buffer_len);
@@ -216,7 +220,7 @@ static uint8_t cu_fetch_region_table(void)
 			log_fatal("Failed to parse json string of region %s", region_path);
 			_exit(EXIT_FAILURE);
 		}
-		struct krm_region region;
+		struct krm_region region = { 0 };
 		strncpy(region.id, cJSON_GetStringValue(id), strlen(cJSON_GetStringValue(id)));
 		strncpy(region.min_key, cJSON_GetStringValue(min_key), strlen(cJSON_GetStringValue(min_key)));
 		if (!strcmp(region.min_key, "-oo")) {
@@ -231,6 +235,7 @@ static uint8_t cu_fetch_region_table(void)
 		// Find primary's krm_server_name struct
 		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &region.primary) != 0) {
 			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
+			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 
@@ -342,6 +347,7 @@ retry:
 			if (rc) {
 				log_warn("Failed to refresh server info %s from zookeeper",
 					 r_desc->region.primary.kreon_ds_hostname);
+				_exit(EXIT_FAILURE);
 				pthread_mutex_unlock(&client_regions.conn_lock);
 				return NULL;
 			}

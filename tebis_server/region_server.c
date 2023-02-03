@@ -479,19 +479,20 @@ int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *s
 	}
 
 	cJSON *hostname = cJSON_GetObjectItem(json, "hostname");
-	cJSON *dataserver_name_retrieved = cJSON_GetObjectItem(json, "dataserver_name");
+	cJSON *region_server = cJSON_GetObjectItem(json, "dataserver_name");
 	cJSON *rdma_ip = cJSON_GetObjectItem(json, "rdma_ip_addr");
 	cJSON *epoch = cJSON_GetObjectItem(json, "epoch");
 	cJSON *leader = cJSON_GetObjectItem(json, "leader");
-	if (!cJSON_IsString(hostname) || !cJSON_IsString(dataserver_name_retrieved) || !cJSON_IsString(rdma_ip) ||
+	if (!cJSON_IsString(hostname) || !cJSON_IsString(region_server) || !cJSON_IsString(rdma_ip) ||
 	    !cJSON_IsNumber(epoch) || !cJSON_IsString(leader)) {
 		cJSON_Delete(json);
 		return -1;
 	}
-	strncpy((char *)region_server_desc->name.hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE - 1);
-	strncpy((char *)region_server_desc->name.kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved),
-		KRM_HOSTNAME_SIZE - 1);
-	server_info->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
+	strncpy((char *)region_server_desc->name.hostname, cJSON_GetStringValue(hostname),
+		strlen(cJSON_GetStringValue(hostname)));
+	strncpy((char *)region_server_desc->name.kreon_ds_hostname, cJSON_GetStringValue(region_server),
+		strlen(cJSON_GetStringValue(region_server)));
+	server_info->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(region_server));
 	strncpy(server_info->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE - 1);
 	server_info->epoch = cJSON_GetNumberValue(epoch);
 	strncpy(region_server_desc->name.kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE - 1);
