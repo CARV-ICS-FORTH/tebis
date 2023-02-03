@@ -292,27 +292,26 @@ static int regs_get_region_pos(struct regs_regions const *ds_regions, char *key,
 	int end_idx = ds_regions->num_ds_regions - 1;
 	/*log_info("start %d end %d", start_idx, end_idx);*/
 	int middle = 0;
-	int ret_code = 0;
+	int ret_code_min = 0;
 
 	while (start_idx <= end_idx) {
 		middle = (start_idx + end_idx) / 2;
-		int ret_code = zku_key_cmp(region_desc_get_min_key_size(ds_regions->r_desc[middle]),
+		ret_code_min = zku_key_cmp(region_desc_get_min_key_size(ds_regions->r_desc[middle]),
 					   region_desc_get_min_key(ds_regions->r_desc[middle]), key_size, key);
-		if (0 == ret_code) {
+
+		int ret_code_max = zku_key_cmp(region_desc_get_max_key_size(ds_regions->r_desc[middle]),
+					       region_desc_get_max_key(ds_regions->r_desc[middle]), key_size, key);
+		if (ret_code_min <= 0 && ret_code_max > 0) {
 			*found = true;
 			return middle;
 		}
-		if (ret_code > 0)
-			start_idx = middle + 1;
-		else
+		if (ret_code_min > 0)
 			end_idx = middle - 1;
+		else
+			start_idx = middle + 1;
 	}
 
-	int pos = ret_code < 0 ? --middle : middle;
-	*found = zku_key_cmp(region_desc_get_max_key_size(ds_regions->r_desc[pos]),
-			     region_desc_get_max_key(ds_regions->r_desc[pos]), key_size, key) > 0 ?
-			 true :
-			 false;
+	int pos = ret_code_min > 0 ? --middle : middle;
 	return pos;
 }
 
@@ -329,6 +328,7 @@ static bool regs_insert_region_desc(struct regs_regions *region_table, region_de
 	if (found) {
 		log_fatal("Region with min key %.*s already present", region_desc_get_min_key_size(region_desc),
 			  region_desc_get_min_key(region_desc));
+		assert(0);
 		_exit(EXIT_FAILURE);
 	}
 	log_debug("Region pos is %d", pos);
