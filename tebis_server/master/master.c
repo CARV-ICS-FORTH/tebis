@@ -1236,11 +1236,11 @@ static void MASTER_fresh_boot_watcher(zhandle_t *zkh, int type, int state, const
 	int ret_code = zoo_wget_children(master->zhandle, alive_servers_path, MASTER_fresh_boot_watcher, master,
 					 &alive_servers);
 	free(alive_servers_path);
-	alive_servers_path = NULL;
 	if (ret_code != ZOK) {
 		log_fatal("failed to read alive_servers %s error code %s ", alive_servers_path, zerror(ret_code));
 		_exit(EXIT_FAILURE);
 	}
+	alive_servers_path = NULL;
 
 	int num_of_servers_in_cluster = MASTER_get_num_of_servers_in_cluster(master->zhandle);
 	if (alive_servers.count < num_of_servers_in_cluster) {

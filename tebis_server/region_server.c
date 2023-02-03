@@ -488,13 +488,13 @@ int regs_lookup_server_info(struct regs_server_desc *region_server_desc, char *s
 		cJSON_Delete(json);
 		return -1;
 	}
-	strncpy((char *)region_server_desc->name.hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
+	strncpy((char *)region_server_desc->name.hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE - 1);
 	strncpy((char *)region_server_desc->name.kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved),
-		KRM_HOSTNAME_SIZE);
+		KRM_HOSTNAME_SIZE - 1);
 	server_info->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
-	strncpy(server_info->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE);
+	strncpy(server_info->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE - 1);
 	server_info->epoch = cJSON_GetNumberValue(epoch);
-	strncpy(region_server_desc->name.kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE);
+	strncpy(region_server_desc->name.kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE - 1);
 
 	cJSON_Delete(json);
 
