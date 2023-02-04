@@ -61,7 +61,7 @@ void send_index_create_compactions_rdma_buffer(struct send_index_create_compacti
 		_exit(EXIT_FAILURE);
 	}
 	// acquire a transacation ID (if level > 0) for parallax and initialize a level write appender for the upcoming compaction */
-	par_init_compaction_id(region_desc_get_db(params.r_desc), dst_level_id, params.tree_id);
+	par_init_compaction_id(region_desc_get_db(params.r_desc), dst_level_id, 1);
 	r_state->wappender[dst_level_id] =
 		wappender_init((struct db_handle *)region_desc_get_db(params.r_desc), dst_level_id);
 	// assign index buffer aswell

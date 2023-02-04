@@ -38,6 +38,7 @@
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
+#include <btree/compaction_worker.h>
 #include <btree/conf.h>
 #include <btree/gc.h>
 #include <btree/kv_pairs.h>
@@ -53,6 +54,7 @@
 #include <pthread.h>
 #include <rdma/rdma_verbs.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1487,7 +1489,6 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	//The buffers follow Parallax compaction index
 	struct send_index_create_compactions_rdma_buffer_params create_buffers_params = {
 		.level_id = req->level_id,
-		.tree_id = req->tree_id,
 		.conn = task->conn,
 		.r_desc = r_desc,
 		.number_of_rows = req->num_rows,
@@ -1504,15 +1505,16 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	r_state->index_rewriter[req->level_id + 1] = send_index_rewriter_init(r_desc);
-
+	struct db_handle *db = (struct db_handle *)region_desc_get_db(r_desc);
+	r_state->comp_req[req->level_id + 1] = compaction_create_req(db->db_desc, &db->db_options, UINT64_MAX,
+								     UINT64_MAX, req->level_id, req->tree_id,
+								     req->level_id + 1, 1);
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	//TODO did not solve this
 	reply->mr = *r_state->index_buffer[req->level_id + 1];
-
 	reply->uuid = req->uuid;
 
 	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
@@ -1680,11 +1682,11 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
 	uint32_t dst_level_id = req->level_id + 1;
 	log_debug("Closing compaction for region %s level %u", region_desc_get_id(r_desc), req->level_id);
-
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+	compaction_close(r_state->comp_req[dst_level_id]);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	region_desc_free_indexmap(r_desc, req->level_id);
-	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	send_index_rewriter_destroy(&r_state->index_rewriter[dst_level_id]);
 
 	// create and send the reply

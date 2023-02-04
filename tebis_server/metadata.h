@@ -14,6 +14,7 @@
 #include <semaphore.h>
 #include <stdint.h>
 #include <zookeeper/zookeeper.h>
+struct compaction_request;
 
 typedef struct level_write_appender *level_write_appender_t;
 typedef struct send_index_rewriter *send_index_rewriter_t;
@@ -97,6 +98,7 @@ struct ru_replica_state {
 	struct ibv_mr *index_segment_flush_replies[MAX_LEVELS];
 	level_write_appender_t wappender[MAX_LEVELS];
 	send_index_rewriter_t index_rewriter[MAX_LEVELS];
+	struct compaction_request *comp_req[MAX_LEVELS];
 	/*rdma buffer keeping small and medium kv categories*/
 	struct ru_replica_rdma_buffer l0_recovery_rdma_buf;
 	/*rdma buffer keepint the big kv category*/

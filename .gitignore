@@ -47,3 +47,4 @@ docs/html/*
 docs/xml/*
 .cache
 .ccls-cache
+remote_build/

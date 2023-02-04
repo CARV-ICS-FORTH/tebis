@@ -20,10 +20,10 @@
 #include "../tebis_server/messages.h"
 #include "../tebis_server/server_communication.h"
 #include "../utilities/circular_buffer.h"
-#include <btree/level_write_cursor.h>
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_uuid_checker/send_index_uuid_checker.h"
 #include <assert.h>
+#include <btree/level_write_cursor.h>
 #include <infiniband/verbs.h>
 #include <log.h>
 #include <rdma/rdma_verbs.h>
@@ -454,7 +454,7 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 }
 
 void send_index_compaction_started_callback(void *context, uint64_t small_log_tail_dev_offt,
-					    uint64_t big_log_tail_dev_offt, uint32_t src_level_id, uint8_t dst_tree_id,
+					    uint64_t big_log_tail_dev_offt, uint32_t src_level_id, uint8_t src_tree_id,
 					    struct wcursor_level_write_cursor *new_level)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
@@ -462,7 +462,7 @@ void send_index_compaction_started_callback(void *context, uint64_t small_log_ta
 	if (!src_level_id)
 		send_index_flush_L0(send_index_cxt, small_log_tail_dev_offt, big_log_tail_dev_offt);
 
-	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, dst_tree_id, new_level);
+	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, src_tree_id, new_level);
 	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level, src_level_id);
 }
 

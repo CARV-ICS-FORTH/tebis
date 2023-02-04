@@ -22,7 +22,6 @@
 struct send_index_create_compactions_rdma_buffer_params {
 	region_desc_t r_desc; // the region descriptor of the backup
 	connection_rdma *conn; // the rdma connection between the primary and the backup
-	uint32_t tree_id; // the tree_id which the wappender and the transaction id will refer to (this is a Parallax thing and it must be 1)
 	uint32_t level_id; // the source level of the compaction taking place
 	uint32_t number_of_rows; // the height of the compaction index that will be allocated
 	uint32_t number_of_columns; // the width of the compaction index that will be allocated
@@ -33,7 +32,6 @@ struct send_index_create_compactions_rdma_buffer_params {
 struct send_index_create_mr_for_segment_replies_params {
 	connection_rdma *conn; // the rdma connection between the primary and the backup
 	region_desc_t r_desc;
-	uint32_t tree_id;
 	uint32_t level_id; //the source level of the compaction taking place
 };
 
