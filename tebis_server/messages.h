@@ -227,6 +227,9 @@ struct s2s_msg_replica_index_flush_rep {
 };
 
 struct s2s_msg_close_compaction_request {
+	uint64_t compaction_first_segment_offt;
+	uint64_t compaction_last_segment_offt;
+	uint64_t new_root_offt;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint64_t uuid;
 	uint32_t region_key_size;
@@ -242,6 +245,7 @@ struct s2s_msg_swap_levels_request {
 	uint64_t uuid;
 	uint32_t region_key_size;
 	uint32_t level_id;
+	uint32_t src_tree_id;
 };
 
 struct s2s_msg_swap_levels_reply {

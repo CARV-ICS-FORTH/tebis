@@ -85,4 +85,7 @@ void send_index_close_compactions_rdma_buffer(region_desc_t r_desc, uint32_t lev
 
 void send_index_free_index_HT(region_desc_t r_desc, uint32_t level_id);
 void send_index_close_mr_for_segment_replies(region_desc_t r_desc, uint32_t level_id);
+
+void send_index_translate_primary_metadata(region_desc_t r_desc, uint32_t level_id, uint64_t primary_last_segment_offt,
+					   uint64_t primary_first_segment_offt, uint64_t primary_new_root_offt);
 #endif // SEND_INDEX_H_

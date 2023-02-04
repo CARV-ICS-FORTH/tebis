@@ -63,31 +63,36 @@ static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, 
 }
 
 static void send_index_fill_close_compaction_request(msg_header *request_header, struct region_desc *r_desc,
-						     uint32_t level_id)
+						     uint32_t level_id, uint64_t compaction_first_segment_offt,
+						     uint64_t compaction_last_segment_offt, uint64_t new_root_offt)
 {
 	struct s2s_msg_close_compaction_request *req =
 		(struct s2s_msg_close_compaction_request *)((char *)request_header + sizeof(struct msg_header));
 	req->region_key_size = region_desc_get_min_key_size(r_desc);
 	strcpy(req->region_key, region_desc_get_min_key(r_desc));
 	req->level_id = level_id;
+	req->compaction_first_segment_offt = compaction_first_segment_offt;
+	req->compaction_last_segment_offt = compaction_last_segment_offt;
+	req->new_root_offt = new_root_offt;
 	req->uuid = (uint64_t)req;
 }
 
 static void send_index_fill_swap_levels_request(msg_header *request_header, struct region_desc *r_desc,
-						uint32_t level_id)
+						uint32_t level_id, uint32_t src_tree_id)
 {
 	struct s2s_msg_swap_levels_request *req =
 		(struct s2s_msg_swap_levels_request *)((char *)request_header + sizeof(struct msg_header));
 	req->region_key_size = region_desc_get_min_key_size(r_desc);
 	strcpy(req->region_key, region_desc_get_min_key(r_desc));
 	req->level_id = level_id;
+	req->src_tree_id = src_tree_id;
 	req->uuid = (uint64_t)req;
 }
 
 static void send_index_fill_flush_index_segment(msg_header *request_header, region_desc_t r_desc,
 						uint64_t start_segment_offt, struct wcursor_level_write_cursor *wcursor,
-						uint32_t height, uint32_t level_id, uint32_t clock, uint32_t replica_id,
-						bool is_last_segment)
+						uint32_t height, uint32_t dst_level_id, uint32_t clock,
+						uint32_t replica_id, bool is_last_segment)
 {
 	(void)is_last_segment;
 	struct s2s_msg_replica_index_flush_req *f_req =
@@ -96,13 +101,14 @@ static void send_index_fill_flush_index_segment(msg_header *request_header, regi
 	f_req->entry_size = wcursor_get_compaction_index_entry_size(wcursor);
 	f_req->number_of_columns = wcursor_get_number_of_cols(wcursor);
 	f_req->height = height;
-	f_req->level_id = level_id;
+	f_req->level_id = dst_level_id;
 	f_req->clock = clock;
 	f_req->region_key_size = region_desc_get_min_key_size(r_desc);
 	strcpy(f_req->region_key, region_desc_get_min_key(r_desc));
 	/*related for the reply part*/
 
-	f_req->mr_of_primary = *region_desc_get_primary_local_rdma_buffer(r_desc, level_id);
+	uint32_t src_level_id = dst_level_id - 1;
+	f_req->mr_of_primary = *region_desc_get_primary_local_rdma_buffer(r_desc, src_level_id);
 	f_req->reply_size = wcursor_segment_buffer_status_size(wcursor);
 	f_req->reply_offt = wcursor_segment_buffer_get_status_addr(wcursor, height, clock, replica_id);
 }
@@ -165,10 +171,6 @@ static void send_index_flush_L0(struct send_index_context *context, uint64_t sma
 		struct sc_msg_pair new_message_pair = send_index_allocate_msg_pair(send_index_allocation_info);
 		region_desc_set_msg_pair(r_desc, new_message_pair, i, 0);
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, 0);
-		// struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, 0);
-		// r_desc->rpc[i][0] = send_index_allocate_msg_pair(send_index_allocation_info);
-
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][0];
 
 		// send the msg
 		msg_header *req_header = msg_pair->request;
@@ -182,7 +184,6 @@ static void send_index_flush_L0(struct send_index_context *context, uint64_t sma
 	}
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][0];
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, 0);
 		// spin for reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
@@ -220,11 +221,11 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 		struct sc_msg_pair new_msg_pair = send_index_allocate_msg_pair(send_index_allocation_info);
 		region_desc_set_msg_pair(r_desc, new_msg_pair, i, level_id);
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
-		// r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 
 		// send the msg
-		send_index_fill_get_rdma_buffer_request(msg_pair->request, r_desc, level_id, tree_id, new_level_cursor);
+		uint32_t dst_level_id = level_id + 1;
+		send_index_fill_get_rdma_buffer_request(msg_pair->request, r_desc, dst_level_id, tree_id,
+							new_level_cursor);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = region_desc_get_uuid(r_desc);
 
@@ -235,7 +236,6 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 	}
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
@@ -246,7 +246,6 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 									sizeof(struct msg_header));
 
 		region_desc_set_remote_buf(r_desc, i, get_buffer_reply->mr, level_id);
-		// r_desc->remote_mem_buf[i][level_id] = get_buffer_reply->mr;
 		log_debug("Newly registered memory region is at %lu", (uint64_t)get_buffer_reply->mr.addr);
 		// free msg space
 		sc_free_rpc_pair(msg_pair);
@@ -277,7 +276,9 @@ static void send_index_reg_write_primary_compaction_buffer(struct send_index_con
 	region_desc_set_primary_local_rdma_buffer(context->r_desc, level_id, reg_mem);
 }
 
-static void send_index_close_compaction(struct send_index_context *context, uint32_t level_id)
+static void send_index_close_compaction(struct send_index_context *context, uint32_t level_id,
+					uint64_t compaction_first_segment_offt, uint64_t compaction_last_segment_offt,
+					uint64_t new_root_offt)
 {
 	struct region_desc *r_desc = context->r_desc;
 	struct regs_server_desc *server = context->server;
@@ -298,11 +299,12 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 		};
 
 		region_desc_set_msg_pair(r_desc, send_index_allocate_msg_pair(send_index_allocation_info), i, level_id);
-		// r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
 
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
-		send_index_fill_close_compaction_request(msg_pair->request, r_desc, level_id);
+		uint32_t dst_level_id = level_id + 1;
+		send_index_fill_close_compaction_request(msg_pair->request, r_desc, dst_level_id,
+							 compaction_first_segment_offt, compaction_last_segment_offt,
+							 new_root_offt);
 		send_index_fill_reply_fields(msg_pair, r_conn);
 		msg_pair->request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
 
@@ -315,7 +317,6 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
 		// for debuging purposes
@@ -380,8 +381,9 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 		region_desc_set_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock, msg_pair);
 		msg_pair = region_desc_get_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock);
 
+		uint32_t dst_level_id = level_id + 1;
 		send_index_fill_flush_index_segment(msg_pair.request, r_desc, start_segment_offt, wcursor, height,
-						    level_id, clock, backup_id, is_last);
+						    dst_level_id, clock, backup_id, is_last);
 		send_index_fill_reply_fields(&msg_pair, r_conn);
 		msg_pair.request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
 		log_debug("Sending flush index segment message");
@@ -408,7 +410,7 @@ static void send_index_send_segment(struct send_index_context *context, uint64_t
 	send_index_send_flush_index_segment(context, start_segment_offt, wcursor, level_id, clock, height, is_last);
 }
 
-static void send_index_swap_levels(struct send_index_context *context, uint32_t level_id)
+static void send_index_swap_levels(struct send_index_context *context, uint32_t level_id, uint32_t src_tree_id)
 {
 	struct region_desc *r_desc = context->r_desc;
 	struct regs_server_desc *server = context->server;
@@ -427,11 +429,10 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 			.request_type = REPLICA_INDEX_SWAP_LEVELS_REQUEST
 		};
 		region_desc_set_msg_pair(r_desc, send_index_allocate_msg_pair(send_index_allocation_info), i, level_id);
-		// r_desc->rpc[i][level_id] = send_index_allocate_msg_pair(send_index_allocation_info);
 
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
-		send_index_fill_swap_levels_request(msg_pair->request, r_desc, level_id);
+		uint32_t dst_level_id = level_id + 1;
+		send_index_fill_swap_levels_request(msg_pair->request, r_desc, dst_level_id, src_tree_id);
 		msg_pair->request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
 
 		// send the msg
@@ -443,7 +444,6 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 
 	for (uint32_t i = 0; i < region_desc_get_num_backup(r_desc); ++i) {
 		struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
-		// struct sc_msg_pair *msg_pair = &r_desc->rpc[i][level_id];
 		// spin for the reply
 		teb_spin_for_message_reply(msg_pair->request, r_conn);
 		// for debuging purposes
@@ -466,18 +466,19 @@ void send_index_compaction_started_callback(void *context, uint64_t small_log_ta
 	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level, src_level_id);
 }
 
-void send_index_compaction_ended_callback(void *context, uint32_t src_level_id)
+void send_index_compaction_ended_callback(void *context, uint32_t src_level_id, uint64_t compaction_first_segment_offt,
+					  uint64_t compaction_last_segment_offt, uint64_t new_root_offt)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 
-	send_index_close_compaction(send_index_cxt, src_level_id);
+	send_index_close_compaction(send_index_cxt, src_level_id, compaction_first_segment_offt,
+				    compaction_last_segment_offt, new_root_offt);
 }
 
-void send_index_swap_levels_callback(void *context, uint32_t src_level_id)
+void send_index_swap_levels_callback(void *context, uint32_t src_level_id, uint32_t src_tree_id)
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
-
-	send_index_swap_levels(send_index_cxt, src_level_id);
+	send_index_swap_levels(send_index_cxt, src_level_id, src_tree_id);
 }
 
 void send_index_compaction_wcursor_flush_segment_callback(void *context, uint64_t start_segment_offt,

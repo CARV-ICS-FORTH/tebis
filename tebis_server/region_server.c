@@ -18,6 +18,7 @@
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/circular_buffer.h"
 #include "../utilities/spin_loop.h"
+#include "btree/btree.h"
 #include "build_index/build_index.h"
 #include "conf.h"
 #include "djb2.h"
@@ -64,7 +65,6 @@
 #include <zookeeper/zookeeper.h>
 #include <zookeeper/zookeeper.jute.h>
 // IWYU pragma: no_forward_declare region_desc
-
 uint64_t ds_hash_key;
 
 char *regs_get_server_name(struct regs_server_desc *region_server)
@@ -1483,7 +1483,7 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 		_exit(EXIT_FAILURE);
 	}
 
-	log_debug("Starting compaction for level %u at region %s", req->level_id, region_desc_get_id(r_desc));
+	log_debug("Starting compaction for dst level %u at region %s", req->level_id, region_desc_get_id(r_desc));
 
 	//initialize and reg write buffers for recieving the primary's segments ready to be flushed.
 	//The buffers follow Parallax compaction index
@@ -1504,17 +1504,17 @@ void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *re
 	};
 	send_index_create_mr_for_segment_replies(create_flush_reply_mr_params);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
-	r_state->index_rewriter[req->level_id + 1] = send_index_rewriter_init(r_desc);
+	r_state->index_rewriter[req->level_id] = send_index_rewriter_init(r_desc);
 	struct db_handle *db = (struct db_handle *)region_desc_get_db(r_desc);
-	r_state->comp_req[req->level_id + 1] = compaction_create_req(db->db_desc, &db->db_options, UINT64_MAX,
-								     UINT64_MAX, req->level_id, req->tree_id,
-								     req->level_id + 1, 1);
+	uint32_t src_level_id = req->level_id - 1;
+	r_state->comp_req[req->level_id] = compaction_create_req(db->db_desc, &db->db_options, UINT64_MAX, UINT64_MAX,
+								 src_level_id, req->tree_id, req->level_id, 1);
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 						task->msg->offset_reply_in_recv_buffer);
 	struct s2s_msg_replica_index_get_buffer_rep *reply =
 		(struct s2s_msg_replica_index_get_buffer_rep *)((char *)task->reply_msg + sizeof(msg_header));
-	reply->mr = *r_state->index_buffer[req->level_id + 1];
+	reply->mr = *r_state->index_buffer[req->level_id];
 	reply->uuid = req->uuid;
 
 	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_index_get_buffer_rep),
@@ -1580,35 +1580,33 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 		log_fatal("no hosted region found for min key %s", req->region_key);
 		_exit(EXIT_FAILURE);
 	}
-	//TODO send dst_level_id
-	uint32_t dst_level_id = req->level_id + 1;
-	uint64_t segment_offt = region_desc_get_indexmap_seg(r_desc, req->primary_segment_offt, dst_level_id);
+	uint64_t segment_offt = region_desc_get_indexmap_seg(r_desc, req->primary_segment_offt, req->level_id);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	if (!segment_offt) {
-		segment_offt = wappender_allocate_space(r_state->wappender[dst_level_id]);
-		region_desc_add_to_indexmap(r_desc, req->primary_segment_offt, segment_offt, dst_level_id);
+		segment_offt = wappender_allocate_space(r_state->wappender[req->level_id]);
+		region_desc_add_to_indexmap(r_desc, req->primary_segment_offt, segment_offt, req->level_id);
 	}
 
-	char *rdma_buffer = r_state->index_buffer[dst_level_id]->addr;
+	char *rdma_buffer = r_state->index_buffer[req->level_id]->addr;
 	uint32_t row_size = req->entry_size * req->number_of_columns;
 	struct segment_header *inmem_segment =
 		(struct segment_header *)&rdma_buffer[req->height * row_size + req->clock * req->entry_size];
 
-	send_index_rewriter_rewrite_index(r_state->index_rewriter[dst_level_id], r_desc, inmem_segment, dst_level_id);
+	send_index_rewriter_rewrite_index(r_state->index_rewriter[req->level_id], r_desc, inmem_segment, req->level_id);
 
 	struct wappender_append_index_segment_params flush_index_segment = { .buffer = (char *)inmem_segment,
 									     .buffer_size = req->entry_size,
 									     .segment_offt = segment_offt };
-	wappender_append_index_segment(r_state->wappender[dst_level_id], flush_index_segment);
+	wappender_append_index_segment(r_state->wappender[req->level_id], flush_index_segment);
 	//rdma write to primary's status
 	uint64_t reply_value = WCURSOR_STATUS_OK;
 
-	char *reply_address = (char *)r_state->index_segment_flush_replies[dst_level_id]->addr;
+	char *reply_address = (char *)r_state->index_segment_flush_replies[req->level_id]->addr;
 	memcpy(reply_address, &reply_value, sizeof(uint64_t));
 	//rdma write it back to the primary's write cursor status buffers
 	while (1) {
 		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
-					  r_state->index_segment_flush_replies[dst_level_id], IBV_SEND_SIGNALED,
+					  r_state->index_segment_flush_replies[req->level_id], IBV_SEND_SIGNALED,
 					  (uint64_t)req->reply_offt, req->mr_of_primary.rkey);
 		if (!ret)
 			break;
@@ -1680,14 +1678,15 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_CLOSE_COMPACTION;
-	uint32_t dst_level_id = req->level_id + 1;
 	log_debug("Closing compaction for region %s level %u", region_desc_get_id(r_desc), req->level_id);
+	send_index_translate_primary_metadata(r_desc, req->level_id, req->compaction_last_segment_offt,
+					      req->compaction_first_segment_offt, req->new_root_offt);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
-	compaction_close(r_state->comp_req[dst_level_id]);
+	compaction_close(r_state->comp_req[req->level_id]);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	region_desc_free_indexmap(r_desc, req->level_id);
-	send_index_rewriter_destroy(&r_state->index_rewriter[dst_level_id]);
+	send_index_rewriter_destroy(&r_state->index_rewriter[req->level_id]);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions
