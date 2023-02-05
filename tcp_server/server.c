@@ -1,8 +1,11 @@
-#include "tcp_server.h"
-#include "tebis_tcp_errors.h"
+#include "plog.h"
+#include "server_handle.h"
 
+#include <arpa/inet.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #define LOCALHOST "127.0.0.1"
@@ -14,20 +17,30 @@
 
 int main(int argc, char **argv)
 {
-	printf("%s(%d)\n\n", *argv, argc);
-	printf("this.process.pid = %d\n", getpid());
-
+	sConfig sconfig;
 	sHandle shandle;
 
-	if ((shandle_init(&shandle, AF_INET, SITH6_IP_56G, 25565, 16)) < 0) {
-		print_debug("shandle_init()");
+	/** parse/set options **/
+
+	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {
+		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	printf("\eserver's pid = %d\n", getpid());
+
+	/** start server **/
+
+	if ((server_handle_init(&shandle, sconfig)) < 0) {
+		plog(PL_ERROR "server_handle_init()");
 		exit(EXIT_FAILURE);
 	}
 
 	pause();
-	shandle_destroy(shandle);
+	// server_spawn_threads(shandle);
+	server_handle_destroy(shandle);
 
 	return EXIT_SUCCESS;
 }
 
-// perf top --all-cpus --pid=PID --count-filter=500 --sort cpu,socket,symbol,dso
+// perf top --all-cpus --pid=PID --count-filter=650 --sort cpu,socket,symbol,dso

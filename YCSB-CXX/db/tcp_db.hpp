@@ -7,8 +7,8 @@ extern "C" {
 #include "tcp_client.h"
 }
 
-#include "ycsbdb.h"
 #include "properties.h"
+#include "ycsbdb.h"
 
 namespace ycsbc
 {
@@ -42,9 +42,10 @@ class tcpDB : public YCSBDB {
 	};
 
     private:
-	cHandle chandle[NUM_OF_THR];
-	c_tcp_req req[NUM_OF_THR];
-	c_tcp_rep rep[NUM_OF_THR];
+	int threads;
+	cHandle *chandle;
+	c_tcp_req *req;
+	c_tcp_rep *rep;
 
 	size_t values_size(std::vector<KVPair> &values);
 	int serialize_values(std::vector<KVPair> &values, char *buf);

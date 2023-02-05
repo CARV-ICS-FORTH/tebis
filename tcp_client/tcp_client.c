@@ -138,14 +138,14 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 		// printf("rp->ai_addr = %s\n", inet_ntop(rp->ai_family, &rp->ai_addr, debug, INET6_ADDRSTRLEN));
 
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
-			freeaddrinfo(res);
-
 			if (server_version_check(ch->sock) < 0) {
 				close(ch->sock);
 				continue;
 			}
 
 			ch->flags1 = MAGIC_INIT_NUM;
+			freeaddrinfo(res);
+
 			return EXIT_SUCCESS;
 		}
 
@@ -174,6 +174,10 @@ int chandle_destroy(cHandle chandle)
 
 	/** END OF ERROR HANDLING **/
 
+	uint64_t discardbuf;
+
+	shutdown(ch->sock, SHUT_WR); // sends FIN
+	recv(ch->sock, &discardbuf, sizeof(discardbuf), 0); // zero will be returned
 	close(ch->sock);
 	free(chandle);
 

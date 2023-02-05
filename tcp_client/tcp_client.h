@@ -32,12 +32,12 @@ int chandle_destroy(cHandle chandle);
 /**
  * @brief Creates a new request object or updates an existing one. If @a req is equal to NULL ,then a new c_tcp_req object
  * is created, otherwise @a req is updated with the provided (new) key and payload sizes. If @a rtype is @b REQ_GET, @b REQ_DEL,
- * or @b REQ_EXISTS then @a paysz is ignored! If it is REQ_SCAN, then @a paysz acts as the length of the scan request.
+ * or @b REQ_EXISTS then @a paysz is ignored! If it is @b REQ_SCAN, then @a paysz acts as the range of the scan request.
  * On success, of these two options, the former will return the newly allocated request object, while the latter will
  * both return the updated request object and will set @a req to point to the updated object too. If the sum of @a keysz
  * and @a paysz is less than the @a req current's sum, then no allocation occures. If it is greater, @a req is destroyed and
  * a new request object is allocated. Check @b c_tcp_req_destroy() for more info on a request object's destruction.
- * On failure, NULL is returned for both cases, @a req is neither destroyed nor pointsto another request object and
+ * On failure, NULL is returned for both cases, @a req is neither destroyed nor points to another request object and
  * @b errno is also set to indicate the error.
  *
  * @par ERRORS
@@ -71,7 +71,7 @@ int c_tcp_req_destroy(c_tcp_req req);
  * @b errno is set to indicate the error.
  *
  * @par ERRORS
- * @b EINVAL  The request object @a req is either NULL, or not initialized
+ * @b EINVAL The request object @a req is either NULL, or not initialized
  *
  * @param req
  * @return void*
@@ -86,7 +86,7 @@ void *c_tcp_req_expose_key(c_tcp_req req);
  *
  * @par ERRORS
  * @b EINVAL  The request object @a req is either NULL, or not initialized
- * @b ENODATA The request object @a req is [GET | DEL | EXISTS], thus no there is no need to use payload
+ * @b ENODATA The request object @a req is [GET | DEL | EXISTS], thus there is no need to use payload
  *
  * @param req
  * @return void*

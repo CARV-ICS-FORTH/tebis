@@ -9,7 +9,7 @@ extern "C" {
 #include <log.h>
 }
 
-#define LOCALHOST    "127.0.0.1"
+#define LOCALHOST "127.0.0.1"
 #define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
 #define SITH4_IP_56G
@@ -47,10 +47,20 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 
 tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 {
-	int threads = stoi(props.GetProperty("threadcount", "1"));
-	printf("\033[1;31mthreads = %d\033[0m\n", threads);
+	// this->chandle = NULL;
+	this->threads = stoi(props.GetProperty("threadcount", "1"));
+	printf("\033[1;31mthreads = %d\033[0m\n", this->threads);
 
-	for (uint i = 0U; i < threads; ++i) {
+	if (!(this->chandle =
+		      malloc(this->threads * (sizeof(*this->chandle) + sizeof(*this->req) + sizeof(*this->reqp))))) {
+		log_error("malloc() failed: %s", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	this->req = this->chandle + (this->threads * sizeof(*this->chandle));
+	this->rep = this->req + (this->threads * sizeof(*this->req));
+
+	for (uint i = 0U; i < this->threads; ++i) {
 		if (chandle_init(this->chandle + i, SITH6_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
@@ -70,11 +80,13 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 
 tcpDB::~tcpDB() /* OK */
 {
-	for (uint i = 0U; i < NUM_OF_THR; ++i) {
+	for (uint i = 0U; i < this->threads; ++i) {
 		chandle_destroy(this->chandle[i]);
 		c_tcp_req_destroy(this->req[i]);
 		c_tcp_rep_destroy(this->rep[i]);
 	}
+
+	free(this->chandle);
 }
 
 int tcpDB::Read(int id, const std::string &table, const std::string &key, const std::vector<std::string> *fields,
