@@ -73,6 +73,7 @@ void region_desc_set_primary2backup_msg_pair(region_desc_t region_desc, int back
 struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region_desc, int backup_id);
 
 struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t region_desc);
+struct ru_master_log_buffer *region_desc_get_primary_medium_log_buf(region_desc_t region_desc);
 struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t region_desc);
 
 enum krm_replica_buf_status region_desc_get_replicas_buf_statius(region_desc_t region_desc);
@@ -110,7 +111,7 @@ mregion_t region_desc_get_mregion(region_desc_t region_desc);
 char *region_desc_get_backup_IP(region_desc_t region_desc, int backup_id);
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t region_desc);
-
+struct ru_replica_rdma_buffer *region_desc_get_backup_medium_log_buf(region_desc_t region_desc);
 struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc);
 
 //logmap index map staff
@@ -122,4 +123,5 @@ void region_desc_add_to_indexmap(region_desc_t region_desc, uint64_t primary_seg
 
 uint64_t region_desc_get_indexmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt, uint32_t level_id);
 void region_desc_free_indexmap(region_desc_t r_desc, uint32_t level_id);
+void region_desc_register_medium_log_buffers(region_desc_t region_desc, struct connection_rdma *conn);
 #endif

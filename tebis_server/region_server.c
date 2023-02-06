@@ -560,16 +560,11 @@ static void regs_announce_server_presence(struct regs_server_desc *region_server
 }
 
 static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_buf, uint32_t backup_id,
-					      struct s2s_msg_get_rdma_buffer_rep *rep,
-					      enum tb_rdma_buf_category rdma_buf_cat)
+					      struct ibv_mr *mr)
 {
-	rdma_buf->segment_size = SEGMENT_SIZE;
-	rdma_buf->segment.start = 0;
-	rdma_buf->segment.end = SEGMENT_SIZE;
-	rdma_buf->segment.curr_end = 0;
-	rdma_buf->segment.mr[backup_id] = rep->l0_recovery_mr;
-	if (rdma_buf_cat == TEBIS_BIG_RECOVERY_RDMA_BUF)
-		rdma_buf->segment.mr[backup_id] = rep->big_recovery_mr;
+	rdma_buf->segment_size = rdma_buf->segment.end = SEGMENT_SIZE;
+	rdma_buf->segment.start = rdma_buf->segment.curr_end = 0;
+	rdma_buf->segment.mr[backup_id] = *mr;
 	rdma_buf->segment.replicated_bytes = 0;
 	assert(rdma_buf->segment.mr[backup_id].length == SEGMENT_SIZE);
 }
@@ -629,13 +624,16 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 		assert(get_buffer_rep->status == TEBIS_SUCCESS);
 
 		regs_initialize_rdma_buf_metadata(region_desc_get_primary_L0_log_buf(region_desc), backup_id,
-						  get_buffer_rep, TEBIS_L0_RECOVERY_RDMA_BUF);
+						  &get_buffer_rep->l0_recovery_mr);
+		regs_initialize_rdma_buf_metadata(region_desc_get_primary_medium_log_buf(region_desc), backup_id,
+						  &get_buffer_rep->medium_recovery_mr);
 		regs_initialize_rdma_buf_metadata(region_desc_get_primary_big_log_buf(region_desc), backup_id,
-						  get_buffer_rep, TEBIS_BIG_RECOVERY_RDMA_BUF);
+						  &get_buffer_rep->big_recovery_mr);
 
 		sc_free_rpc_pair(&get_log_buffer);
 	}
 }
+
 static void regs_handle_master_command(struct regs_server_desc *region_server, MC_command_t command)
 {
 	log_debug("Region server: %s got the following command", regs_get_server_name(region_server));
@@ -649,6 +647,12 @@ static void regs_handle_master_command(struct regs_server_desc *region_server, M
 		MREG_print_region_configuration(mregion);
 		region_desc_t region_desc = regs_open_region(region_server, mregion, MC_get_role(command));
 		regs_init_log_buffers_with_replicas(region_server, region_desc);
+		if (region_desc_get_num_backup(region_desc))
+			region_desc_register_medium_log_buffers(
+				region_desc,
+				regs_get_data_conn(region_server, region_desc_get_backup_hostname(region_desc, 0),
+						   region_desc_get_backup_IP(region_desc, 0)));
+
 		break;
 	case RECONFIGURE_GROUP:
 		log_fatal("Got RECONFIGURE_GROUP command XXX TODO XXX");
@@ -918,7 +922,7 @@ void regs_insert_kv_to_store(struct work_task *task)
 	/*insert kv to data store*/
 	const char *error_message = NULL;
 	struct par_put_metadata metadata =
-		par_put_serialized(region_desc_get_db(task->r_desc), (char *)task->kv, &error_message);
+		par_put_serialized(region_desc_get_db(task->r_desc), (char *)task->kv, &error_message, true);
 	if (error_message) {
 		region_desc_leave_parallax(task->r_desc);
 		return;
@@ -1442,9 +1446,6 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 		  (unsigned long)region_desc);
 
 	region_desc_init_replica_state(region_desc, get_log_buffer->buffer_size, task->conn->rdma_cm_id);
-	struct ru_replica_state *state = region_desc_get_replica_state(region_desc);
-	log_debug("Mr got is %p", state->l0_recovery_rdma_buf.mr->addr);
-
 	region_desc_lock_region_mngmt(region_desc);
 
 	region_desc_unlock_region_mngmt(region_desc);
@@ -1456,6 +1457,8 @@ void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_serv
 
 	struct ru_replica_rdma_buffer *log_buffer = region_desc_get_backup_L0_log_buf(region_desc);
 	rep->l0_recovery_mr = *log_buffer->mr;
+	log_buffer = region_desc_get_backup_medium_log_buf(region_desc);
+	rep->medium_recovery_mr = *log_buffer->mr;
 	log_buffer = region_desc_get_backup_big_log_buf(region_desc);
 	rep->big_recovery_mr = *log_buffer->mr;
 

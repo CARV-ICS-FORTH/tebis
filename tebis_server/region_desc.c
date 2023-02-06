@@ -13,12 +13,15 @@
 // limitations under the License.
 #include "region_desc.h"
 #include "../tebis_rdma/rdma.h"
+#include "allocator/log_structures.h"
 #include "configurables.h"
 #include "master/mregion.h"
 #include "metadata.h"
+#include "region_server.h"
 #include "server_communication.h"
 #include "work_task.h"
 #include <assert.h>
+#include <btree/btree.h>
 #include <btree/conf.h>
 #include <log.h>
 #include <parallax/structures.h>
@@ -49,6 +52,7 @@ struct region_desc {
 	//end
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
+	struct ibv_mr *medium_log_buffer;
 	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
 	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
@@ -165,9 +169,8 @@ void region_desc_init_replica_state(region_desc_t region_desc, size_t size, stru
 	}
 
 	region_desc->r_state = calloc(1UL, sizeof(struct ru_replica_state));
-	/*initalize l0_recovery_buffer*/
 	region_desc->r_state->l0_recovery_rdma_buf = region_desc_initialize_rdma_buffer(size, rdma_cm_id);
-	/*initialize big recovery buffer*/
+	region_desc->r_state->medium_recovery_rdma_buf = region_desc_initialize_rdma_buffer(size, rdma_cm_id);
 	region_desc->r_state->big_recovery_rdma_buf = region_desc_initialize_rdma_buffer(size, rdma_cm_id);
 }
 
@@ -350,6 +353,15 @@ struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t re
 	return &region_desc->m_state->l0_recovery_rdma_buf;
 }
 
+struct ru_master_log_buffer *region_desc_get_primary_medium_log_buf(region_desc_t region_desc)
+{
+	if (!region_desc_is_primary(region_desc)) {
+		log_fatal("Region must have primary role not a backup!");
+		_exit(EXIT_FAILURE);
+	}
+	return &region_desc->m_state->medium_recovery_rdma_buf;
+}
+
 struct ru_master_log_buffer *region_desc_get_primary_big_log_buf(region_desc_t region_desc)
 {
 	if (!region_desc_is_primary(region_desc)) {
@@ -366,6 +378,15 @@ struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t r
 		_exit(EXIT_FAILURE);
 	}
 	return &region_desc->r_state->big_recovery_rdma_buf;
+}
+
+struct ru_replica_rdma_buffer *region_desc_get_backup_medium_log_buf(region_desc_t region_desc)
+{
+	if (region_desc_is_primary(region_desc)) {
+		log_fatal("This is a primary region not a backup!");
+		_exit(EXIT_FAILURE);
+	}
+	return &region_desc->r_state->medium_recovery_rdma_buf;
 }
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_big_log_buf(region_desc_t region_desc)
@@ -543,5 +564,22 @@ void region_desc_free_indexmap(region_desc_t r_desc, uint32_t level_id)
 	{
 		HASH_DEL(r_desc->replica_index_map[dst_level_id], current_entry);
 		free(current_entry);
+	}
+}
+
+void region_desc_register_medium_log_buffers(region_desc_t r_desc, struct connection_rdma *conn)
+{
+	assert(r_desc && conn);
+	// TODO: develop a better way to find the protection domain
+	struct db_handle *db = (struct db_handle *)region_desc_get_db(r_desc);
+	struct log_buffer_iterator *iter = log_buffer_iterator_init(&db->db_desc->medium_log);
+	while (log_buffer_iterator_is_valid(iter)) {
+		char *medium_log_buf = log_buffer_iterator_get_buffer(iter);
+		r_desc->medium_log_buffer = rdma_reg_write(conn->rdma_cm_id, medium_log_buf, SEGMENT_SIZE);
+		if (!r_desc->medium_log_buffer) {
+			log_fatal("Did not manage to reg write the medium log buffer");
+			_exit(EXIT_FAILURE);
+		}
+		log_buffer_iterator_next(iter);
 	}
 }

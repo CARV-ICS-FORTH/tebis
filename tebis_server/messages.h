@@ -157,6 +157,7 @@ struct s2s_msg_get_rdma_buffer_req {
 
 struct s2s_msg_get_rdma_buffer_rep {
 	struct ibv_mr l0_recovery_mr;
+	struct ibv_mr medium_recovery_mr;
 	struct ibv_mr big_recovery_mr;
 	uint32_t status;
 	int num_buffers;

@@ -30,7 +30,7 @@ static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_des
 	par_handle *handle = region_desc_get_db(r_desc);
 	const char *error_message = NULL;
 	struct kv_splice *kv = rdma_buffer_iterator_get_kv(iterator);
-	par_put_serialized(handle, (char *)kv, &error_message);
+	par_put_serialized(handle, (char *)kv, &error_message, true);
 	if (error_message) {
 		log_fatal("Error uppon inserting key %s, key_size %u", kv_splice_get_key_offset_in_kv(kv),
 			  kv_splice_get_key_size(kv));

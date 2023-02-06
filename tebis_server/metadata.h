@@ -43,7 +43,7 @@ enum krm_error_code { KRM_SUCCESS = 0, KRM_BAD_EPOCH, KRM_DS_TABLE_FULL, KRM_REG
 
 enum tb_kv_category { TEBIS_SMALLORMEDIUM = 0, TEBIS_BIG };
 
-enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
+enum tb_rdma_buf_category { TEBIS_L0_RECOVERY_RDMA_BUF, TEBIS_MEDIUM_RECOVERY_RDMA_BUF, TEBIS_BIG_RECOVERY_RDMA_BUF };
 
 enum ru_remote_buffer_status {
 	RU_BUFFER_UNINITIALIZED,
@@ -76,9 +76,8 @@ struct ru_master_log_buffer {
 };
 
 struct ru_master_state {
-	/*rdma buffer for keeping small and medium kv categories*/
 	struct ru_master_log_buffer l0_recovery_rdma_buf;
-	/*rdma buffer for keeping big kv category*/
+	struct ru_master_log_buffer medium_recovery_rdma_buf;
 	struct ru_master_log_buffer big_recovery_rdma_buf;
 	struct ru_primary_to_backup_comm primary_to_backup[KRM_MAX_BACKUPS];
 	/*The flush commands send to backups will be equal to the number of backups.
@@ -99,9 +98,8 @@ struct ru_replica_state {
 	level_write_appender_t wappender[MAX_LEVELS];
 	send_index_rewriter_t index_rewriter[MAX_LEVELS];
 	struct compaction_request *comp_req[MAX_LEVELS];
-	/*rdma buffer keeping small and medium kv categories*/
 	struct ru_replica_rdma_buffer l0_recovery_rdma_buf;
-	/*rdma buffer keepint the big kv category*/
+	struct ru_replica_rdma_buffer medium_recovery_rdma_buf;
 	struct ru_replica_rdma_buffer big_recovery_rdma_buf;
 };
 

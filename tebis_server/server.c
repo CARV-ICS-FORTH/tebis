@@ -814,8 +814,6 @@ void recover_log_context_completion(struct rdma_message_context *msg_ctx)
 	__sync_fetch_and_sub(&cnxt->num_of_replies_needed, 1);
 }
 
-int64_t lsn_to_be_replicated = 1;
-
 typedef void execute_task(struct regs_server_desc const *mydesc, struct work_task *task);
 
 execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_index_get_buffer_req,
