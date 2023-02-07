@@ -956,36 +956,36 @@ void regs_send_flush_commands(struct regs_server_desc const *server, struct work
 	//log_debug("Send flush commands");
 	struct region_desc *r_desc = task->r_desc;
 
-	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(r_desc); ++i) {
-		if (region_desc_get_flush_cmd_status(r_desc, i) == RU_BUFFER_UNINITIALIZED) {
-			/*allocate and send command*/
-			struct connection_rdma *conn = regs_get_data_conn(server,
-									  region_desc_get_backup_hostname(r_desc, i),
-									  region_desc_get_backup_IP(r_desc, i));
-			/*send flush req and piggyback it with the seg id num*/
-			uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + region_desc_get_min_key_size(r_desc);
-			uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
-			region_desc_set_flush_msg_pair(
-				r_desc, i, sc_allocate_rpc_pair(conn, req_size, rep_size, FLUSH_COMMAND_REQ));
+	for (uint32_t backup_id = task->last_replica_to_ack; backup_id < region_desc_get_num_backup(r_desc);
+	     ++backup_id) {
+		if (region_desc_get_flush_cmd_status(r_desc, backup_id) != RU_BUFFER_UNINITIALIZED)
+			continue;
+		/*allocate and send command*/
+		struct connection_rdma *conn = regs_get_data_conn(server,
+								  region_desc_get_backup_hostname(r_desc, backup_id),
+								  region_desc_get_backup_IP(r_desc, backup_id));
+		/*send flush req and piggyback it with the seg id num*/
+		uint32_t req_size = sizeof(struct s2s_msg_flush_cmd_req) + region_desc_get_min_key_size(r_desc);
+		uint32_t rep_size = sizeof(struct s2s_msg_flush_cmd_rep);
+		region_desc_set_flush_msg_pair(r_desc, backup_id,
+					       sc_allocate_rpc_pair(conn, req_size, rep_size, FLUSH_COMMAND_REQ));
 
-			struct sc_msg_pair *flush_cmd = region_desc_get_flush_msg_pair(r_desc, i);
-			if (flush_cmd->stat != ALLOCATION_IS_SUCCESSFULL) {
-				task->last_replica_to_ack = i;
-				return;
-			}
-
-			flush_cmd = region_desc_get_flush_msg_pair(r_desc, i);
-			msg_header *req_header = flush_cmd->request;
-
-			//time to send the message
-			req_header->session_id = region_desc_get_uuid(r_desc);
-			struct s2s_msg_flush_cmd_req *f_req =
-				(struct s2s_msg_flush_cmd_req *)((char *)req_header + sizeof(struct msg_header));
-			regs_fill_flush_request(r_desc, f_req, task);
-			__send_rdma_message(conn, req_header, NULL);
-			region_desc_set_primary2backup_buffer_stat(r_desc, i, RU_BUFFER_REQUESTED);
-			// r_desc->m_state->primary_to_backup[i].stat = RU_BUFFER_REQUESTED;
+		struct sc_msg_pair *flush_cmd = region_desc_get_flush_msg_pair(r_desc, backup_id);
+		if (flush_cmd->stat != ALLOCATION_IS_SUCCESSFULL) {
+			task->last_replica_to_ack = backup_id;
+			return;
 		}
+
+		flush_cmd = region_desc_get_flush_msg_pair(r_desc, backup_id);
+		msg_header *req_header = flush_cmd->request;
+
+		//time to send the message
+		req_header->session_id = region_desc_get_uuid(r_desc);
+		struct s2s_msg_flush_cmd_req *f_req =
+			(struct s2s_msg_flush_cmd_req *)((char *)req_header + sizeof(struct msg_header));
+		regs_fill_flush_request(r_desc, f_req, task);
+		__send_rdma_message(conn, req_header, NULL);
+		region_desc_set_primary2backup_buffer_stat(r_desc, backup_id, RU_BUFFER_REQUESTED);
 	}
 	task->last_replica_to_ack = 0;
 	task->kreon_operation_status = WAIT_FOR_FLUSH_REPLIES;

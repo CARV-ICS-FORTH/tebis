@@ -40,7 +40,8 @@ struct region_desc {
 	pthread_rwlock_t kreon_lock;
 
 	mregion_t mregion;
-	/*for replica_role deserializing the index*/
+	struct region_desc_msg_state *msg_state;
+	pthread_mutex_t msg_state_lock;
 	pthread_rwlock_t replica_log_map_lock;
 	struct region_desc_map_entry *replica_log_map;
 	struct region_desc_map_entry *replica_index_map[MAX_LEVELS];
@@ -49,15 +50,14 @@ struct region_desc {
 #define CLOCK_DIMENTIONS 2
 	struct sc_msg_pair send_index_flush_index_segment_rpc[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
 	bool send_index_flush_index_segment_rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
-	//end
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
 	struct ibv_mr *medium_log_buffer;
-	struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
+	// struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
-	uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
+	// uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
 	//staff for deserializing the index at the replicas
-	struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
+	// struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
 	enum server_role role;
 	par_handle *db;
 	union {
@@ -218,15 +218,15 @@ char *region_desc_get_backup_IP(region_desc_t region_desc, int backup_id)
 	return MREG_get_region_backup_IP(region_desc->mregion, backup_id);
 }
 
-struct sc_msg_pair *region_desc_get_msg_pair(region_desc_t region_desc, int backup_id, int level_id)
-{
-	return &region_desc->rpc[backup_id][level_id];
-}
+// struct sc_msg_pair *region_desc_get_msg_pair(region_desc_t region_desc, int backup_id, int level_id)
+// {
+// 	return &region_desc->rpc[backup_id][level_id];
+// }
 
-void region_desc_set_msg_pair(region_desc_t region_desc, struct sc_msg_pair msg_pair, int backup_id, int level_id)
-{
-	region_desc->rpc[backup_id][level_id] = msg_pair;
-}
+// void region_desc_set_msg_pair(region_desc_t region_desc, struct sc_msg_pair msg_pair, int backup_id, int level_id)
+// {
+// 	region_desc->rpc[backup_id][level_id] = msg_pair;
+// }
 
 uint64_t region_desc_get_uuid(region_desc_t region_desc)
 {
@@ -494,6 +494,7 @@ void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, ui
 	sc_free_rpc_pair(&region_desc->send_index_flush_index_segment_rpc[backup_id][level_id][clock_dimension]);
 	region_desc->send_index_flush_index_segment_rpc_in_use[backup_id][level_id][clock_dimension] = false;
 }
+
 mregion_t region_desc_get_mregion(region_desc_t region_desc)
 {
 	return region_desc->mregion;

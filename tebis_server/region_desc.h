@@ -51,8 +51,8 @@ uint32_t region_desc_get_num_backup(region_desc_t region_desc);
 
 char *region_desc_get_backup_hostname(region_desc_t region_desc, int backup_id);
 
-struct sc_msg_pair *region_desc_get_msg_pair(region_desc_t region_desc, int backup_id, int level_id);
-void region_desc_set_msg_pair(region_desc_t region_desc, struct sc_msg_pair msg_pair, int backup_id, int level_id);
+// struct sc_msg_pair *region_desc_get_msg_pair(region_desc_t region_desc, int backup_id, int level_id);
+// void region_desc_set_msg_pair(region_desc_t region_desc, struct sc_msg_pair msg_pair, int backup_id, int level_id);
 
 uint64_t region_desc_get_uuid(region_desc_t region_desc);
 
@@ -69,8 +69,8 @@ enum ru_remote_buffer_status region_desc_get_primary2backup_buffer_stat(region_d
 void region_desc_set_primary2backup_buffer_stat(region_desc_t region_desc, int backup_id,
 						enum ru_remote_buffer_status status);
 
-void region_desc_set_primary2backup_msg_pair(region_desc_t region_desc, int backup_id, struct sc_msg_pair msg_pair);
-struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region_desc, int backup_id);
+// void region_desc_set_primary2backup_msg_pair(region_desc_t region_desc, int backup_id, struct sc_msg_pair msg_pair);
+// struct sc_msg_pair *region_desc_get_primary2backup_msg_pair(region_desc_t region_desc, int backup_id);
 
 struct ru_master_log_buffer *region_desc_get_primary_L0_log_buf(region_desc_t region_desc);
 struct ru_master_log_buffer *region_desc_get_primary_medium_log_buf(region_desc_t region_desc);
@@ -88,6 +88,7 @@ void region_desc_set_flush_cmd_status(region_desc_t region_desc, enum ru_remote_
 
 void region_desc_set_flush_msg_pair(region_desc_t region_desc, int backup_id, struct sc_msg_pair msg_pair);
 struct sc_msg_pair *region_desc_get_flush_msg_pair(region_desc_t region_desc, int backup_id);
+
 int64_t region_desc_get_next_lsn(region_desc_t region_desc);
 void region_desc_increase_lsn(region_desc_t region_desc);
 
