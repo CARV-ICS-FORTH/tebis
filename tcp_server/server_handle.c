@@ -8,6 +8,7 @@
 #include <endian.h>
 #include <errno.h>
 // #include <linux/io_uring.h>
+#include <linux/types.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -58,9 +59,9 @@
 /** server argv[] options **/
 
 struct server_options {
-	uint16_t magic_init_num;
+	__u16 magic_init_num;
+	__u32 threadno;
 
-	unsigned int threadno;
 	const char *paddr; // printable ip address
 	struct sockaddr_storage inaddr; // ip address + port
 };
@@ -69,10 +70,10 @@ struct server_options {
 
 struct worker {
 	pthread_t tid;
-	uint64_t task_counter;
 
-	int32_t epfd;
-	int32_t sock;
+	__u64 task_counter;
+	__s32 epfd;
+	__s32 sock;
 
 	struct buffer buf;
 };
@@ -80,11 +81,10 @@ struct worker {
 /** server handle **/
 
 struct server_handle {
-	uint16_t magic_init_num;
-
-	uint32_t flags;
-	int32_t sock;
-	int32_t epfd;
+	__u16 magic_init_num;
+	__u32 flags;
+	__s32 sock;
+	__s32 epfd;
 
 	struct server_options *opts;
 	struct worker *workers;
@@ -98,8 +98,8 @@ struct tcp_req {
 };
 
 struct tcp_rep {
-	char retc;
-	uint64_t paysz; /** TODO: if Tebis returns blobs, replace that with 'count' */
+	retcode_t retc;
+	__u64 paylsz; /** TODO: if Tebis returns blobs, replace that with 'count' */
 
 	struct buffer buf; /** TODO: work only with worker's buffer */
 
@@ -110,16 +110,25 @@ struct server_handle *g_sh; // CTRL-C
 char g_dummy_responce[1000] = "123456789012345678901234567890123456789\0";
 
 #define reset_errno() errno = 0
-#define offset_of_struct_field(x, f) (uint64_t)(&((typeof(x) *)(0UL))->f)
-#define offset_of_struct_field$(s, f) (uint64_t)(&((s *)(0UL))->f)
+#define offset_of_struct_field(x, f) (__u64)(&((typeof(x) *)(0UL))->f)
+#define offset_of_struct_field$(s, f) (__u64)(&((s *)(0UL))->f)
 
-#define is_req_invalid(req) ((uint32_t)(req->type) >= OPSNO)
+#define is_req_invalid(req) ((__u32)(req->type) >= OPSNO)
 #define is_req_new_conn(req) (req->type == REQ_INIT_CONN)
 
 #define infinite_loop_start() for (;;) {
 #define infinite_loop_end() }
 #define event_loop_start(index, limit) for (int index = 0; index < limit; ++index) {
 #define event_loop_end() }
+#define likely(expr) __builtin_expect(expr, 1L)
+#define unlikely(expr) __builtin_expect(expr, 0L)
+
+#define rebufw_retcode(rep, retc) *((__u8 *)(rep->buf.mem)) = (__u8)(retc) // return code
+#define repbufw_count(rep, count) *((__u64 *)(rep->buf.mem + 1UL)) = htobe64((__u64)(count)) // count
+#define repbufw_tsize(rep, tsize) *((__u64 *)(rep->buf.mem + 9UL)) = htobe64((__u64)(tsize)) // total size
+#define reqbufr_rtype(req, buf) req->type = *((__u8 *)(buf.mem))
+#define reqbufr_keysz(req, buf) req->kv.key.size = be64toh(*((__u64 *)(buf.mem + 1UL)))
+#define reqbufr_paylsz(req, buf) req->kv.value.size = be64toh(*((__u64 *)(buf.mem + 9UL)))
 
 /***** private functions (decl) *****/
 
@@ -151,13 +160,8 @@ static int $handle_new_connection(struct worker *this) __attribute__((nonnull));
 static int $req_recv(struct worker *restrict worker, int cliefd, struct tcp_req *restrict req)
 	__attribute__((nonnull(1, 3)));
 
-static int $rep_new(struct tcp_rep *restrict rep, struct worker *this, int retcode, size_t paysz);
-
-/**
- * @brief
- *
- */
-static void *$rep_expose_payload(struct tcp_rep *rep) __attribute__((nonnull));
+static void *$rep_init(struct tcp_rep *restrict rep, struct worker *this, retcode_t retc, size_t paylsz)
+	__attribute__((nonnull(1, 2)));
 
 /**
  * @brief
@@ -166,7 +170,7 @@ static void *$rep_expose_payload(struct tcp_rep *rep) __attribute__((nonnull));
  * @param rep
  * @return int
  */
-static int $rep_send(int cliefd, struct tcp_rep *restrict rep) __attribute__((nonnull));
+static int $rep_send(int cliefd, struct tcp_rep *rep) __attribute__((nonnull(2)));
 
 /**
  * @brief
@@ -195,7 +199,7 @@ static void $req_print(struct tcp_req *req) __attribute__((nonnull));
 
 void server_sig_handler_SIGINT(int signum);
 
-int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *restrict argv[__restrict_arr])
+int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, const char *restrict argv[__restrict_arr])
 {
 	if (!sconfig) {
 		errno = EINVAL;
@@ -377,7 +381,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 		return -(EXIT_FAILURE);
 
 	shandle->opts = sconf;
-	shandle->workers = (struct worker *)((uint8_t *)(shandle) + sizeof(struct server_handle));
+	shandle->workers = (struct worker *)((__u8 *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
 
@@ -407,7 +411,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 
 	/** temp --- dummy response / TODO: remove()**/
 
-	for (uint64_t i = 0UL; i < 100UL; ++i)
+	for (__u64 i = 0UL; i < 100UL; ++i)
 		memcpy(g_dummy_responce + i * 10, "saloustros", 10UL);
 
 	/**********/
@@ -465,13 +469,13 @@ int server_spawn_threads(sHandle server_handle)
 
 	/** END OF ERROR HANDLING **/
 
-	uint32_t threads = shandle->opts->threadno;
+	__u32 threads = shandle->opts->threadno;
 
 	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
 						MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
 		return -(EXIT_FAILURE);
 
-	for (uint32_t index = 0U; index < threads; ++index) {
+	for (__u32 index = 0U; index < threads; ++index) {
 		shandle->workers[index].sock = shandle->sock;
 		shandle->workers[index].epfd = shandle->epfd;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
@@ -479,7 +483,7 @@ int server_spawn_threads(sHandle server_handle)
 
 		if (pthread_create(&shandle->workers[index].tid, NULL, $handle_events,
 				   shandle->workers + index)) { // one of the server threads failed!
-			uint32_t tmp;
+			__u32 tmp;
 
 			/* kill all threads that have been created by now */
 			for (tmp = 0; tmp < index; ++tmp)
@@ -556,7 +560,7 @@ static int $handle_new_connection(struct worker *this)
 
 static int $client_version_check(int cliefd, struct worker *worker)
 {
-	uint32_t version = be32toh(*((uint8_t *)(worker->buf.mem) + 1UL));
+	__u32 version = be32toh(*((__u8 *)(worker->buf.mem) + 1UL));
 
 	/** TODO: send a respond to client that uses an outdated version */
 
@@ -586,35 +590,21 @@ static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *r
 {
 	/** TODO: find a fixed number */
 
-	if (recv(cliefd, this->buf.mem, 64UL * __x86_PAGESIZE, 0) < 0)
+	if (unlikely(recv(cliefd, this->buf.mem, 64UL * __x86_PAGESIZE, 0) < 0))
 		return -(EXIT_FAILURE);
 
-	req->type = *((uint8_t *)(this->buf.mem));
+	reqbufr_rtype(req, this->buf);
 
-	if (is_req_invalid(req)) {
-		plog(PL_WARN "invalid request, terminating connection...");
+	// will the request (req-type) ever be invalid/wrong? is_req_invalid() macro
 
-		/** TODO: send() retcode + discard receive buffer instead of CTL_DEL (1) */
-		/** TODO: just send the appropriate return code without closing the connection (2) */
-
-		epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL);
-		close(cliefd);
-
-		errno = ENOTSUP;
-		return -(EXIT_FAILURE);
-	}
-
-	if (is_req_new_conn(req) && $client_version_check(cliefd, this) < 0) {
-		plog(PL_ERROR "$client_version_check(): %s", strerror(errno));
-		epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd,
-			  NULL); // kernel 2.6+
-		close(cliefd);
-	}
+	if (unlikely(is_req_new_conn(req)))
+		return $client_version_check(cliefd, this);
 
 	// recv buffer: [1B type | 8B keysz | 8B paysz | payload<key|data>]
 
-	req->kv.key.size = be64toh(*((uint64_t *)(this->buf.mem + 1UL)));
-	req->kv.value.size = be64toh(*((uint64_t *)(this->buf.mem + 9UL)));
+	reqbufr_keysz(req, this->buf);
+	reqbufr_paylsz(req, this->buf);
+
 	req->kv.key.data = this->buf.mem + TT_REQHDR_SIZE;
 	req->kv.value.data = req->kv.key.data + req->kv.key.size;
 
@@ -650,58 +640,51 @@ static void $req_print(struct tcp_req *req)
 
 	printf("\e[1;91m%s\e[0m\n", $req_printable(req->type));
 
-	printf("  - key.size = %lu (0x%lx)\n", kv->key.size, *((uint64_t *)(kv->key.data)));
+	printf("  - key.size = %lu (0x%llx)\n", kv->key.size, *((__u64 *)(kv->key.data)));
 
 	if (!req_in_get_family(req))
-		printf("  - val.size = %lu (0x%lx)\n\n", kv->value.size, *((uint64_t *)(kv->value.data)));
+		printf("  - val.size = %lu (0x%llx)\n\n", kv->value.size, *((__u64 *)(kv->value.data)));
 }
 
-/** TODO: finish reply mechanism (check all rep-functions - SCAN) */
-// do I provide a blob for Tebis to write to or
-// Tebis send me a ready-to-send blob ?
-static int $rep_new(struct tcp_rep *restrict rep, struct worker *restrict this, int retcode, size_t paysz)
+/** TODO: support reply for SCAN-request */
+static void *$rep_init(struct tcp_rep *restrict rep, struct worker *restrict this, retcode_t retc, size_t paylsz)
 {
-	/** TODO: make that work for SCAN request too */
+	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
 
-	struct tcp_rep *trep = (void *)(this->buf.mem);
-	uint64_t tsize = TT_REPHDR_SIZE + sizeof(*trep);
+	rep->buf.mem = this->buf.mem;
+	rep->retc = retc;
 
-	if (retcode == TT_REQ_SUCC)
-		tsize += paysz + 8UL; //temp
-	else
-		paysz = 0UL; // failure-reply has 0-length payload
+	rebufw_retcode(rep, retc);
 
-	trep->buf.bytes = this->buf.bytes - sizeof(*trep);
+	if (retc != RETC_SUCCESS) {
+		rep->paylsz = 0UL;
+		rep->buf.bytes = TT_REPHDR_SIZE;
 
-	if (trep->buf.bytes < tsize) {
-		errno = ENOMEM;
-		return -(EXIT_FAILURE);
+		repbufw_count(rep, 0UL);
+		repbufw_tsize(rep, 0UL);
+
+		return NULL;
 	}
 
-	trep->buf.mem = (char *)(this->buf.mem) + sizeof(*trep);
-	trep->retc = retcode;
-	trep->paysz = paysz;
+	rep->paylsz = paylsz;
+	rep->buf.bytes = TT_REPHDR_SIZE + paylsz;
 
-	*((char *)(trep->buf.mem)) = retcode;
-	*((uint64_t *)(trep->buf.mem + 1UL)) = htobe64(1UL); // count
-	*((uint64_t *)(trep->buf.mem + 9UL)) = htobe64(paysz + 8UL); // total-size
-	trep->buf.mem += TT_REPHDR_SIZE;
+	repbufw_count(rep, 1UL);
+	repbufw_tsize(rep, paylsz);
 
-	return EXIT_SUCCESS;
-}
+	/** TODO: remove_code_below(), Parallax knows the buffer size and will provide bounded sizes */
 
-static void *$rep_expose_payload(struct tcp_rep *rep)
-{
-	return rep->buf.mem;
+	/* if (rep->buf.bytes > DEF_BUF_SIZE) {
+		errno = ENOMEM;
+		return NULL;
+	} */
+
+	return rep->buf.mem + TT_REPHDR_SIZE;
 }
 
 static int $rep_send(int cliefd, struct tcp_rep *rep)
 {
-	uint64_t tsize = rep->paysz + sizeof(uint64_t) + TT_REPHDR_SIZE;
-
-	/** TODO: add count too */
-
-	if (send(cliefd, rep->buf.mem - TT_REPHDR_SIZE, tsize, 0) < 0)
+	if (unlikely(send(cliefd, rep->buf.mem, rep->buf.bytes, 0) < 0))
 		return -(EXIT_FAILURE);
 
 	return EXIT_SUCCESS;
@@ -727,7 +710,7 @@ static void *$handle_events(void *arg)
 
 	events = epoll_wait(this->epfd, epoll_events, EPOLL_MAX_EVENTS, -1);
 
-	if (events < 0) {
+	if (unlikely(events < 0)) {
 		plog(PL_ERROR "epoll() (continue)");
 		continue;
 	}
@@ -749,7 +732,7 @@ static void *$handle_events(void *arg)
 
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
 		close(cliefd);
-	} else if (evbits & EPOLLIN) /** read event **/
+	} else if (likely(evbits & EPOLLIN)) /** read event **/
 	{
 		/** new connection **/
 
@@ -768,7 +751,9 @@ static void *$handle_events(void *arg)
 
 		++this->task_counter; // get info about load balancing (temp)
 
-		if ($req_recv(this, cliefd, &req) < 0) {
+		if (unlikely($req_recv(this, cliefd, &req) < 0)) {
+			/** TODO: better error handling? */
+
 			plog(PL_ERROR "$req_recv(): %s", strerror(errno));
 			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
 			close(cliefd);
@@ -776,16 +761,22 @@ static void *$handle_events(void *arg)
 			continue;
 		}
 
+		/** TODO: embed error handling inside req_recv and rep_send to avoid 2-if-statements */
+
 		/* tebis_handle_request(); */
+		$rep_init(&rep, this, RETC_SUCCESS, 40UL);
 
-		/** TODO: !temp response (SCAN not supported)! change that **/
+		if (unlikely($rep_send(cliefd, &rep) < 0 && errno != ENOTSUP)) {
+			/** TODO: better error handling? */
 
-		/* s_tcp_rep *rep = $rep_new(this, TT_REQ_SUCC, 40UL);
-		char *tptr = $rep_expose_payload(rep);
-		*((uint64_t *)(tptr)) = 40UL;
-		memcpy(tptr + sizeof(uint64_t), g_dummy_responce, 40UL); */
+			plog(PL_ERROR "$req_send(): %s", strerror(errno));
+			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
+			close(cliefd);
 
-		if ($rep_send(cliefd, &rep) < 0) {
+			continue;
+		}
+
+		if (unlikely($rep_send(cliefd, &rep) < 0)) {
 			plog(PL_ERROR "$rep_send(): %s", strerror(errno));
 
 			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
@@ -794,11 +785,11 @@ static void *$handle_events(void *arg)
 			continue;
 		}
 
-		/* re-enable getting INPUT-events from coresponding client */
+		/* re-enable getting INPUT-events from the coresponding client */
 
 		rearm_event.data.fd = cliefd;
 		epoll_ctl(this->epfd, EPOLL_CTL_MOD, cliefd, &rearm_event);
-	} else if (evbits & EPOLLERR) /** error **/
+	} else if (unlikely(evbits & EPOLLERR)) /** error **/
 	{
 		plog(PL_ERROR "events[%d] = EPOLLER, fd = %d\n", evindex, cliefd);
 		/** TODO: error handling */
@@ -807,6 +798,8 @@ static void *$handle_events(void *arg)
 
 	event_loop_end();
 	infinite_loop_end();
+
+	__builtin_unreachable();
 }
 
 /***** server signal handlers *****/
@@ -816,7 +809,7 @@ void server_sig_handler_SIGINT(int signum)
 	printf("received \e[1;31mSIGINT (%d)\e[0m --- printing thread-stats\n", signum);
 
 	for (uint i = 0, lim = g_sh->opts->threadno; i < lim; ++i)
-		printf("worker[%u] completed %lu tasks\n", i, g_sh->workers[i].task_counter);
+		printf("worker[%u] completed %llu tasks\n", i, g_sh->workers[i].task_counter);
 
 	server_handle_destroy(g_sh);
 	printf("\n");

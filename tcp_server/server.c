@@ -24,7 +24,7 @@ int main(int argc, char **argv)
 
 	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {
 		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
-		exit(EXIT_FAILURE);
+		exit(errno);
 	}
 
 	printf("\eserver's pid = %d\n", getpid());
@@ -32,12 +32,17 @@ int main(int argc, char **argv)
 	/** start server **/
 
 	if ((server_handle_init(&shandle, sconfig)) < 0) {
-		plog(PL_ERROR "server_handle_init()");
-		exit(EXIT_FAILURE);
+		plog(PL_ERROR "server_handle_init(): ", strerror(errno));
+		exit(errno);
+	}
+
+	if (server_spawn_threads(shandle) < 0) {
+		plog(PL_ERROR "server_spawn_threads(): ", strerror(errno));
+		exit(errno);
 	}
 
 	pause();
-	// server_spawn_threads(shandle);
+	// server_wait_threads(shandle);
 	server_handle_destroy(shandle);
 
 	return EXIT_SUCCESS;

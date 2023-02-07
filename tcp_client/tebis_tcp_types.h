@@ -11,10 +11,11 @@
 #define TT_REQHDR_SIZE 17UL
 
 #define __x86_PAGESIZE (1UL << 12)
-#define DEF_BUF_SIZE (32UL * __x86_PAGESIZE) // 128KB
+#define DEF_BUF_SIZE (64UL * __x86_PAGESIZE) // 256KB
 
-#define TT_REQ_SUCC 0
-#define TT_ERR_CONN_DROP -2
+#define TT_REQ_SUCC 0 /** TODO: remove, use 'retcode_t' insread */
+
+#define req_in_get_family(req) (((req)->type) < REQ_SCAN)
 
 struct buffer {
 	uint64_t bytes;
@@ -27,13 +28,26 @@ typedef struct {
 
 } generic_data_t;
 
-/** requests - replies **/
+typedef struct {
+	generic_data_t key;
+	generic_data_t value;
+
+} kv_t;
 
 typedef enum {
 
-/** buffer scheme: [1B type | 8B keysz | 8B paysz | payload[key, data]] **/
+	RETC_SUCCESS,
+	RETC_FAIL
+
+} retcode_t;
+
+/** requests - replies **/
 
 #define OPSNO 6U
+
+typedef enum {
+
+	/** buffer scheme: [1B type | 8B keysz | 8B paysz | payload[key|data]] **/
 
 	/** GET-request family **/
 

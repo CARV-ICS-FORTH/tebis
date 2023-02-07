@@ -13,7 +13,7 @@
 #define __x86_PAGESIZE (1UL << 12)
 #define DEF_BUF_SIZE (64UL * __x86_PAGESIZE) // 256KB
 
-#define TT_REQ_SUCC 0
+#define TT_REQ_SUCC 0 /** TODO: remove, use 'retcode_t' insread */
 
 #define req_in_get_family(req) (((req)->type) < REQ_SCAN)
 
@@ -33,6 +33,13 @@ typedef struct {
 	generic_data_t value;
 
 } kv_t;
+
+typedef enum {
+
+	RETC_SUCCESS,
+	RETC_FAIL
+
+} retcode_t;
 
 /** requests - replies **/
 

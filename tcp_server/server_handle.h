@@ -27,7 +27,7 @@ typedef void *s_tcp_rep;
  * @return int
  */
 int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
-			   char *__restrict__ argv[__restrict_arr]);
+			   const char *__restrict__ argv[__restrict_arr]);
 
 /**
  * @brief
