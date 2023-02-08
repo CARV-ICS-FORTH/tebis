@@ -3,7 +3,7 @@
 
 set(tcp_server_EXEC "tcp-server")
 
-add_executable(${tcp_server_EXEC} server.c server_handle.c)
+add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
 
 target_link_libraries(${tcp_server_EXEC} log)
 

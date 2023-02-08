@@ -52,15 +52,15 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	printf("\033[1;31mthreads = %d\033[0m\n", this->threads);
 
 	if (!(this->chandle =
-		      malloc(this->threads * (sizeof(*this->chandle) + sizeof(*this->req) + sizeof(*this->reqp))))) {
+		      (void **) malloc(this->threads * (sizeof(*this->chandle) + sizeof(*this->req) + sizeof(*this->rep))))) {
 		log_error("malloc() failed: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
-	this->req = this->chandle + (this->threads * sizeof(*this->chandle));
-	this->rep = this->req + (this->threads * sizeof(*this->req));
+	this->req = (typeof(this->req))((char *)(this->chandle) + (this->threads * sizeof(*(this->chandle))));
+	this->rep = (typeof(this->rep))((char *)(this->req) + (this->threads * sizeof(*(this->req))));
 
-	for (uint i = 0U; i < this->threads; ++i) {
+	for (int i = 0; i < this->threads; ++i) {
 		if (chandle_init(this->chandle + i, SITH6_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);

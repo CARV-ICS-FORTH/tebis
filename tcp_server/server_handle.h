@@ -26,8 +26,8 @@ typedef void *s_tcp_rep;
  * @param argv
  * @return int
  */
-int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
-			   const char *__restrict__ argv[__restrict_arr]);
+extern int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
+			   char *__restrict__ *__restrict__ argv);
 
 /**
  * @brief
@@ -35,7 +35,7 @@ int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
  * @param shandle
  * @return int
  */
-int server_print_config(sHandle shandle);
+extern int server_print_config(sHandle shandle);
 
 /**
  * @brief Initializes an sHandle Object from the given sConfig Object, which must have been initialized with
@@ -49,7 +49,7 @@ int server_print_config(sHandle shandle);
  * @param server_config
  * @return int
  */
-int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, sConfig __restrict__ server_config);
+extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, sConfig __restrict__ server_config);
 
 /**
  * @brief Creates all server threads that will be listening to requests from clients. On success, 0 is
@@ -62,7 +62,7 @@ int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, sConfig
  * @param server_handle
  * @return int
  */
-int server_spawn_threads(sHandle server_handle);
+extern int server_spawn_threads(sHandle server_handle);
 
 /**
  * @brief
@@ -70,7 +70,7 @@ int server_spawn_threads(sHandle server_handle);
  * @param server_handle
  * @return int
  */
-int server_wait_threads(sHandle server_handle);
+extern int server_wait_threads(sHandle server_handle) __attribute__((deprecated("DO NOT USE!")));
 
 /**
  * @brief
@@ -78,8 +78,8 @@ int server_wait_threads(sHandle server_handle);
  * @param shandle
  * @return int
  */
-int server_handle_destroy(sHandle shandle);
+extern int server_handle_destroy(sHandle shandle);
 
-void s_tcp_print_req(s_tcp_req req);
+extern void s_tcp_print_req(s_tcp_req req);
 
 #endif /* TEBIS_TCP_SERVER_H */

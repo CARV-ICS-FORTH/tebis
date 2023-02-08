@@ -47,7 +47,7 @@
 
 #define VERSION_STRING "tcp-server 0.1\n"
 
-#define ERROR_STRING "\e[1m[\e[31m*\e[0;1m]\e[0m"
+#define ERROR_STRING "\033[1m[\033[31m*\033[0;1m]\033[0m"
 
 #define CONFIG_STRING         \
 	"[ Server Config ]\n" \
@@ -193,13 +193,13 @@ static const char *$req_printable(req_t type);
  *
  * @param req
  */
-static void $req_print(struct tcp_req *req) __attribute__((nonnull));
+static void $req_print(struct tcp_req *req) __attribute__((nonnull, unused));
 
 /***** public functions *****/
 
 void server_sig_handler_SIGINT(int signum);
 
-int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, const char *restrict argv[__restrict_arr])
+int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *restrict *restrict argv)
 {
 	if (!sconfig) {
 		errno = EINVAL;
@@ -211,12 +211,14 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, const c
 		exit(EXIT_FAILURE);
 	}
 
-	struct server_options *opts = *sconfig;
+	struct server_options *opts;
 
-	if (!(opts = malloc(sizeof(*opts))))
+	if (!(*sconfig = malloc(sizeof(*opts))))
 		return -(EXIT_FAILURE);
 
-	for (unsigned int i = 1U; i < argc; ++i) {
+	opts = *sconfig;
+
+	for (int i = 1; i < argc; ++i) {
 		if (argv[i][0] != '-') {
 			fprintf(stderr, ERROR_STRING " tcp-server: uknown option '%s'\n", argv[i]);
 			free(opts);
@@ -312,7 +314,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, const c
 				off = offset_of_struct_field$(struct sockaddr_in, sin_addr);
 			}
 
-			if (!inet_pton(opts->inaddr.ss_family, argv[i], &opts->inaddr + off)) {
+			if (!inet_pton(opts->inaddr.ss_family, argv[i], &(opts->inaddr) + off)) {
 				fprintf(stderr, ERROR_STRING " tcp-server: invalid address\n");
 				free(opts);
 				exit(EXIT_FAILURE);
@@ -354,7 +356,7 @@ int server_print_config(sHandle server_handle)
 	}
 
 	printf(CONFIG_STRING, shandle->opts->threadno, shandle->opts->paddr,
-	       ntohs(((struct sockaddr_in *)(&shandle->opts))->sin_port));
+	       ntohs(((struct sockaddr_in *)(&shandle->opts->inaddr))->sin_port));
 
 	return EXIT_SUCCESS;
 }
@@ -375,13 +377,13 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 
 	/** END OF ERROR HANDLING **/
 
-	struct server_handle *shandle = *server_handle;
-
-	if (!(shandle = malloc(sizeof(struct server_handle) + (shandle->opts->threadno * sizeof(struct worker)))))
+	if (!(*server_handle = malloc(sizeof(struct server_handle) + (sconf->threadno * sizeof(struct worker)))))
 		return -(EXIT_FAILURE);
 
+	struct server_handle *shandle = *server_handle;
+
 	shandle->opts = sconf;
-	shandle->workers = (struct worker *)((__u8 *)(shandle) + sizeof(struct server_handle));
+	shandle->workers = (struct worker *)((__u32 *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
 
@@ -442,13 +444,13 @@ int server_handle_destroy(sHandle server_handle)
 
 	/** END OF ERROR HANDLING **/
 
-	// munmap() per-thread buffers
 	// signal all threads to cancel
 
 	close(shandle->sock);
 	close(shandle->epfd);
-	free(server_handle);
-	free(server_handle);
+	munmap(shandle->workers[0].buf.mem, shandle->opts->threadno * DEF_BUF_SIZE);
+	// free(shandle->opts);
+	// free(server_handle);
 
 	return EXIT_SUCCESS;
 }
@@ -475,7 +477,9 @@ int server_spawn_threads(sHandle server_handle)
 						MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
 		return -(EXIT_FAILURE);
 
-	for (__u32 index = 0U; index < threads; ++index) {
+	__u32 index;
+
+	for (index = 0U, --threads; index < threads; ++index) {
 		shandle->workers[index].sock = shandle->sock;
 		shandle->workers[index].epfd = shandle->epfd;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
@@ -497,6 +501,14 @@ int server_spawn_threads(sHandle server_handle)
 			return -(EXIT_FAILURE);
 		}
 	}
+
+	shandle->workers[index].tid = pthread_self();
+	shandle->workers[index].sock = shandle->sock;
+	shandle->workers[index].epfd = shandle->epfd;
+	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
+	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
+
+	$handle_events(shandle->workers + index);  // convert 'main()-thread' to 'server-thread'
 
 	return EXIT_SUCCESS;
 }
@@ -588,9 +600,7 @@ static int $client_version_check(int cliefd, struct worker *worker)
 
 static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *restrict req)
 {
-	/** TODO: find a fixed number */
-
-	if (unlikely(recv(cliefd, this->buf.mem, 64UL * __x86_PAGESIZE, 0) < 0))
+	if (unlikely(recv(cliefd, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
 		return -(EXIT_FAILURE);
 
 	reqbufr_rtype(req, this->buf);
@@ -606,7 +616,7 @@ static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *r
 	reqbufr_paylsz(req, this->buf);
 
 	req->kv.key.data = this->buf.mem + TT_REQHDR_SIZE;
-	req->kv.value.data = req->kv.key.data + req->kv.key.size;
+	req->kv.value.data = (char *)(req->kv.key.data) + req->kv.key.size;
 
 	return EXIT_SUCCESS;
 }
@@ -638,7 +648,7 @@ static void $req_print(struct tcp_req *req)
 {
 	kv_t *kv = &req->kv;
 
-	printf("\e[1;91m%s\e[0m\n", $req_printable(req->type));
+	printf("\033[1;91m%s\033[0m\n", $req_printable(req->type));
 
 	printf("  - key.size = %lu (0x%llx)\n", kv->key.size, *((__u64 *)(kv->key.data)));
 
@@ -700,6 +710,8 @@ static void *$handle_events(void *arg)
 	int cliefd;
 	int evbits;
 
+	void *repbuf;
+
 	struct epoll_event rearm_event = { .events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT };
 	struct epoll_event epoll_events[EPOLL_MAX_EVENTS];
 
@@ -711,7 +723,7 @@ static void *$handle_events(void *arg)
 	events = epoll_wait(this->epfd, epoll_events, EPOLL_MAX_EVENTS, -1);
 
 	if (unlikely(events < 0)) {
-		plog(PL_ERROR "epoll() (continue)");
+		plog(PL_ERROR "epoll(): %s", strerror(errno));
 		continue;
 	}
 
@@ -761,24 +773,17 @@ static void *$handle_events(void *arg)
 			continue;
 		}
 
-		/** TODO: embed error handling inside req_recv and rep_send to avoid 2-if-statements */
+		/** TODO: embed error handling inside rep_send to avoid 2-if-statements */
 
 		/* tebis_handle_request(); */
-		$rep_init(&rep, this, RETC_SUCCESS, 40UL);
+		repbuf = $rep_init(&rep, this, RETC_SUCCESS, 40UL);
 
-		if (unlikely($rep_send(cliefd, &rep) < 0 && errno != ENOTSUP)) {
+		memcpy(repbuf, g_dummy_responce, 40UL);
+
+		if (unlikely($rep_send(cliefd, &rep) < 0)) {
 			/** TODO: better error handling? */
 
 			plog(PL_ERROR "$req_send(): %s", strerror(errno));
-			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
-			close(cliefd);
-
-			continue;
-		}
-
-		if (unlikely($rep_send(cliefd, &rep) < 0)) {
-			plog(PL_ERROR "$rep_send(): %s", strerror(errno));
-
 			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
 			close(cliefd);
 
@@ -806,7 +811,7 @@ static void *$handle_events(void *arg)
 
 void server_sig_handler_SIGINT(int signum)
 {
-	printf("received \e[1;31mSIGINT (%d)\e[0m --- printing thread-stats\n", signum);
+	printf("received \033[1;31mSIGINT (%d)\033[0m --- printing thread-stats\n", signum);
 
 	for (uint i = 0, lim = g_sh->opts->threadno; i < lim; ++i)
 		printf("worker[%u] completed %llu tasks\n", i, g_sh->workers[i].task_counter);

@@ -22,12 +22,12 @@ int main(int argc, char **argv)
 
 	/** parse/set options **/
 
-	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {
+	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {  // stupid clang
 		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
 		exit(errno);
 	}
 
-	printf("\eserver's pid = %d\n", getpid());
+	printf("\033server's pid = %d\n", getpid());
 
 	/** start server **/
 
@@ -36,14 +36,19 @@ int main(int argc, char **argv)
 		exit(errno);
 	}
 
-	if (server_spawn_threads(shandle) < 0) {
-		plog(PL_ERROR "server_spawn_threads(): ", strerror(errno));
+	if ( server_print_config(shandle) < 0 ) {
+		plog(PL_ERROR "server_print_config(): ", strerror(errno));
 		exit(errno);
 	}
 
-	pause();
+	if (server_spawn_threads(shandle) < 0) {
+		plog(PL_ERROR "server_spawn_threads(): ", strerror(errno));
+		exit(errno);
+	}  // blocking call!
+
+	// pause();
 	// server_wait_threads(shandle);
-	server_handle_destroy(shandle);
+	// server_handle_destroy(shandle);
 
 	return EXIT_SUCCESS;
 }
