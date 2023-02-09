@@ -45,6 +45,7 @@ enum work_task_status {
 	TASK_NO_OP,
 	TASK_FLUSH_L0,
 	TASK_CLOSE_COMPACTION,
+	TASK_FLUSH_MEDIUM_LOG,
 };
 
 struct work_task {

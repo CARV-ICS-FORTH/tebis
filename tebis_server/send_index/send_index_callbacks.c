@@ -21,6 +21,8 @@
 #include "../tebis_server/messages.h"
 #include "../tebis_server/server_communication.h"
 #include "../utilities/circular_buffer.h"
+#include "allocator/log_structures.h"
+#include "parallax/structures.h"
 #include "parallax_callbacks/parallax_callbacks.h"
 #include "send_index_uuid_checker/send_index_uuid_checker.h"
 #include <assert.h>
@@ -114,6 +116,22 @@ static void send_index_fill_flush_index_segment(msg_header *request_header, regi
 	f_req->reply_offt = wcursor_segment_buffer_get_status_addr(wcursor, height, clock, replica_id);
 }
 
+static void send_index_fill_flush_medium_log_segment(msg_header *request_header, region_desc_t r_desc,
+						     uint64_t segment_offt, uint64_t IO_starting_offt, uint32_t IO_size,
+						     uint32_t chunk_id)
+{
+	assert(request_header);
+	struct s2s_msg_replica_flush_medium_log_req *req =
+		(struct s2s_msg_replica_flush_medium_log_req *)((char *)request_header + sizeof(struct msg_header));
+	req->primary_segment_offt = segment_offt;
+	req->chunk_id = chunk_id;
+	req->IO_starting_offt = IO_starting_offt;
+	req->IO_size = IO_size;
+	req->region_key_size = region_desc_get_min_key_size(r_desc);
+	strcpy(req->region_key, region_desc_get_min_key(r_desc));
+	req->uuid = (uint64_t)req;
+}
+
 static void send_index_fill_reply_fields(struct sc_msg_pair *msg_pair, struct connection_rdma *r_conn)
 {
 	struct msg_header *request = msg_pair->request;
@@ -189,8 +207,9 @@ static void send_index_flush_L0(struct send_index_context *context, uint64_t sma
 	}
 
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
-		// struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, 0);
 		assert(flush_L0_command[backup_id].reply != NULL);
+		r_conn = regs_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id),
+					    region_desc_get_backup_IP(r_desc, backup_id));
 		// spin for reply, are you sure?
 		teb_spin_for_message_reply(flush_L0_command[backup_id].request, r_conn);
 		// for debugging purposes
@@ -241,6 +260,8 @@ static void send_index_allocate_rdma_buffer_in_replicas(struct send_index_contex
 	}
 
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
+		r_conn = regs_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id),
+					    region_desc_get_backup_IP(r_desc, backup_id));
 		// spin for the reply
 		teb_spin_for_message_reply(allocate_buffer_cmd[backup_id].request, r_conn);
 		// for debuging purposes
@@ -321,7 +342,8 @@ static void send_index_close_compaction(struct send_index_context *context, uint
 	}
 
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
-		// struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, i, level_id);
+		r_conn = regs_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id),
+					    region_desc_get_backup_IP(r_desc, backup_id));
 		// spin for the reply
 		teb_spin_for_message_reply(close_compaction_cmd[backup_id].request, r_conn);
 		// for debuging purposes
@@ -452,7 +474,8 @@ static void send_index_swap_levels(struct send_index_context *context, uint32_t 
 	}
 
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
-		// struct sc_msg_pair *msg_pair = region_desc_get_msg_pair(r_desc, backup_id, level_id);
+		r_conn = regs_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id),
+					    region_desc_get_backup_IP(r_desc, backup_id));
 		// spin for the reply
 		teb_spin_for_message_reply(swap_level_cmd[backup_id].request, r_conn);
 		// for debuging purposes
@@ -510,6 +533,103 @@ void send_index_compaction_wcursor_got_flush_replies(void *context, uint32_t lev
 		region_desc_free_flush_index_segment_msg_pair(r_desc, backup_id, level_id, clock);
 }
 
+void send_index_replicate_medium_log_chunk(struct send_index_context *context, uint64_t IO_starting_offt,
+					   uint32_t IO_size, uint32_t tail_id)
+{
+	region_desc_t r_desc = context->r_desc;
+	struct regs_server_desc *server = context->server;
+	assert(r_desc && server);
+	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
+		struct ru_master_log_buffer *remote_medium_log = region_desc_get_primary_medium_log_buf(r_desc);
+		struct ibv_mr remote_mr = remote_medium_log->segment.mr[backup_id];
+		struct connection_rdma *r_conn = regs_get_data_conn(server,
+								    region_desc_get_backup_hostname(r_desc, backup_id),
+								    region_desc_get_backup_IP(r_desc, backup_id));
+		while (1) {
+			struct ibv_mr *local_mem = region_desc_get_medium_log_buffer(r_desc, tail_id);
+			char *inmem_medium_segment = (char *)local_mem->addr;
+			int ret = rdma_post_write(r_conn->rdma_cm_id, NULL, &inmem_medium_segment[IO_starting_offt],
+						  IO_size, local_mem, IBV_SEND_SIGNALED, (uint64_t)remote_mr.addr,
+						  remote_mr.rkey);
+			if (!ret)
+				break;
+		}
+	}
+}
+
+void send_index_send_flush_medium_log_command(struct send_index_context *context, uint64_t segment_offt,
+					      uint64_t IO_starting_offt, uint32_t IO_size, uint32_t chunk_id,
+					      uint32_t tail_id)
+{
+	region_desc_t r_desc = context->r_desc;
+	struct regs_server_desc *server = context->server;
+	assert(r_desc && server);
+
+	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
+		struct connection_rdma *r_conn = regs_get_data_conn(server,
+								    region_desc_get_backup_hostname(r_desc, backup_id),
+								    region_desc_get_backup_IP(r_desc, backup_id));
+		uint32_t request_size = sizeof(struct s2s_msg_replica_flush_medium_log_req);
+		uint32_t reply_size = sizeof(struct s2s_msg_replica_flush_medium_log_rep);
+
+		struct send_index_allocate_msg_pair_info send_index_allocation_info = {
+			.conn = r_conn,
+			.request_size = request_size,
+			.reply_size = reply_size,
+			.request_type = REPLICA_FLUSH_MEDIUM_LOG_REQUEST,
+		};
+		struct sc_msg_pair msg_pair = send_index_allocate_msg_pair(send_index_allocation_info);
+		region_desc_set_flush_medium_log_segment_msg_pair(r_desc, backup_id, tail_id, msg_pair);
+		send_index_fill_flush_medium_log_segment(msg_pair.request, r_desc, segment_offt, IO_starting_offt,
+							 IO_size, chunk_id);
+		send_index_fill_reply_fields(&msg_pair, r_conn);
+		msg_pair.request->session_id = (uint64_t)region_desc_get_uuid(r_desc);
+		log_debug("Sending flush medium log segment msg bid %u tailid %u", backup_id, tail_id);
+
+		//send the msg
+		if (__send_rdma_message(r_conn, msg_pair.request, NULL) != TEBIS_SUCCESS) {
+			log_fatal("failed to send message");
+			_exit(EXIT_FAILURE);
+		}
+	}
+}
+
+void send_index_spin_for_medium_log_replies(void *context, uint32_t tail_id)
+{
+	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
+	struct region_desc *r_desc = send_index_cxt->r_desc;
+	struct regs_server_desc *server = send_index_cxt->server;
+	assert(r_desc && server);
+
+	struct connection_rdma *r_conn = NULL;
+	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
+		r_conn = regs_get_data_conn(server, region_desc_get_backup_hostname(r_desc, backup_id),
+					    region_desc_get_backup_IP(r_desc, backup_id));
+		struct sc_msg_pair *msg_pair =
+			region_desc_get_flush_medium_log_segment_msg_pair(r_desc, backup_id, tail_id);
+		// spin for the reply
+		teb_spin_for_message_reply(msg_pair->request, r_conn);
+		log_debug("WTF %u %u", backup_id, tail_id);
+		//assert(0);
+		// for debuging purposes
+		send_index_uuid_checker_validate_uuid(msg_pair, REPLICA_FLUSH_MEDIUM_LOG_REQUEST);
+		// free msg space
+		region_desc_free_flush_medium_log_segment_msg_pair(r_desc, backup_id, tail_id);
+	}
+}
+
+void send_index_segment_is_full(void *context, uint64_t segment_offt, uint64_t IO_starting_offt, uint32_t IO_size,
+				uint32_t chunk_id, uint32_t tail_id)
+{
+	assert(context);
+	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
+
+	send_index_replicate_medium_log_chunk(send_index_cxt, IO_starting_offt, IO_size, tail_id);
+
+	send_index_send_flush_medium_log_command(send_index_cxt, segment_offt, IO_starting_offt, IO_size, chunk_id,
+						 tail_id);
+}
+
 void send_index_init_callbacks(struct regs_server_desc *server, region_desc_t r_desc)
 {
 	struct send_index_context *send_index_cxt =
@@ -519,6 +639,8 @@ void send_index_init_callbacks(struct regs_server_desc *server, region_desc_t r_
 	void *cxt = (void *)send_index_cxt;
 
 	struct parallax_callback_funcs send_index_callback_functions = { 0 };
+	send_index_callback_functions.segment_is_full_cb = send_index_segment_is_full;
+	send_index_callback_functions.spin_for_medium_log_flush = send_index_spin_for_medium_log_replies;
 	send_index_callback_functions.compaction_started_cb = send_index_compaction_started_callback;
 	send_index_callback_functions.compaction_ended_cb = send_index_compaction_ended_callback;
 	send_index_callback_functions.swap_levels_cb = send_index_swap_levels_callback;

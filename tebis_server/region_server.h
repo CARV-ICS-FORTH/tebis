@@ -113,6 +113,7 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 void regs_execute_get_rdma_buffer_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
 void regs_execute_replica_index_get_buffer_req(struct regs_server_desc const *region_server_desc,
 					       struct work_task *task);
+void regs_execute_flush_medium_log(struct regs_server_desc const *region_server_desc, struct work_task *task);
 void regs_execute_no_op(struct regs_server_desc const *mydesc, struct work_task *task);
 void regs_execute_test_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
 

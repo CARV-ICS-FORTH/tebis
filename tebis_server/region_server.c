@@ -18,6 +18,7 @@
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/circular_buffer.h"
 #include "../utilities/spin_loop.h"
+#include "allocator/persistent_operations.h"
 #include "btree/btree.h"
 #include "build_index/build_index.h"
 #include "conf.h"
@@ -918,11 +919,15 @@ void regs_insert_kv_to_store(struct work_task *task)
 	char *value = task->kv->kv_payload + 2 * sizeof(uint32_t) + key_size;
 	globals_append_trace_file(key_size, key, value_size, value, TEB_PUT);
 #endif
-
+	struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(kv_splice_get_key_size(task->kv),
+									      kv_splice_get_value_size(task->kv),
+									      insertOp),
+					      .kv_type = KV_FORMAT,
+					      .kv_splice = task->kv };
 	/*insert kv to data store*/
 	const char *error_message = NULL;
 	struct par_put_metadata metadata =
-		par_put_serialized(region_desc_get_db(task->r_desc), (char *)task->kv, &error_message, true);
+		par_put_serialized(region_desc_get_db(task->r_desc), (char *)&splice_base, &error_message, true, false);
 	if (error_message) {
 		region_desc_leave_parallax(task->r_desc);
 		return;
@@ -1736,6 +1741,46 @@ void regs_execute_replica_index_swap_levels(struct regs_server_desc const *regio
 
 	if (task->reply_msg->payload_length != 0)
 		set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_flush_medium_log(struct regs_server_desc const *region_server_desc, struct work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == REPLICA_FLUSH_MEDIUM_LOG_REQUEST);
+	assert(globals_get_send_index());
+
+	// get the region descriptor
+	struct s2s_msg_replica_flush_medium_log_req *req =
+		(struct s2s_msg_replica_flush_medium_log_req *)((char *)task->msg + sizeof(struct msg_header));
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_FLUSH_MEDIUM_LOG;
+	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
+	struct ru_replica_rdma_buffer *medium_log_buf = region_desc_get_backup_medium_log_buf(r_desc);
+	uint64_t replica_medium_log_segment =
+		region_desc_get_medium_log_segment_offt(r_desc, req->primary_segment_offt);
+	pr_append_segment_to_log(&dbhandle->db_desc->medium_log, (char *)medium_log_buf->mr->addr,
+				 replica_medium_log_segment);
+	log_debug("Flushing a chunk of segment at offt %lu", replica_medium_log_segment);
+
+	pr_flush_buffer_to_log(&dbhandle->db_desc->medium_log, req->IO_starting_offt, medium_log_buf->mr->addr,
+			       req->IO_size);
+
+	//time for reply
+	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+						task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_replica_flush_medium_log_rep *reply =
+		(struct s2s_msg_replica_flush_medium_log_rep *)((char *)task->reply_msg + sizeof(msg_header));
+	reply->uuid = req->uuid;
+
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_flush_medium_log_rep),
+			       REPLICA_FLUSH_MEDIUM_LOG_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
 	task->kreon_operation_status = TASK_COMPLETE;
 }

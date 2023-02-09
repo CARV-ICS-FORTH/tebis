@@ -18,8 +18,10 @@
 #include "master/mregion.h"
 #include "metadata.h"
 #include "region_server.h"
+#include "send_index/send_index_callbacks.h"
 #include "server_communication.h"
 #include "work_task.h"
+#include <allocator/persistent_operations.h>
 #include <assert.h>
 #include <btree/btree.h>
 #include <btree/conf.h>
@@ -35,8 +37,12 @@
 #include <uthash.h>
 // IWYU pragma: no_forward_declare rdma_cm_id
 
+#define SEGMENT_START(x) (x - (x % SEGMENT_SIZE))
+
 struct region_desc {
 	pthread_mutex_t region_mgmnt_lock;
+	pthread_mutex_t medium_log_managment;
+	pthread_mutex_t send_medium_log_chunk;
 	pthread_rwlock_t kreon_lock;
 
 	mregion_t mregion;
@@ -50,9 +56,11 @@ struct region_desc {
 #define CLOCK_DIMENTIONS 2
 	struct sc_msg_pair send_index_flush_index_segment_rpc[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
 	bool send_index_flush_index_segment_rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS][CLOCK_DIMENTIONS];
+	struct sc_msg_pair send_index_flush_medium_log_segment_rpc[KRM_MAX_BACKUPS][LOG_TAIL_NUM_BUFS];
+	bool send_index_flush_medium_log_segment_in_use[KRM_MAX_BACKUPS][LOG_TAIL_NUM_BUFS];
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
-	struct ibv_mr *medium_log_buffer;
+	struct ibv_mr *medium_log_buffer[LOG_TAIL_NUM_BUFS];
 	// struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
 	// uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
@@ -105,6 +113,8 @@ region_desc_t region_desc_create(mregion_t mregion, enum server_role server_role
 
 	region_desc->replica_buf_status = KRM_BUFS_UNINITIALIZED;
 	MUTEX_INIT(&region_desc->region_mgmnt_lock, NULL);
+	MUTEX_INIT(&region_desc->medium_log_managment, NULL);
+	MUTEX_INIT(&region_desc->send_medium_log_chunk, NULL);
 	region_desc->pending_region_tasks = 0;
 	if (RWLOCK_INIT(&region_desc->kreon_lock, NULL) != 0) {
 		log_fatal("Failed to init region read write lock");
@@ -484,6 +494,33 @@ void region_desc_set_flush_index_segment_msg_pair(region_desc_t region_desc, uin
 	region_desc->send_index_flush_index_segment_rpc_in_use[backup_id][level_id][clock_dimension] = true;
 }
 
+void region_desc_set_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint32_t tail_id,
+						       struct sc_msg_pair msg_pair)
+{
+	if (region_desc->send_index_flush_medium_log_segment_in_use[backup_id][tail_id]) {
+		log_fatal("Opa re bro poy pas");
+		_exit(EXIT_FAILURE);
+	}
+	region_desc->send_index_flush_medium_log_segment_rpc[backup_id][tail_id] = msg_pair;
+	region_desc->send_index_flush_medium_log_segment_in_use[backup_id][tail_id] = true;
+}
+
+struct sc_msg_pair *region_desc_get_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id,
+								      uint32_t tail_id)
+{
+	return &region_desc->send_index_flush_medium_log_segment_rpc[backup_id][tail_id];
+}
+
+void region_desc_free_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint32_t tail_id)
+{
+	if (!region_desc->send_index_flush_medium_log_segment_in_use[backup_id][tail_id]) {
+		log_fatal("Opa re bro poy pas");
+		_exit(EXIT_FAILURE);
+	}
+	sc_free_rpc_pair(&region_desc->send_index_flush_medium_log_segment_rpc[backup_id][tail_id]);
+	region_desc->send_index_flush_medium_log_segment_in_use[backup_id][tail_id] = false;
+}
+
 void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint8_t level_id,
 						   uint8_t clock_dimension)
 {
@@ -532,9 +569,46 @@ uint64_t region_desc_get_logmap_seg(region_desc_t r_desc, uint64_t primary_segme
 {
 	struct region_desc_map_entry *index_entry;
 
+	pthread_rwlock_rdlock(&r_desc->replica_log_map_lock);
 	HASH_FIND_PTR(r_desc->replica_log_map, &primary_segment_offt, index_entry);
+	pthread_rwlock_unlock(&r_desc->replica_log_map_lock);
 
 	return index_entry ? index_entry->replica_segment_offt : 0;
+}
+
+uint64_t region_desc_get_medium_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt)
+{
+	assert(r_desc);
+	MUTEX_LOCK(&r_desc->medium_log_managment);
+	uint64_t primary_start_segment_offt = SEGMENT_START(primary_segment_offt);
+	uint64_t replica_segment_offt = region_desc_get_logmap_seg(r_desc, primary_segment_offt);
+	if (replica_segment_offt) {
+		MUTEX_UNLOCK(&r_desc->medium_log_managment);
+		return replica_segment_offt;
+	}
+
+	// allocate a segment and allocate it to the logmap HT
+	//leaving allocation for for later
+	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
+	replica_segment_offt = pr_allocate_segment_for_log(dbhandle->db_desc, &dbhandle->db_desc->medium_log, 1, 1);
+	region_desc_add_to_logmap(r_desc, primary_start_segment_offt, replica_segment_offt);
+
+	MUTEX_UNLOCK(&r_desc->medium_log_managment);
+	return replica_segment_offt;
+}
+
+uint64_t region_desc_allocate_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt)
+{
+	assert(r_desc);
+	MUTEX_LOCK(&r_desc->medium_log_managment);
+	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
+
+	uint64_t replica_segment_offt =
+		pr_allocate_segment_for_log(dbhandle->db_desc, &dbhandle->db_desc->medium_log, 1, 1);
+
+	region_desc_add_to_logmap(r_desc, primary_segment_offt, replica_segment_offt);
+	MUTEX_UNLOCK(&r_desc->medium_log_managment);
+	return replica_segment_offt;
 }
 
 void region_desc_add_to_indexmap(region_desc_t region_desc, uint64_t primary_segment_offt,
@@ -574,13 +648,21 @@ void region_desc_register_medium_log_buffers(region_desc_t r_desc, struct connec
 	// TODO: develop a better way to find the protection domain
 	struct db_handle *db = (struct db_handle *)region_desc_get_db(r_desc);
 	struct log_buffer_iterator *iter = log_buffer_iterator_init(&db->db_desc->medium_log);
+	uint32_t i = 0;
 	while (log_buffer_iterator_is_valid(iter)) {
 		char *medium_log_buf = log_buffer_iterator_get_buffer(iter);
-		r_desc->medium_log_buffer = rdma_reg_write(conn->rdma_cm_id, medium_log_buf, SEGMENT_SIZE);
-		if (!r_desc->medium_log_buffer) {
+		r_desc->medium_log_buffer[i] = rdma_reg_write(conn->rdma_cm_id, medium_log_buf, SEGMENT_SIZE);
+		if (!r_desc->medium_log_buffer[i]) {
 			log_fatal("Did not manage to reg write the medium log buffer");
 			_exit(EXIT_FAILURE);
 		}
+		i++;
 		log_buffer_iterator_next(iter);
 	}
+}
+
+struct ibv_mr *region_desc_get_medium_log_buffer(region_desc_t r_desc, uint32_t tail_id)
+{
+	assert(r_desc);
+	return r_desc->medium_log_buffer[tail_id];
 }

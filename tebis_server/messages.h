@@ -20,7 +20,7 @@
 
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
-#define NUMBER_OF_TASKS 14
+#define NUMBER_OF_TASKS 15
 
 enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REQ = 0,
@@ -37,6 +37,7 @@ enum message_type {
 	FLUSH_L0_REQUEST,
 	CLOSE_COMPACTION_REQUEST,
 	REPLICA_INDEX_SWAP_LEVELS_REQUEST,
+	REPLICA_FLUSH_MEDIUM_LOG_REQUEST,
 	PUT_IF_EXISTS_REQUEST,
 	PUT_REPLY,
 	GET_REPLY,
@@ -52,6 +53,7 @@ enum message_type {
 	/*server2server index transfer*/
 	REPLICA_INDEX_GET_BUFFER_REP,
 	REPLICA_INDEX_FLUSH_REP,
+	REPLICA_FLUSH_MEDIUM_LOG_REP,
 	/*control stuff*/
 	DISCONNECT,
 	/*test messages*/
@@ -225,6 +227,20 @@ struct s2s_msg_replica_index_flush_req {
 
 struct s2s_msg_replica_index_flush_rep {
 	int64_t uuid; //not used for now
+};
+
+struct s2s_msg_replica_flush_medium_log_req {
+	uint64_t primary_segment_offt;
+	uint64_t IO_starting_offt;
+	uint64_t uuid;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
+	uint32_t chunk_id;
+	uint32_t IO_size;
+};
+
+struct s2s_msg_replica_flush_medium_log_rep {
+	int64_t uuid;
 };
 
 struct s2s_msg_close_compaction_request {

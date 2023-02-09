@@ -74,6 +74,16 @@ static struct uuid_tuple send_index_uuid_checker_get_uuids(struct sc_msg_pair *m
 		uuids_pair.request_uuid = flush_req_L0_payload->uuid;
 		uuids_pair.reply_uuid = flush_rep_L0_payload->uuid;
 		break;
+	case REPLICA_FLUSH_MEDIUM_LOG_REQUEST:;
+		struct s2s_msg_replica_flush_medium_log_req *flush_medium_log_req =
+			(struct s2s_msg_replica_flush_medium_log_req *)((char *)msg_pair->request +
+									sizeof(struct msg_header));
+		struct s2s_msg_replica_flush_medium_log_rep *flush_medium_log_rep =
+			(struct s2s_msg_replica_flush_medium_log_rep *)((char *)msg_pair->reply +
+									sizeof(struct msg_header));
+		uuids_pair.request_uuid = flush_medium_log_req->uuid;
+		uuids_pair.reply_uuid = flush_medium_log_rep->uuid;
+		break;
 	default:
 		log_fatal("uuid Checker of send index does not support request msg %u", request_msg_type);
 		assert(0);

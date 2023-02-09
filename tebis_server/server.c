@@ -829,7 +829,8 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_in
 							 regs_execute_no_op,
 							 regs_execute_flush_L0_op,
 							 regs_execute_send_index_close_compaction,
-							 regs_execute_replica_index_swap_levels };
+							 regs_execute_replica_index_swap_levels,
+							 regs_execute_flush_medium_log };
 
 /*
  * Tebis main processing function of networkrequests.

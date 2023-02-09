@@ -125,4 +125,13 @@ void region_desc_add_to_indexmap(region_desc_t region_desc, uint64_t primary_seg
 uint64_t region_desc_get_indexmap_seg(region_desc_t r_desc, uint64_t primary_segment_offt, uint32_t level_id);
 void region_desc_free_indexmap(region_desc_t r_desc, uint32_t level_id);
 void region_desc_register_medium_log_buffers(region_desc_t region_desc, struct connection_rdma *conn);
+struct ibv_mr *region_desc_get_medium_log_buffer(region_desc_t r_desc, uint32_t chunk_id);
+void region_desc_set_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint32_t tail_id,
+						       struct sc_msg_pair msg_pair);
+struct sc_msg_pair *region_desc_get_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id,
+								      uint32_t tail_id);
+void region_desc_free_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id,
+							uint32_t tail_id);
+uint64_t region_desc_get_medium_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
+uint64_t region_desc_allocate_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
 #endif

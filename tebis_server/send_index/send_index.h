@@ -88,4 +88,5 @@ void send_index_close_mr_for_segment_replies(region_desc_t r_desc, uint32_t leve
 
 void send_index_translate_primary_metadata(region_desc_t r_desc, uint32_t level_id, uint64_t primary_last_segment_offt,
 					   uint64_t primary_first_segment_offt, uint64_t primary_new_root_offt);
+void send_index_flush_medium_log_chunk(region_desc_t r_desc, uint64_t chunk_offt);
 #endif // SEND_INDEX_H_

@@ -1,8 +1,10 @@
 #include "send_index_rewriter.h"
 #include "btree/conf.h"
 #include "btree/level_write_appender.h"
+#include "parallax/structures.h"
 #include "send_index.h"
 #include "send_index_segment_iterator.h"
+#include <allocator/persistent_operations.h>
 #include <assert.h>
 #include <btree/dynamic_leaf.h>
 #include <btree/index_node.h>
@@ -38,11 +40,11 @@ static void send_index_rewriter_rewrite_leaf_node(send_index_rewriter_t rewriter
 	for (dl_init_leaf_iterator(node, &iter, NULL, -1); dl_is_leaf_iterator_valid(&iter);
 	     dl_leaf_iterator_next(&iter)) {
 		struct kv_splice_base splice = dl_leaf_iterator_curr(&iter);
-		if (splice.cat == SMALL_INPLACE)
+		if (splice.kv_cat == SMALL_INPLACE || splice.kv_cat == MEDIUM_INPLACE)
 			continue;
 
 		//translate the seperated key value
-		assert(splice.cat == BIG_INLOG || splice.cat == MEDIUM_INLOG);
+		assert(splice.kv_cat == BIG_INLOG || splice.kv_cat == MEDIUM_INLOG);
 		struct kv_seperation_splice2 *seperated_kv =
 			(struct kv_seperation_splice2 *)kv_splice_base_get_reference(&splice);
 		uint64_t old_kv_ptr = kv_sep2_get_value_offt(seperated_kv);
@@ -50,9 +52,10 @@ static void send_index_rewriter_rewrite_leaf_node(send_index_rewriter_t rewriter
 		uint64_t ptr_shift = old_kv_ptr - ptr_segment_offt;
 
 		uint64_t replica_seg_offt = region_desc_get_logmap_seg(rewriter->r_desc, ptr_segment_offt);
+
 		if (!replica_seg_offt) {
-			log_fatal("There is no chance we dont have a segment for you already");
-			_exit(EXIT_FAILURE);
+			assert(splice.kv_cat == MEDIUM_INLOG);
+			replica_seg_offt = region_desc_allocate_log_segment_offt(rewriter->r_desc, ptr_segment_offt);
 		}
 
 		//translate now
