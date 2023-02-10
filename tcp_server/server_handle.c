@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "server_handle.h"
+#include "parallax/parallax.h"
 #include "plog.h"
 
 #include <arpa/inet.h>
@@ -37,23 +38,25 @@
 	"tcp-server: no options specified\n" \
 	"try 'tcp-server --help' for more information\n"
 
-#define HELP_STRING                                                                           \
-	"Usage:\n  tcp-server <-bpt>\nOptions:\n"                                             \
-	" -t, --threads <thread-num>  specify number of server threads.\n"                    \
-	" -b, --bind <if-address>     specify the interface that the server will bind to.\n"  \
-	" -p, --port <port>           specify the port that the server will be listening\n\n" \
-	" -h, --help     display this help and exit\n"                                        \
+#define HELP_STRING                                                                                \
+	"Usage:\n  tcp-server <-bptf>\nOptions:\n"                                                 \
+	" -t, --threads <thread-num>  specify number of server threads.\n"                         \
+	" -b, --bind <if-address>     specify the interface that the server will bind to.\n"       \
+	" -p, --port <port>           specify the port that the server will be listening\n"        \
+	" -f, --file <path>           specify the target (file of db) where parallax will run\n\n" \
+	" -h, --help     display this help and exit\n"                                             \
 	" -v, --version  display version information and exit\n"
+#define NECESSARY_OPTIONS 4
 
 #define VERSION_STRING "tcp-server 0.1\n"
 
 #define ERROR_STRING "\033[1m[\033[31m*\033[0;1m]\033[0m"
 
-#define CONFIG_STRING         \
-	"[ Server Config ]\n" \
-	"  - threads = %u\n"  \
-	"  - address = %s\n"  \
-	"  - port = %u\n"     \
+#define CONFIG_STRING           \
+	"[ Server Config ]\n"   \
+	"  - threads = %u\n"    \
+	"  - address = %s:%u\n" \
+	"  - file = %s\n"       \
 	"  - flags = not yet supported\n"
 
 /** server argv[] options **/
@@ -63,6 +66,8 @@ struct server_options {
 	__u32 threadno;
 
 	const char *paddr; // printable ip address
+	const char *dbpath;
+
 	struct sockaddr_storage inaddr; // ip address + port
 };
 
@@ -85,6 +90,8 @@ struct server_handle {
 	__u32 flags;
 	__s32 sock;
 	__s32 epfd;
+
+	par_handle parhandle;
 
 	struct server_options *opts;
 	struct worker *workers;
@@ -123,12 +130,14 @@ char g_dummy_responce[1000] = "123456789012345678901234567890123456789\0";
 #define likely(expr) __builtin_expect(expr, 1L)
 #define unlikely(expr) __builtin_expect(expr, 0L)
 
-#define rebufw_retcode(rep, retc) *((__u8 *)(rep->buf.mem)) = (__u8)(retc) // return code
-#define repbufw_count(rep, count) *((__u64 *)(rep->buf.mem + 1UL)) = htobe64((__u64)(count)) // count
-#define repbufw_tsize(rep, tsize) *((__u64 *)(rep->buf.mem + 9UL)) = htobe64((__u64)(tsize)) // total size
-#define reqbufr_rtype(req, buf) req->type = *((__u8 *)(buf.mem))
-#define reqbufr_keysz(req, buf) req->kv.key.size = be64toh(*((__u64 *)(buf.mem + 1UL)))
-#define reqbufr_paylsz(req, buf) req->kv.value.size = be64toh(*((__u64 *)(buf.mem + 9UL)))
+#define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->buf.mem)) = (__u8)(retc) // return code
+#define repbuf_hdr_write_count(rep, count) *((__u64 *)(rep->buf.mem + 1UL)) = htobe64((__u64)(count)) // count
+#define repbuf_hdr_write_total_size(rep, tsize) *((__u64 *)(rep->buf.mem + 9UL)) = htobe64((__u64)(tsize)) // total size
+#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf.mem))
+#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be64toh(*((__u64 *)(buf.mem + 1UL)))
+#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = be64toh(*((__u64 *)(buf.mem + 9UL)))
+
+#define MAX_REGIONS 128U
 
 /***** private functions (decl) *****/
 
@@ -206,12 +215,13 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 		return -(EXIT_FAILURE);
 	}
 
-	if (argc == 1) {
+	if (argc <= 1) {
 		fprintf(stderr, USAGE_STRING);
 		exit(EXIT_FAILURE);
 	}
 
 	struct server_options *opts;
+	int opt_sum = 0;
 
 	if (!(*sconfig = malloc(sizeof(*opts))))
 		return -(EXIT_FAILURE);
@@ -257,6 +267,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 				exit(EXIT_FAILURE);
 			}
 
+			++opt_sum;
 			opts->threadno = (unsigned int)thrnum;
 		} else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--port")) {
 			reset_errno();
@@ -286,6 +297,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 				exit(EXIT_FAILURE);
 			}
 
+			++opt_sum;
 			((struct sockaddr_in *)(&opts->inaddr))->sin_port = htons((unsigned short)(port));
 		} else if (!strcmp(argv[i], "-b") || !strcmp(argv[i], "--bind")) {
 			if (!argv[++i]) {
@@ -320,21 +332,35 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 				exit(EXIT_FAILURE);
 			}
 
+			++opt_sum;
 			opts->paddr = argv[i];
 		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 			fprintf(stdout, HELP_STRING);
 			free(opts);
 			exit(EXIT_SUCCESS);
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
+		version:
 			fprintf(stdout, VERSION_STRING);
 			free(opts);
 			exit(EXIT_SUCCESS);
+		} else if (!strcmp(argv[i], "-f") || !strcmp(argv[i], "--file")) {
+			if (!argv[++i]) {
+				fprintf(stderr, ERROR_STRING " tcp-server: no file provided!\n");
+				free(opts);
+				exit(EXIT_FAILURE);
+			}
+
+			++opt_sum;
+			opts->dbpath = argv[i];
 		} else {
 			fprintf(stderr, ERROR_STRING " tcp-server: uknown option '%s'\n", argv[i]);
 			free(opts);
 			exit(EXIT_FAILURE);
 		}
 	}
+
+	if (opt_sum != NECESSARY_OPTIONS)
+		goto version;
 
 	opts->magic_init_num = MAGIC_INIT_NUM;
 
@@ -356,7 +382,7 @@ int server_print_config(sHandle server_handle)
 	}
 
 	printf(CONFIG_STRING, shandle->opts->threadno, shandle->opts->paddr,
-	       ntohs(((struct sockaddr_in *)(&shandle->opts->inaddr))->sin_port));
+	       ntohs(((struct sockaddr_in *)(&shandle->opts->inaddr))->sin_port), shandle->opts->dbpath);
 
 	return EXIT_SUCCESS;
 }
@@ -411,6 +437,27 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	if (epoll_ctl(shandle->epfd, EPOLL_CTL_ADD, shandle->sock, &epev) < 0)
 		goto cleanup;
 
+	/** initialize paralalx **/
+
+	const char *error_message = par_format(sconf->dbpath, MAX_REGIONS);
+
+	if (error_message) {
+		plog(PL_ERROR "%s", error_message);
+		return -(EXIT_FAILURE);
+	}
+
+	par_db_options db_options = { .volume_name = sconf->dbpath,
+				      .create_flag = PAR_CREATE_DB,
+				      .db_name = "tcp_server_par.db",
+				      .options = par_get_default_options() };
+
+	shandle->parhandle = par_open(&db_options, &error_message);
+
+	if (error_message) {
+		plog(PL_ERROR "%s", error_message);
+		return -(EXIT_FAILURE);
+	}
+
 	/** temp --- dummy response / TODO: remove()**/
 
 	for (__u64 i = 0UL; i < 100UL; ++i)
@@ -449,8 +496,16 @@ int server_handle_destroy(sHandle server_handle)
 	close(shandle->sock);
 	close(shandle->epfd);
 	munmap(shandle->workers[0].buf.mem, shandle->opts->threadno * DEF_BUF_SIZE);
-	// free(shandle->opts);
-	// free(server_handle);
+
+	const char *error_message = par_close(shandle->parhandle);
+
+	if (error_message) {
+		plog(PL_ERROR "%s", error_message);
+		return -(EXIT_FAILURE);
+	}
+
+	// free(shandle->opts); bug! out-of-bounds access!
+	// free(server_handle); bug! same!
 
 	return EXIT_SUCCESS;
 }
@@ -508,7 +563,7 @@ int server_spawn_threads(sHandle server_handle)
 	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
 	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 
-	$handle_events(shandle->workers + index);  // convert 'main()-thread' to 'server-thread'
+	$handle_events(shandle->workers + index); // convert 'main()-thread' to 'server-thread'
 
 	return EXIT_SUCCESS;
 }
@@ -603,7 +658,7 @@ static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *r
 	if (unlikely(recv(cliefd, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
 		return -(EXIT_FAILURE);
 
-	reqbufr_rtype(req, this->buf);
+	reqbuf_hdr_read_type(req, this->buf);
 
 	// will the request (req-type) ever be invalid/wrong? is_req_invalid() macro
 
@@ -612,8 +667,8 @@ static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *r
 
 	// recv buffer: [1B type | 8B keysz | 8B paysz | payload<key|data>]
 
-	reqbufr_keysz(req, this->buf);
-	reqbufr_paylsz(req, this->buf);
+	reqbuf_hdr_read_key_size(req, this->buf);
+	reqbuf_hdr_read_payload_size(req, this->buf);
 
 	req->kv.key.data = this->buf.mem + TT_REQHDR_SIZE;
 	req->kv.value.data = (char *)(req->kv.key.data) + req->kv.key.size;
@@ -657,6 +712,7 @@ static void $req_print(struct tcp_req *req)
 }
 
 /** TODO: support reply for SCAN-request */
+/** TODO: rename to rep_update() */
 static void *$rep_init(struct tcp_rep *restrict rep, struct worker *restrict this, retcode_t retc, size_t paylsz)
 {
 	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
@@ -664,14 +720,14 @@ static void *$rep_init(struct tcp_rep *restrict rep, struct worker *restrict thi
 	rep->buf.mem = this->buf.mem;
 	rep->retc = retc;
 
-	rebufw_retcode(rep, retc);
+	repbuf_hdr_write_retcode(rep, retc);
 
 	if (retc != RETC_SUCCESS) {
 		rep->paylsz = 0UL;
 		rep->buf.bytes = TT_REPHDR_SIZE;
 
-		repbufw_count(rep, 0UL);
-		repbufw_tsize(rep, 0UL);
+		repbuf_hdr_write_count(rep, 0UL);
+		repbuf_hdr_write_total_size(rep, 0UL);
 
 		return NULL;
 	}
@@ -679,8 +735,8 @@ static void *$rep_init(struct tcp_rep *restrict rep, struct worker *restrict thi
 	rep->paylsz = paylsz;
 	rep->buf.bytes = TT_REPHDR_SIZE + paylsz;
 
-	repbufw_count(rep, 1UL);
-	repbufw_tsize(rep, paylsz);
+	repbuf_hdr_write_count(rep, 1UL);
+	repbuf_hdr_write_total_size(rep, paylsz);
 
 	/** TODO: remove_code_below(), Parallax knows the buffer size and will provide bounded sizes */
 

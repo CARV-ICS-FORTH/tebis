@@ -27,7 +27,7 @@ typedef void *s_tcp_rep;
  * @return int
  */
 extern int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
-			   char *__restrict__ *__restrict__ argv);
+				  char *__restrict__ *__restrict__ argv) __attribute_warn_unused_result__;
 
 /**
  * @brief
@@ -49,7 +49,8 @@ extern int server_print_config(sHandle shandle);
  * @param server_config
  * @return int
  */
-extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, sConfig __restrict__ server_config);
+extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle,
+			      sConfig __restrict__ server_config) __attribute_warn_unused_result__;
 
 /**
  * @brief Creates all server threads that will be listening to requests from clients. On success, 0 is
@@ -62,7 +63,7 @@ extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, 
  * @param server_handle
  * @return int
  */
-extern int server_spawn_threads(sHandle server_handle);
+extern int server_spawn_threads(sHandle server_handle) __attribute_warn_unused_result__;
 
 /**
  * @brief
@@ -79,7 +80,5 @@ extern int server_wait_threads(sHandle server_handle) __attribute__((deprecated(
  * @return int
  */
 extern int server_handle_destroy(sHandle shandle);
-
-extern void s_tcp_print_req(s_tcp_req req);
 
 #endif /* TEBIS_TCP_SERVER_H */

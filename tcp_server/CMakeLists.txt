@@ -5,7 +5,7 @@ set(tcp_server_EXEC "tcp-server")
 
 add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
 
-target_link_libraries(${tcp_server_EXEC} log)
+target_link_libraries(${tcp_server_EXEC} log parallax)
 
 set_target_properties(${tcp_server_EXEC} PROPERTIES LINK_FLAGS "-pthread")
 

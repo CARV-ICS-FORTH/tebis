@@ -22,7 +22,7 @@ int main(int argc, char **argv)
 
 	/** parse/set options **/
 
-	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {  // stupid clang
+	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) { // stupid clang
 		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
 		exit(errno);
 	}
@@ -36,7 +36,7 @@ int main(int argc, char **argv)
 		exit(errno);
 	}
 
-	if ( server_print_config(shandle) < 0 ) {
+	if (server_print_config(shandle) < 0) {
 		plog(PL_ERROR "server_print_config(): ", strerror(errno));
 		exit(errno);
 	}
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
 	if (server_spawn_threads(shandle) < 0) {
 		plog(PL_ERROR "server_spawn_threads(): ", strerror(errno));
 		exit(errno);
-	}  // blocking call!
+	} // blocking call!
 
 	// pause();
 	// server_wait_threads(shandle);
