@@ -169,6 +169,7 @@ struct s2s_msg_get_rdma_buffer_rep {
 struct s2s_msg_flush_cmd_req {
 	/*where primary has stored its segment*/
 	uint64_t primary_segment_offt;
+	uint64_t last_flushed_offt;
 	uint64_t uuid;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
@@ -185,7 +186,9 @@ struct s2s_msg_flush_L0_req {
 	uint64_t uuid;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint64_t small_log_tail_dev_offt;
+	uint64_t small_rdma_buffer_curr_end;
 	uint64_t big_log_tail_dev_offt;
+	uint64_t big_rdma_buffer_curr_end;
 	uint32_t region_key_size;
 };
 

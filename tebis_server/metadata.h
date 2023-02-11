@@ -67,6 +67,7 @@ struct ru_master_log_buffer_seg {
 	volatile uint64_t start;
 	volatile uint64_t end;
 	volatile uint64_t curr_end;
+	volatile uint64_t flushed_until_offt;
 	volatile uint64_t replicated_bytes;
 };
 

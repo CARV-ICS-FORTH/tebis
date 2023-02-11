@@ -54,7 +54,7 @@ struct work_task {
 	volatile uint64_t *replicated_bytes;
 	struct par_put_metadata insert_metadata;
 	uint32_t last_replica_to_ack;
-	uint64_t msg_payload_size;
+	uint32_t msg_payload_size;
 	/*possible messages to other server generated from this task*/
 	struct sc_msg_pair communication_buf;
 	struct channel_rdma *channel;

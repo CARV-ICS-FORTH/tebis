@@ -51,7 +51,8 @@ struct send_index_flush_index_segment_params {
  * @param r_desc: the region desciptor from which the rdma buffer is flushed
  * @param log_type: the type of the buffer to be flushed (L0-recovery, big)
 */
-uint64_t send_index_flush_rdma_buffer(region_desc_t r_desc, enum log_category log_type);
+uint64_t send_index_flush_rdma_buffer(region_desc_t r_desc, uint32_t curr_buf_size, uint32_t IO_size,
+				      enum log_category log_type);
 
 /**
  * Creates an rdma buffer in which the new compaction index will be stored.

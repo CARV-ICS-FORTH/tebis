@@ -18,6 +18,7 @@
 #include "../tebis_rdma_client/msg_factory.h"
 #include "../utilities/circular_buffer.h"
 #include "../utilities/spin_loop.h"
+#include "allocator/log_structures.h"
 #include "allocator/persistent_operations.h"
 #include "btree/btree.h"
 #include "build_index/build_index.h"
@@ -561,10 +562,12 @@ static void regs_announce_server_presence(struct regs_server_desc *region_server
 }
 
 static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_buf, uint32_t backup_id,
-					      struct ibv_mr *mr)
+					      struct ibv_mr *mr, enum log_type log_type)
 {
 	rdma_buf->segment_size = rdma_buf->segment.end = SEGMENT_SIZE;
 	rdma_buf->segment.start = rdma_buf->segment.curr_end = 0;
+	if (log_type == SMALL_LOG)
+		rdma_buf->segment.curr_end = sizeof(struct segment_header);
 	rdma_buf->segment.mr[backup_id] = *mr;
 	rdma_buf->segment.replicated_bytes = 0;
 	assert(rdma_buf->segment.mr[backup_id].length == SEGMENT_SIZE);
@@ -625,11 +628,11 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 		assert(get_buffer_rep->status == TEBIS_SUCCESS);
 
 		regs_initialize_rdma_buf_metadata(region_desc_get_primary_L0_log_buf(region_desc), backup_id,
-						  &get_buffer_rep->l0_recovery_mr);
+						  &get_buffer_rep->l0_recovery_mr, SMALL_LOG);
 		regs_initialize_rdma_buf_metadata(region_desc_get_primary_medium_log_buf(region_desc), backup_id,
-						  &get_buffer_rep->medium_recovery_mr);
+						  &get_buffer_rep->medium_recovery_mr, MEDIUM_LOG);
 		regs_initialize_rdma_buf_metadata(region_desc_get_primary_big_log_buf(region_desc), backup_id,
-						  &get_buffer_rep->big_recovery_mr);
+						  &get_buffer_rep->big_recovery_mr, BIG_LOG);
 
 		sc_free_rpc_pair(&get_log_buffer);
 	}
@@ -933,7 +936,6 @@ void regs_insert_kv_to_store(struct work_task *task)
 		return;
 	}
 	task->insert_metadata = metadata;
-
 	/*replication path*/
 	task->kreon_operation_status = TASK_COMPLETE;
 	if (region_desc_get_num_backup(task->r_desc)) {
@@ -954,6 +956,11 @@ static void regs_fill_flush_request(struct region_desc *r_desc, struct s2s_msg_f
 	flush_request->region_key_size = region_desc_get_min_key_size(r_desc),
 	strcpy(flush_request->region_key, region_desc_get_min_key(r_desc));
 	flush_request->uuid = (uint64_t)flush_request;
+	struct ru_master_log_buffer *rdma_buffer = region_desc_get_primary_L0_log_buf(r_desc);
+	if (flush_request->log_type == BIG)
+		rdma_buffer = region_desc_get_primary_big_log_buf(r_desc);
+	assert(flush_request->log_type != MEDIUM);
+	flush_request->last_flushed_offt = rdma_buffer->segment.flushed_until_offt;
 }
 
 void regs_send_flush_commands(struct regs_server_desc const *server, struct work_task *task)
@@ -1027,8 +1034,9 @@ void regs_wait_for_flush_replies(struct work_task *task)
 		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
 		// if (task->insert_metadata.log_type == BIG)
 		// 	flushed_segment = &r_desc->m_state->big_recovery_rdma_buf.segment;
-
 		flushed_log->segment.curr_end = 0;
+		if (task->insert_metadata.log_type == L0_RECOVERY)
+			flushed_log->segment.curr_end = sizeof(struct segment_header);
 		flushed_log->segment.replicated_bytes = 0;
 		//for debuging purposes
 		send_index_uuid_checker_validate_uuid(region_desc_get_flush_msg_pair(r_desc, i), FLUSH_COMMAND_REQ);
@@ -1043,12 +1051,11 @@ void regs_wait_for_flush_replies(struct work_task *task)
 
 inline static uint8_t regs_buffer_have_enough_space(struct ru_master_log_buffer *r_buf, struct work_task *task)
 {
-	/*if (task->kv_category == TEBIS_BIG)
-		log_debug("[current end of big buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
-	else
-		log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end);
-	put_msg_print_msg(task->msg);
-	*/
+	/* if (task->kv_category == TEBIS_BIG) */
+	/* 	log_debug("[current end of big buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end); */
+	/* else */
+	/* 	log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end); */
+	/* put_msg_print_msg(task->msg); */
 	if (r_buf->segment.curr_end >= r_buf->segment.start &&
 	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
 		return 1;
@@ -1129,6 +1136,7 @@ void regs_replicate_task(struct regs_server_desc const *server, struct work_task
 	}
 
 	r_buf->segment.curr_end += task->msg_payload_size;
+	//log_debug("Adding %lu in curr_end", task->msg_payload_size);
 	region_desc_increase_lsn(r_desc);
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 }
@@ -1247,6 +1255,7 @@ void regs_execute_put_req(struct regs_server_desc const *region_server_desc, str
 		}
 		/*calculate kv_payload size*/
 		task->msg_payload_size = put_msg_get_payload_size(task->msg);
+		//log_debug("task msg paylaod size is %u", task->msg_payload_size);
 		task->r_desc = regs_get_region_desc(region_server_desc, key, key_length);
 		if (task->r_desc == NULL) {
 			log_fatal("Region not found for key size key %u:%s", key_length, key);
@@ -1406,15 +1415,40 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 	}
 
 	enum log_category log_type_to_flush = flush_req->log_type;
+	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
+	uint32_t rdma_buffer_size = r_state->l0_recovery_rdma_buf.rdma_buf_size;
 
+	log_debug("primary offt %lu", flush_req->primary_segment_offt);
 	if (!globals_get_send_index()) {
 		build_index_procedure(r_desc, log_type_to_flush);
 		region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
 	} else {
-		uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(r_desc, log_type_to_flush);
 		if (!region_desc_is_segment_in_logmap(r_desc, flush_req->primary_segment_offt)) {
+			uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(
+				r_desc, rdma_buffer_size, rdma_buffer_size, log_type_to_flush);
 			region_desc_add_to_logmap(r_desc, flush_req->primary_segment_offt, replica_new_segment_offt);
 			region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
+		} else {
+			/*L0 compaction flushed the segment before getting full, append only the part that was not replicated*/
+			uint32_t rdma_segment_offt = flush_req->last_flushed_offt;
+			if (rdma_segment_offt % ALIGNMENT_SIZE != 0)
+				rdma_segment_offt -= rdma_segment_offt % ALIGNMENT_SIZE;
+			uint32_t IO_size = rdma_buffer_size - rdma_segment_offt;
+			uint32_t buf_size = rdma_buffer_size - flush_req->last_flushed_offt;
+			struct db_handle *db = (struct db_handle *)region_desc_get_db(r_desc);
+			if (log_type_to_flush == BIG) {
+				char *rdma_buffer = (char *)r_state->big_recovery_rdma_buf.mr->addr;
+				pr_flush_buffer_to_log(&db->db_desc->big_log, rdma_segment_offt, IO_size, rdma_buffer,
+						       buf_size);
+			} else if (log_type_to_flush == L0_RECOVERY) {
+				char *rdma_buffer = (char *)r_state->l0_recovery_rdma_buf.mr->addr;
+				pr_flush_buffer_to_log(&db->db_desc->small_log, rdma_segment_offt, IO_size, rdma_buffer,
+						       buf_size);
+			} else {
+				log_fatal("Flushing medium log in flush commands should never happen");
+				assert(0);
+				_exit(EXIT_FAILURE);
+			}
 		}
 	}
 
@@ -1648,8 +1682,16 @@ void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc,
 
 	task->kreon_operation_status = TASK_FLUSH_L0;
 	// persist the buffers
-	uint64_t new_small_log_tail = send_index_flush_rdma_buffer(r_desc, L0_RECOVERY);
-	uint64_t new_big_small_log_tail = send_index_flush_rdma_buffer(r_desc, BIG);
+	uint32_t small_IO_size = flush_req->small_rdma_buffer_curr_end +
+				 (ALIGNMENT_SIZE - (flush_req->small_rdma_buffer_curr_end % ALIGNMENT_SIZE));
+	uint64_t new_small_log_tail =
+		send_index_flush_rdma_buffer(r_desc, flush_req->small_rdma_buffer_curr_end, small_IO_size, L0_RECOVERY);
+	log_debug("Flush L0: IO_size is %u, offt is at %lu", small_IO_size, flush_req->small_rdma_buffer_curr_end);
+	uint32_t big_IO_size = flush_req->big_rdma_buffer_curr_end +
+			       (ALIGNMENT_SIZE - (flush_req->big_rdma_buffer_curr_end % ALIGNMENT_SIZE));
+	uint64_t new_big_small_log_tail =
+		send_index_flush_rdma_buffer(r_desc, flush_req->big_rdma_buffer_curr_end, big_IO_size, BIG);
+
 	par_flush_superblock(region_desc_get_db(r_desc));
 
 	// append new segments to logmap
@@ -1690,7 +1732,7 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 	send_index_translate_primary_metadata(r_desc, req->level_id, req->compaction_last_segment_offt,
 					      req->compaction_first_segment_offt, req->new_root_offt);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
-	compaction_close(r_state->comp_req[req->level_id]);
+	//compaction_close(r_state->comp_req[req->level_id]);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	region_desc_free_indexmap(r_desc, req->level_id);
@@ -1768,8 +1810,8 @@ void regs_execute_flush_medium_log(struct regs_server_desc const *region_server_
 				 replica_medium_log_segment);
 	log_debug("Flushing a chunk of segment at offt %lu", replica_medium_log_segment);
 
-	pr_flush_buffer_to_log(&dbhandle->db_desc->medium_log, req->IO_starting_offt, medium_log_buf->mr->addr,
-			       req->IO_size);
+	pr_flush_buffer_to_log(&dbhandle->db_desc->medium_log, req->IO_starting_offt, req->IO_size,
+			       medium_log_buf->mr->addr, req->IO_size);
 
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +

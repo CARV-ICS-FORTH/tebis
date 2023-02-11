@@ -31,22 +31,17 @@
 // IWYU pragma: no_forward_declare region_desc
 #define SEGMENT_START(x) (x - (x % SEGMENT_SIZE))
 
-uint64_t send_index_flush_rdma_buffer(struct region_desc *r_desc, enum log_category log_type)
+uint64_t send_index_flush_rdma_buffer(struct region_desc *r_desc, uint32_t curr_buf_size, uint32_t IO_size,
+				      enum log_category log_type)
 {
 	struct ru_replica_state *replica_state = region_desc_get_replica_state(r_desc);
-	uint32_t rdma_buffer_size = replica_state->l0_recovery_rdma_buf.rdma_buf_size;
 	char *rdma_buffer = (char *)replica_state->l0_recovery_rdma_buf.mr->addr;
 	if (log_type == BIG)
 		rdma_buffer = (char *)replica_state->big_recovery_rdma_buf.mr->addr;
 
-	const char *error_message = NULL;
 	/*persist the buffer*/
-	uint64_t replica_new_segment_offt = par_flush_segment_in_log(region_desc_get_db(r_desc), rdma_buffer,
-								     rdma_buffer_size, log_type, &error_message);
-	if (error_message) {
-		log_fatal("the flushing of the segment failed");
-		_exit(EXIT_FAILURE);
-	}
+	uint64_t replica_new_segment_offt =
+		par_flush_segment_in_log(region_desc_get_db(r_desc), rdma_buffer, curr_buf_size, IO_size, log_type);
 
 	return replica_new_segment_offt;
 }

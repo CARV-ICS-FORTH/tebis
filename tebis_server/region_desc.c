@@ -588,7 +588,7 @@ uint64_t region_desc_get_medium_log_segment_offt(region_desc_t r_desc, uint64_t 
 	}
 
 	// allocate a segment and allocate it to the logmap HT
-	//leaving allocation for for later
+	// leaving allocation for for later
 	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
 	replica_segment_offt = pr_allocate_segment_for_log(dbhandle->db_desc, &dbhandle->db_desc->medium_log, 1, 1);
 	region_desc_add_to_logmap(r_desc, primary_start_segment_offt, replica_segment_offt);

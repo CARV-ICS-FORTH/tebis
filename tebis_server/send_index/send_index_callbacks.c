@@ -47,6 +47,11 @@ static void send_index_fill_flush_L0_request(msg_header *request_header, region_
 	req->uuid = (uint64_t)req;
 	req->small_log_tail_dev_offt = small_log_tail_dev_offt;
 	req->big_log_tail_dev_offt = big_log_tail_dev_offt;
+	struct ru_master_log_buffer *rdma_buff = region_desc_get_primary_L0_log_buf(r_desc);
+	req->small_rdma_buffer_curr_end = rdma_buff->segment.curr_end;
+
+	rdma_buff = region_desc_get_primary_big_log_buf(r_desc);
+	req->big_rdma_buffer_curr_end = rdma_buff->segment.curr_end;
 }
 
 static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, region_desc_t r_desc, uint32_t level_id,
@@ -491,8 +496,13 @@ void send_index_compaction_started_callback(void *context, uint64_t small_log_ta
 {
 	struct send_index_context *send_index_cxt = (struct send_index_context *)context;
 	//compaction from L0 to L1
-	if (!src_level_id)
+	if (!src_level_id) {
 		send_index_flush_L0(send_index_cxt, small_log_tail_dev_offt, big_log_tail_dev_offt);
+		struct ru_master_log_buffer *rdma_buff = region_desc_get_primary_L0_log_buf(send_index_cxt->r_desc);
+		rdma_buff->segment.flushed_until_offt = rdma_buff->segment.curr_end;
+		rdma_buff = region_desc_get_primary_big_log_buf(send_index_cxt->r_desc);
+		rdma_buff->segment.flushed_until_offt = rdma_buff->segment.curr_end;
+	}
 
 	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, src_tree_id, new_level);
 	send_index_reg_write_primary_compaction_buffer(send_index_cxt, new_level, src_level_id);
