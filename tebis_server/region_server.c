@@ -1733,7 +1733,7 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 	send_index_translate_primary_metadata(r_desc, req->level_id, req->compaction_last_segment_offt,
 					      req->compaction_first_segment_offt, req->new_root_offt);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
-	//compaction_close(r_state->comp_req[req->level_id]);
+	compaction_close(r_state->comp_req[req->level_id]);
 	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	region_desc_free_indexmap(r_desc, req->level_id);
