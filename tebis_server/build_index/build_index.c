@@ -21,6 +21,7 @@
 #include "parallax/structures.h"
 #include <assert.h>
 #include <infiniband/verbs.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 // IWYU pragma: no_forward_declare region_desc

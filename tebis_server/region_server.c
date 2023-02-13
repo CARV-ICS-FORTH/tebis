@@ -1057,7 +1057,7 @@ inline static uint8_t regs_buffer_have_enough_space(struct ru_master_log_buffer 
 	/* 	log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end); */
 	/* put_msg_print_msg(task->msg); */
 	if (r_buf->segment.curr_end >= r_buf->segment.start &&
-	    r_buf->segment.curr_end + task->msg_payload_size < r_buf->segment.end)
+	    r_buf->segment.curr_end + task->msg_payload_size <= r_buf->segment.end)
 		return 1;
 	return 0;
 }
@@ -1135,9 +1135,10 @@ void regs_replicate_task(struct regs_server_desc const *server, struct work_task
 		}
 	}
 
-	r_buf->segment.curr_end += task->msg_payload_size;
 	//log_debug("Adding %lu in curr_end", task->msg_payload_size);
-	region_desc_increase_lsn(r_desc);
+	r_buf->segment.curr_end += task->msg_payload_size;
+	region_desc_increase_lsn(task->r_desc);
+
 	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
 }
 
@@ -1154,6 +1155,7 @@ void regs_wait_for_replication_completion(struct work_task *task)
 			_exit(EXIT_FAILURE);
 		}
 	}
+
 	/*count bytes replicated for this segment*/
 	// __sync_fetch_and_add(task->replicated_bytes, task->msg_payload_size);
 	//log_debug("replicated bytes %lu", *task->replicated_bytes[i]);
@@ -1162,7 +1164,6 @@ void regs_wait_for_replication_completion(struct work_task *task)
 	//	 *task->replicated_bytes[i], i, task->kv_size,
 	//	 task->ins_req.metadata.segment_full_event);
 	// assert(*task->replicated_bytes <= SEGMENT_SIZE);
-
 	task->kreon_operation_status = ALL_REPLICAS_ACKED;
 }
 
