@@ -47,7 +47,6 @@ int main(int argc, char **argv)
 	} // blocking call!
 
 	// pause();
-	// server_wait_threads(shandle);
 	// server_handle_destroy(shandle);
 
 	return EXIT_SUCCESS;

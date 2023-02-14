@@ -24,13 +24,18 @@ struct buffer {
 
 typedef struct {
 	size_t size;
-	void *data;
+	char *data;
 
 } generic_data_t;
 
 typedef struct {
-	generic_data_t key;
-	generic_data_t value;
+	uint32_t size;
+	char *data;
+} generic_data32_t;
+
+typedef struct {
+	generic_data32_t key;
+	generic_data32_t value;
 
 } kv_t;
 
@@ -48,6 +53,7 @@ typedef enum {
 typedef enum {
 
 	/** buffer scheme: [1B type | 8B keysz | 8B paysz | payload[key|data]] **/
+	/** [1B type | 4B key-size | key | 4B value-size | value] **/
 
 	/** GET-request family **/
 
@@ -68,6 +74,7 @@ typedef enum {
 typedef enum {
 
 	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
+	/*** [1B retcode | 4b count | 4B total-size | <4B size, value> | ...] */
 
 	REP_GET,
 	REP_DEL,

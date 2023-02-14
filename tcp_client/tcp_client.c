@@ -21,7 +21,7 @@
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
-#define req_uses_payload(rtype) (rtype >= REQ_SCAN)
+#define req_has_value(rtype) (rtype >= REQ_SCAN)
 #define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
 
 struct internal_tcp_rep {
@@ -36,10 +36,10 @@ struct internal_tcp_rep {
 
 struct internal_tcp_req {
 	req_t type;
-	uint32_t flags;
 
-	uint64_t keysz;
-	uint64_t paysz;
+	uint32_t flags;
+	uint32_t keysz;
+	uint32_t paysz;
 
 	struct buffer buf;
 
@@ -196,7 +196,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 		return NULL;
 	}
 
-	if (!req_uses_payload(rtype)) // [PUT,  PUT_IF_EXIST]
+	if (!req_has_value(rtype)) // [PUT,  PUT_IF_EXIST]
 		paysz = 0UL;
 
 	if (req) /* update() existed request */
@@ -210,9 +210,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 
 		tsize = keysz + paysz + TT_REQHDR_SIZE;
 
-		if (tsize <= ireq->buf.bytes)
-			ireq->buf.mem = (char *)(ireq) + sizeof(*ireq);
-		else {
+		if (tsize > ireq->buf.bytes) {
 			tsize = ((tsize + sizeof(*ireq)) | 0xfffUL) + 1UL; // efficient page-alignment
 
 			void *tmp = mremap(ireq, ireq->buf.bytes + sizeof(*ireq), tsize, MREMAP_MAYMOVE);
@@ -241,9 +239,12 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 	ireq->type = rtype;
 
 	*((char *)(ireq->buf.mem)) = rtype;
-	*((uint64_t *)(ireq->buf.mem + 1UL)) = htobe64(keysz);
-	*((uint64_t *)(ireq->buf.mem + 9UL)) = htobe64(paysz);
-	ireq->buf.mem += TT_REQHDR_SIZE;
+	*((uint32_t *)(ireq->buf.mem + 1UL)) = htobe64(keysz);
+
+	if (req_has_value(rtype))
+		*((uint32_t *)(ireq->buf.mem + 5UL + keysz)) = htobe64(paysz);
+
+	// ireq->buf.mem += TT_REQHDR_SIZE;
 
 	return ireq;
 }
@@ -286,7 +287,7 @@ void *c_tcp_req_expose_key(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	return ireq->buf.mem;
+	return ireq->buf.mem + 5UL;
 }
 
 void *c_tcp_req_expose_payload(c_tcp_req req)
@@ -313,7 +314,7 @@ void *c_tcp_req_expose_payload(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	return ireq->buf.mem + ireq->keysz;
+	return ireq->buf.mem + 9UL + ireq->keysz;
 }
 
 c_tcp_rep c_tcp_rep_new(size_t size)
@@ -347,17 +348,14 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 	struct internal_tcp_rep *irep = *rep;
 	uint64_t tsize = TT_REPHDR_SIZE + size;
 
-	if (tsize <= irep->buf.bytes)
-		irep->buf.mem = (char *)(irep) + sizeof(*irep);
-	else {
-		if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0) {
-			log_error("munmap() failed");
-			return -(EXIT_FAILURE);
-		}
+	/** TODO: irep->buf.mem is unecessary. irep->buf.mem is always equal to irep + sizeof(*irep) */
 
+	// if (tsize <= irep->buf.bytes)
+	// irep->buf.mem = (char *)(irep) + sizeof(*irep);  /** TODO: this if-statement is unecessary, thus remove it! */
+	if (tsize > irep->buf.bytes) {
 		tsize = ((tsize + sizeof(*irep)) | 0xfffUL) + 1UL;
 
-		if ((*rep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED) {
+		if ((*rep = mremap(irep, irep->buf.bytes, tsize, MREMAP_MAYMOVE)) == MAP_FAILED) {
 			log_error("mmap() failed");
 			perror("mmap()");
 			printf("mmap-size = 0x%lx [size=0x%lx]\n", tsize, size);
@@ -372,7 +370,7 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 	irep->count = count;
 	irep->size = tsize;
 	irep->retc = retc;
-	irep->bindex = 0UL;
+	// irep->bindex = 0UL;
 
 	return EXIT_SUCCESS;
 }
@@ -455,9 +453,12 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	uint64_t tsize = ireq->keysz + ireq->paysz + TT_REQHDR_SIZE;
+	uint64_t tsize = ireq->keysz + 5UL;
 
-	if (send(ch->sock, ireq->buf.mem - TT_REQHDR_SIZE, tsize, 0) < 0)
+	if (req_has_value(ireq->type))
+		tsize += ireq->paysz + 4UL;
+
+	if (send(ch->sock, ireq->buf.mem, tsize, 0) < 0)
 		return -(EXIT_FAILURE);
 
 	ch->flags2 &= ~(CLHF_SND_REQ);
@@ -510,7 +511,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 		return -(EXIT_FAILURE);
 	}
 
-	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size - TT_REPHDR_SIZE)) < 0) {
+	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
 		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}

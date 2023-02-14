@@ -1,3 +1,5 @@
+/** TODO: support reply for SCAN-request */
+
 #define _GNU_SOURCE
 
 #include "server_handle.h"
@@ -10,6 +12,7 @@
 #include <errno.h>
 // #include <linux/io_uring.h>
 #include <linux/types.h>
+#include <log.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -75,6 +78,7 @@ struct server_options {
 
 struct worker {
 	pthread_t tid;
+	par_handle par_handle;
 
 	__u64 task_counter;
 	__s32 epfd;
@@ -91,7 +95,7 @@ struct server_handle {
 	__s32 sock;
 	__s32 epfd;
 
-	par_handle parhandle;
+	par_handle par_handle;
 
 	struct server_options *opts;
 	struct worker *workers;
@@ -106,22 +110,20 @@ struct tcp_req {
 
 struct tcp_rep {
 	retcode_t retc;
-	__u64 paylsz; /** TODO: if Tebis returns blobs, replace that with 'count' */
-
-	struct buffer buf; /** TODO: work only with worker's buffer */
+	struct par_value val;
 
 	/** TODO: linked list ---> do we know how big each 'SCAN' request is? */
 };
 
 struct server_handle *g_sh; // CTRL-C
-char g_dummy_responce[1000] = "123456789012345678901234567890123456789\0";
 
 #define reset_errno() errno = 0
 #define offset_of_struct_field(x, f) (__u64)(&((typeof(x) *)(0UL))->f)
 #define offset_of_struct_field$(s, f) (__u64)(&((s *)(0UL))->f)
 
-#define is_req_invalid(req) ((__u32)(req->type) >= OPSNO)
-#define is_req_new_conn(req) (req->type == REQ_INIT_CONN)
+#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
+#define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
+#define req_has_value(req) (req->type >= REQ_SCAN)
 
 #define infinite_loop_start() for (;;) {
 #define infinite_loop_end() }
@@ -130,25 +132,32 @@ char g_dummy_responce[1000] = "123456789012345678901234567890123456789\0";
 #define likely(expr) __builtin_expect(expr, 1L)
 #define unlikely(expr) __builtin_expect(expr, 0L)
 
-#define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->buf.mem)) = (__u8)(retc) // return code
-#define repbuf_hdr_write_count(rep, count) *((__u64 *)(rep->buf.mem + 1UL)) = htobe64((__u64)(count)) // count
-#define repbuf_hdr_write_total_size(rep, tsize) *((__u64 *)(rep->buf.mem + 9UL)) = htobe64((__u64)(tsize)) // total size
-#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf.mem))
-#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be64toh(*((__u64 *)(buf.mem + 1UL)))
-#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = be64toh(*((__u64 *)(buf.mem + 9UL)))
+#define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->val.val_buffer)) = (__u8)(retc) // return code
 
-#define MAX_REGIONS 128U
+#define repbuf_hdr_write_count(rep, count) *((__u64 *)(rep->val.val_buffer + 1UL)) = htobe64((__u64)(count)) // count
+
+#define repbuf_hdr_write_total_size(rep, tsize) \
+	*((__u64 *)(rep->val.val_buffer + 9UL)) = htobe64((__u64)(tsize)) // total size
+
+#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf.mem))
+
+#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be64toh(*((__u32 *)(buf.mem + 1UL)))
+
+#define reqbuf_hdr_read_payload_size(req, buf) \
+	req->kv.value.size = be64toh(*((__u32 *)(buf.mem + 5UL + req->kv.key.size)))
+
+#define MAX_REGIONS 128
 
 /***** private functions (decl) *****/
 
 /**
  * @brief
  *
- * @param cliefd
+ * @param client_sock
  * @param worker
  * @return int
  */
-static int $client_version_check(int cliefd, struct worker *worker) __attribute__((nonnull));
+static int $client_version_check(int client_sock, struct worker *worker) __attribute__((nonnull(2)));
 
 /**
  * @brief
@@ -162,24 +171,21 @@ static int $handle_new_connection(struct worker *this) __attribute__((nonnull));
  * @brief
  *
  * @param worker
- * @param cliefd
+ * @param client_sock
  * @param req
  * @return int
  */
-static int $req_recv(struct worker *restrict worker, int cliefd, struct tcp_req *restrict req)
+static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull(1, 3)));
-
-static void *$rep_init(struct tcp_rep *restrict rep, struct worker *this, retcode_t retc, size_t paylsz)
-	__attribute__((nonnull(1, 2)));
 
 /**
  * @brief
  *
- * @param cliefd
+ * @param client_sock
  * @param rep
  * @return int
  */
-static int $rep_send(int cliefd, struct tcp_rep *rep) __attribute__((nonnull(2)));
+static inline long int $rep_send(int client_sock, struct tcp_rep *rep) __attribute__((nonnull(2), always_inline));
 
 /**
  * @brief
@@ -189,20 +195,8 @@ static int $rep_send(int cliefd, struct tcp_rep *rep) __attribute__((nonnull(2))
  */
 static void *$handle_events(void *arg) __attribute__((nonnull));
 
-/**
- * @brief
- *
- * @param type
- * @return const char*
- */
-static const char *$req_printable(req_t type);
-
-/**
- * @brief
- *
- * @param req
- */
-static void $req_print(struct tcp_req *req) __attribute__((nonnull, unused));
+static int $par_handle_req(struct worker *restrict this, struct tcp_req *restrict req, struct tcp_rep *restrict rep)
+	__attribute__((nonnull));
 
 /***** public functions *****/
 
@@ -439,31 +433,24 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 
 	/** initialize paralalx **/
 
-	const char *error_message = par_format(sconf->dbpath, MAX_REGIONS);
+	const char *error_message = par_format((char *)(sconf->dbpath), MAX_REGIONS);
 
 	if (error_message) {
 		plog(PL_ERROR "%s", error_message);
 		return -(EXIT_FAILURE);
 	}
 
-	par_db_options db_options = { .volume_name = sconf->dbpath,
+	par_db_options db_options = { .volume_name = (char *)(sconf->dbpath), // fuck clang_format!
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = "tcp_server_par.db",
 				      .options = par_get_default_options() };
 
-	shandle->parhandle = par_open(&db_options, &error_message);
+	shandle->par_handle = par_open(&db_options, &error_message);
 
 	if (error_message) {
 		plog(PL_ERROR "%s", error_message);
 		return -(EXIT_FAILURE);
 	}
-
-	/** temp --- dummy response / TODO: remove()**/
-
-	for (__u64 i = 0UL; i < 100UL; ++i)
-		memcpy(g_dummy_responce + i * 10, "saloustros", 10UL);
-
-	/**********/
 
 	signal(SIGINT, server_sig_handler_SIGINT);
 	g_sh = shandle;
@@ -497,7 +484,7 @@ int server_handle_destroy(sHandle server_handle)
 	close(shandle->epfd);
 	munmap(shandle->workers[0].buf.mem, shandle->opts->threadno * DEF_BUF_SIZE);
 
-	const char *error_message = par_close(shandle->parhandle);
+	const char *error_message = par_close(shandle->par_handle);
 
 	if (error_message) {
 		plog(PL_ERROR "%s", error_message);
@@ -537,6 +524,7 @@ int server_spawn_threads(sHandle server_handle)
 	for (index = 0U, --threads; index < threads; ++index) {
 		shandle->workers[index].sock = shandle->sock;
 		shandle->workers[index].epfd = shandle->epfd;
+		shandle->workers[index].par_handle = shandle->par_handle;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
 		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 
@@ -564,28 +552,6 @@ int server_spawn_threads(sHandle server_handle)
 	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 
 	$handle_events(shandle->workers + index); // convert 'main()-thread' to 'server-thread'
-
-	return EXIT_SUCCESS;
-}
-
-int server_wait_threads(sHandle server_handle)
-{
-	/** TODO: wait for all threads or an error? */
-	/** TODO: make main()-thread handle signals etc? */
-
-	if (!server_handle) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	struct server_handle *shandle = server_handle;
-
-	if (shandle->magic_init_num != MAGIC_INIT_NUM) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
 
 	return EXIT_SUCCESS;
 }
@@ -620,12 +586,22 @@ static int $handle_new_connection(struct worker *this)
 	epev.events = EPOLLIN | EPOLLONESHOT;
 	epev.data.fd = this->sock;
 
-	epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev); /** TODO: always successful? */
+	/** rearm server socket **/
+
+	if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev) < 0) {
+		plog(PL_ERROR "epoll_ctl(): %s ---> terminating server!!!", strerror(errno));
+
+		epoll_ctl(this->epfd, EPOLL_CTL_DEL, tmpfd, NULL);
+		close(this->sock);
+		close(tmpfd);
+
+		exit(EXIT_FAILURE);
+	}
 
 	return EXIT_SUCCESS;
 }
 
-static int $client_version_check(int cliefd, struct worker *worker)
+static int $client_version_check(int client_sock, struct worker *worker)
 {
 	__u32 version = be32toh(*((__u8 *)(worker->buf.mem) + 1UL));
 
@@ -636,16 +612,16 @@ static int $client_version_check(int cliefd, struct worker *worker)
 		return -(EXIT_FAILURE);
 	}
 
-	if (send(cliefd, &version, sizeof(version), 0) < 0) {
+	if (send(client_sock, &version, sizeof(version), 0) < 0) {
 		perror("$client_version_check::send()\n");
 
 		errno = ECONNABORTED;
 		return -(EXIT_FAILURE);
 	}
 
-	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = cliefd };
+	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = client_sock };
 
-	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, cliefd, &epev) < 0) {
+	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, client_sock, &epev) < 0) {
 		perror("$client_version_check::epoll_ctl(MOD)");
 		exit(EXIT_FAILURE);
 	}
@@ -653,120 +629,53 @@ static int $client_version_check(int cliefd, struct worker *worker)
 	return EXIT_SUCCESS;
 }
 
-static int $req_recv(struct worker *restrict this, int cliefd, struct tcp_req *restrict req)
+static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-	if (unlikely(recv(cliefd, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
+	if (unlikely(recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
 		return -(EXIT_FAILURE);
 
 	reqbuf_hdr_read_type(req, this->buf);
 
-	// will the request (req-type) ever be invalid/wrong? is_req_invalid() macro
+	/** TODO: think(): will the request (req-type) ever be invalid/wrong? req_is_invalid() macro */
 
-	if (unlikely(is_req_new_conn(req)))
-		return $client_version_check(cliefd, this);
+	if (unlikely(req_is_new_connection(req)))
+		return $client_version_check(client_sock, this);
 
-	// recv buffer: [1B type | 8B keysz | 8B paysz | payload<key|data>]
+	/* [1B type | 4B key-size | key | 4B value-size | value] */
 
 	reqbuf_hdr_read_key_size(req, this->buf);
 	reqbuf_hdr_read_payload_size(req, this->buf);
 
-	req->kv.key.data = this->buf.mem + TT_REQHDR_SIZE;
-	req->kv.value.data = (char *)(req->kv.key.data) + req->kv.key.size;
+	req->kv.key.data = this->buf.mem + 5UL;
+
+	if (req_has_value(req))
+		req->kv.value.data = this->buf.mem + req->kv.key.size + 9UL;
 
 	return EXIT_SUCCESS;
 }
 
-static const char *$req_printable(req_t type)
-{
-	switch (type) {
-	case REQ_GET:
-		return "REQ_GET";
-	case REQ_DEL:
-		return "REQ_DEL";
-	case REQ_EXISTS:
-		return "REQ_EXISTS";
-	case REQ_SCAN:
-		return "REQ_SCAN";
-	case REQ_PUT:
-		return "REQ_PUT";
-	case REQ_PUT_IFEX:
-		return "REQ_PUT_IF_EX";
-	case REQ_INIT_CONN:
-		return "REQ_INIT_CONN";
-
-	default:
-		return "wrong req-type";
-	}
-}
-
-static void $req_print(struct tcp_req *req)
-{
-	kv_t *kv = &req->kv;
-
-	printf("\033[1;91m%s\033[0m\n", $req_printable(req->type));
-
-	printf("  - key.size = %lu (0x%llx)\n", kv->key.size, *((__u64 *)(kv->key.data)));
-
-	if (!req_in_get_family(req))
-		printf("  - val.size = %lu (0x%llx)\n\n", kv->value.size, *((__u64 *)(kv->value.data)));
-}
-
-/** TODO: support reply for SCAN-request */
-/** TODO: rename to rep_update() */
-static void *$rep_init(struct tcp_rep *restrict rep, struct worker *restrict this, retcode_t retc, size_t paylsz)
+static inline long int $rep_send(int client_sock, struct tcp_rep *rep)
 {
 	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
 
-	rep->buf.mem = this->buf.mem;
-	rep->retc = retc;
-
-	repbuf_hdr_write_retcode(rep, retc);
-
-	if (retc != RETC_SUCCESS) {
-		rep->paylsz = 0UL;
-		rep->buf.bytes = TT_REPHDR_SIZE;
-
-		repbuf_hdr_write_count(rep, 0UL);
-		repbuf_hdr_write_total_size(rep, 0UL);
-
-		return NULL;
-	}
-
-	rep->paylsz = paylsz;
-	rep->buf.bytes = TT_REPHDR_SIZE + paylsz;
-
+	repbuf_hdr_write_retcode(rep, rep->retc);
 	repbuf_hdr_write_count(rep, 1UL);
-	repbuf_hdr_write_total_size(rep, paylsz);
+	repbuf_hdr_write_total_size(rep, rep->val.val_size);
 
-	/** TODO: remove_code_below(), Parallax knows the buffer size and will provide bounded sizes */
-
-	/* if (rep->buf.bytes > DEF_BUF_SIZE) {
-		errno = ENOMEM;
-		return NULL;
-	} */
-
-	return rep->buf.mem + TT_REPHDR_SIZE;
-}
-
-static int $rep_send(int cliefd, struct tcp_rep *rep)
-{
-	if (unlikely(send(cliefd, rep->buf.mem, rep->buf.bytes, 0) < 0))
-		return -(EXIT_FAILURE);
-
-	return EXIT_SUCCESS;
+	return send(client_sock, rep->val.val_buffer, rep->val.val_size + TT_REPHDR_SIZE, 0);
 }
 
 static void *$handle_events(void *arg)
 {
 	struct worker *this = arg;
-	struct tcp_req req;
-	struct tcp_rep rep;
+	struct tcp_req req = { 0 };
+	struct tcp_rep rep = { .val.val_buffer = this->buf.mem,
+			       .val.val_buffer_size = this->buf.bytes - 9U,
+			       .val.val_size = 0U };
 
 	int events;
-	int cliefd;
-	int evbits;
-
-	void *repbuf;
+	int client_sock;
+	int event_bits;
 
 	struct epoll_event rearm_event = { .events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT };
 	struct epoll_event epoll_events[EPOLL_MAX_EVENTS];
@@ -785,26 +694,26 @@ static void *$handle_events(void *arg)
 
 	event_loop_start(evindex, events);
 
-	cliefd = epoll_events[evindex].data.fd;
-	evbits = epoll_events[evindex].events;
+	client_sock = epoll_events[evindex].data.fd;
+	event_bits = epoll_events[evindex].events;
 
-	if (evbits & EPOLLRDHUP) {
+	if (event_bits & EPOLLRDHUP) {
 		/** received FIN from client **/
 
-		plog(PL_INFO "client (%d) wants to terminate the connection", cliefd);
+		plog(PL_INFO "client (%d) wants to terminate the connection", client_sock);
 
 		// the server can send some more packets here. If so, client code needs some changes
 
-		shutdown(cliefd, SHUT_WR);
-		plog(PL_INFO "terminating connection with client(%d)", cliefd);
+		shutdown(client_sock, SHUT_WR);
+		plog(PL_INFO "terminating connection with client(%d)", client_sock);
 
-		epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
-		close(cliefd);
-	} else if (likely(evbits & EPOLLIN)) /** read event **/
+		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
+		close(client_sock);
+	} else if (likely(event_bits & EPOLLIN)) /** read event **/
 	{
 		/** new connection **/
 
-		if (cliefd == this->sock) {
+		if (client_sock == this->sock) {
 			plog(PL_INFO "new connection");
 
 			if ($handle_new_connection(this) < 0)
@@ -819,40 +728,30 @@ static void *$handle_events(void *arg)
 
 		++this->task_counter; // get info about load balancing (temp)
 
-		if (unlikely($req_recv(this, cliefd, &req) < 0)) {
-			/** TODO: better error handling? */
+		if (unlikely($req_recv(this, client_sock, &req) < 0))
+			goto client_error;
 
-			plog(PL_ERROR "$req_recv(): %s", strerror(errno));
-			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
-			close(cliefd);
+		$par_handle_req(this, &req, &rep);
 
-			continue;
-		}
-
-		/** TODO: embed error handling inside rep_send to avoid 2-if-statements */
-
-		/* tebis_handle_request(); */
-		repbuf = $rep_init(&rep, this, RETC_SUCCESS, 40UL);
-
-		memcpy(repbuf, g_dummy_responce, 40UL);
-
-		if (unlikely($rep_send(cliefd, &rep) < 0)) {
-			/** TODO: better error handling? */
-
-			plog(PL_ERROR "$req_send(): %s", strerror(errno));
-			epoll_ctl(this->epfd, EPOLL_CTL_DEL, cliefd, NULL); // kernel 2.6+
-			close(cliefd);
-
-			continue;
+		if (unlikely($rep_send(client_sock, &rep) < 0L)) {
+			//
+			goto client_error;
 		}
 
 		/* re-enable getting INPUT-events from the coresponding client */
 
-		rearm_event.data.fd = cliefd;
-		epoll_ctl(this->epfd, EPOLL_CTL_MOD, cliefd, &rearm_event);
-	} else if (unlikely(evbits & EPOLLERR)) /** error **/
+		rearm_event.data.fd = client_sock;
+		epoll_ctl(this->epfd, EPOLL_CTL_MOD, client_sock, &rearm_event);
+
+		continue;
+
+	client_error:
+		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
+		close(client_sock);
+
+	} else if (unlikely(event_bits & EPOLLERR)) /** error **/
 	{
-		plog(PL_ERROR "events[%d] = EPOLLER, fd = %d\n", evindex, cliefd);
+		plog(PL_ERROR "events[%d] = EPOLLER, fd = %d\n", evindex, client_sock);
 		/** TODO: error handling */
 		continue;
 	}
@@ -861,6 +760,43 @@ static void *$handle_events(void *arg)
 	infinite_loop_end();
 
 	__builtin_unreachable();
+}
+
+/** TODO: change buffer schemes according to parallax */
+static int $par_handle_req(struct worker *restrict this, struct tcp_req *restrict req, struct tcp_rep *restrict rep)
+{
+	const char *error_message;
+
+	switch (req->type) {
+	case REQ_GET:
+
+		par_get_serialized(this->par_handle, req->kv.key.data, &rep->val, &error_message);
+
+		if (error_message) {
+			plog(PL_ERROR "par_get(): %s");
+			return -(EXIT_FAILURE);
+		}
+
+		break;
+
+	case REQ_PUT:
+
+		par_put_serialized(this->par_handle, req->kv.key.data, &error_message, 1, 0);
+
+		if (error_message) {
+			plog(PL_ERROR "par_put(): %s");
+			return -(EXIT_FAILURE);
+		}
+
+		break;
+
+	default:
+
+		errno = ENOTSUP;
+		return -(EXIT_FAILURE);
+	}
+
+	return EXIT_SUCCESS;
 }
 
 /***** server signal handlers *****/
