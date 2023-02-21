@@ -108,6 +108,7 @@ void send_index_close_compactions_rdma_buffer(struct region_desc *r_desc, uint32
 		log_fatal("Failed to deregister rdma buffer");
 		_exit(EXIT_FAILURE);
 	}
+	free(r_state->index_buffer[level_id]->addr);
 	r_state->index_buffer[level_id] = NULL;
 	wappender_close(r_state->wappender[level_id]);
 	r_state->wappender[level_id] = NULL;
