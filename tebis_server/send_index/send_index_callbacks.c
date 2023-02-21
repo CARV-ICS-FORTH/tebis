@@ -424,12 +424,12 @@ static void send_index_send_flush_index_segment(struct send_index_context *conte
 			log_fatal("failed to send message");
 			_exit(EXIT_FAILURE);
 		}
-
-		// if is_last is true then we are in the flushing stage of the wcursor compaction, and we spin for the last segments
-		// to be written in the replicas
-		if (is_last)
-			wcursor_spin_for_buffer_status(wcursor);
 	}
+
+	// if is_last is true then we are in the flushing stage of the wcursor compaction, and we spin for the last segments
+	// to be written in the replicas
+	if (is_last)
+		wcursor_spin_for_buffer_status(wcursor);
 }
 
 static void send_index_send_segment(struct send_index_context *context, uint64_t start_segment_offt,
