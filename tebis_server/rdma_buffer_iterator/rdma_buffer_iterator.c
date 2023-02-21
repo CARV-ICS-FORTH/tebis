@@ -31,14 +31,15 @@ uint8_t rdma_buffer_iterator_is_in_bounds(rdma_buffer_iterator_t iter)
 	return 1;
 }
 
-rdma_buffer_iterator_t rdma_buffer_iterator_init(char *rdma_buffer_start_offt, int64_t rdma_buffer_size)
+rdma_buffer_iterator_t rdma_buffer_iterator_init(char *rdma_buffer_start_offt, int64_t rdma_buffer_size,
+						 char *iterator_starting_offt)
 {
 	assert(rdma_buffer_start_offt);
 	rdma_buffer_iterator_t iterator = calloc(1, sizeof(struct rdma_buffer_iterator));
 	iterator->rdma_buffer_size = rdma_buffer_size;
 	iterator->start_offt = rdma_buffer_start_offt;
 	iterator->end_offt = iterator->start_offt + rdma_buffer_size;
-	iterator->curr_offset = iterator->start_offt;
+	iterator->curr_offset = iterator_starting_offt;
 	return iterator;
 }
 
