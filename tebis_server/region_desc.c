@@ -387,7 +387,7 @@ struct ru_replica_rdma_buffer *region_desc_get_backup_L0_log_buf(region_desc_t r
 		log_fatal("This is a primary region not a backup!");
 		_exit(EXIT_FAILURE);
 	}
-	return &region_desc->r_state->big_recovery_rdma_buf;
+	return &region_desc->r_state->l0_recovery_rdma_buf;
 }
 
 struct ru_replica_rdma_buffer *region_desc_get_backup_medium_log_buf(region_desc_t region_desc)

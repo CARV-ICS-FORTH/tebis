@@ -375,12 +375,16 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 		// open DB as backup
 		db_options.options[PRIMARY_MODE].value = 0;
 		db_options.options[REPLICA_MODE].value = 1;
+		db_options.options[REPLICA_BUILD_INDEX].value = 1;
+		db_options.options[REPLICA_SEND_INDEX].value = 0;
 	}
 
 	if (globals_get_send_index()) {
 		db_options.options[NUMBER_OF_REPLICAS].value = region_desc_get_num_backup(region_desc);
 		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
 		db_options.options[WCURSOR_SPIN_FOR_FLUSH_REPLIES].value = 1;
+		db_options.options[REPLICA_SEND_INDEX].value = 1;
+		db_options.options[REPLICA_BUILD_INDEX].value = 0;
 	}
 	const char *error_message = NULL;
 	par_handle parallax_db = par_open(&db_options, &error_message);
@@ -395,9 +399,9 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 		_exit(EXIT_FAILURE);
 	}
 
-	send_index_init_callbacks(region_server, region_desc);
-
 	regs_insert_region_desc(&region_server->ds_regions, region_desc);
+	if (globals_get_send_index())
+		send_index_init_callbacks(region_server, region_desc);
 	region_desc_increase_lsn(region_desc);
 	return region_desc;
 }
@@ -1029,7 +1033,7 @@ void regs_wait_for_flush_replies(struct work_task *task)
 		// re-zero the metadat of the flushed segment
 		struct ru_master_log_buffer *flushed_log = task->insert_metadata.log_type == BIG ?
 								   region_desc_get_primary_big_log_buf(r_desc) :
-								   region_desc_get_primary_L0_log_buf(r_desc);
+									 region_desc_get_primary_L0_log_buf(r_desc);
 		// if (task->insert_metadata.log_type == BIG)
 		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
 		// if (task->insert_metadata.log_type == BIG)
@@ -1078,7 +1082,7 @@ static void regs_wait_for_replication_turn(struct work_task *task)
 	// 	rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *rdma_buffer_to_fill = task->kv_category == TEBIS_BIG ?
 								   region_desc_get_primary_big_log_buf(task->r_desc) :
-								   region_desc_get_primary_L0_log_buf(task->r_desc);
+									 region_desc_get_primary_L0_log_buf(task->r_desc);
 
 	task->kreon_operation_status = REPLICATE;
 	if (!regs_buffer_have_enough_space(rdma_buffer_to_fill, task))
@@ -1108,7 +1112,7 @@ void regs_replicate_task(struct regs_server_desc const *server, struct work_task
 	// 	r_buf = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *r_buf = task->kv_category == TEBIS_BIG ?
 						     region_desc_get_primary_big_log_buf(r_desc) :
-						     region_desc_get_primary_L0_log_buf(r_desc);
+							   region_desc_get_primary_L0_log_buf(r_desc);
 
 	uint32_t remote_offset = r_buf->segment.curr_end;
 	task->replicated_bytes = &r_buf->segment.replicated_bytes;
@@ -1421,8 +1425,9 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 
 	log_debug("primary offt %lu", flush_req->primary_segment_offt);
 	if (!globals_get_send_index()) {
-		build_index_procedure(r_desc, log_type_to_flush);
-		region_desc_zero_rdma_buffer(r_desc, log_type_to_flush);
+		build_index_procedure(r_desc);
+		region_desc_zero_rdma_buffer(r_desc, L0_RECOVERY);
+		region_desc_zero_rdma_buffer(r_desc, BIG);
 	} else {
 		if (!region_desc_is_segment_in_logmap(r_desc, flush_req->primary_segment_offt)) {
 			uint64_t replica_new_segment_offt = send_index_flush_rdma_buffer(
@@ -1646,6 +1651,7 @@ void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_
 
 	char *reply_address = (char *)r_state->index_segment_flush_replies[req->level_id]->addr;
 	memcpy(reply_address, &reply_value, sizeof(uint64_t));
+	log_debug("Replying at primary offt %lu", (uint64_t)req->reply_offt);
 	//rdma write it back to the primary's write cursor status buffers
 	while (1) {
 		int ret = rdma_post_write(task->conn->rdma_cm_id, NULL, reply_address, WCURSOR_ALIGNMNENT,
@@ -1734,10 +1740,10 @@ void regs_execute_send_index_close_compaction(struct regs_server_desc const *reg
 					      req->compaction_first_segment_offt, req->new_root_offt);
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	compaction_close(r_state->comp_req[req->level_id]);
-	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 	send_index_close_mr_for_segment_replies(r_desc, req->level_id);
 	region_desc_free_indexmap(r_desc, req->level_id);
 	send_index_rewriter_destroy(&r_state->index_rewriter[req->level_id]);
+	send_index_close_compactions_rdma_buffer(r_desc, req->level_id);
 
 	// create and send the reply
 	task->reply_msg = (struct msg_header *)&task->conn->rdma_memory_regions

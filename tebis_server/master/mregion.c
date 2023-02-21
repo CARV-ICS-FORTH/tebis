@@ -225,7 +225,7 @@ void MREG_print_region_configuration(mregion_t region)
 	log_info("\n***************************************************************************");
 	log_info("Region: %s has primary: %s with role: %s", region->id, region->primary.hostname,
 		 server_role_2_string[region->primary.role]);
-	assert(region->num_of_backup < KRM_MAX_BACKUPS);
+	assert(region->num_of_backup <= KRM_MAX_BACKUPS);
 	log_info("Region has %d backups", region->num_of_backup);
 	for (int i = 0; i < region->num_of_backup; ++i) {
 		log_info("Backup %s has role %s", region->backup[i].hostname,
