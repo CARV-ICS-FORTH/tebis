@@ -28,8 +28,8 @@ cores_tiex = 32
 server_stats_prefix = "STATS-"
 ycsb_ops_prefix = "RESULTS_"
 
-workload_labels = { 
-  "load_a": "Workload A Load", 
+workload_labels = {
+  "load_a": "Workload A Load",
   "run_a": "Workload A Run",
   "run_b": "Workload B Run",
   "run_c": "Workload C Run",
@@ -47,7 +47,7 @@ def get_iostat_data(server, workload_dir):
   server_name = server[0]
   server_device = server[1]
   server_stats_folder = os.path.join(server[2], workload_dir)
-  
+
   iostat_file = ""
   ls = os.listdir(server_stats_folder)
   for f in ls:
@@ -228,7 +228,7 @@ def generate_report(working_dir, workload_type, record_count, operations, server
       else:
         print("Warning: cycles per operation calculation is wrong! Cycles per second for server "
             + server[0] + " are not defined in the script", file=sys.stderr)
-    
+
     overall_stats["cycles_per_op"] = cycles_per_second / overall_stats["ops"]
     if "load" in workload:
       overall_stats["io_amplification"] = (overall_stats["device"]["mb_written"] +

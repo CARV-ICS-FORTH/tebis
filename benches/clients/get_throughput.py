@@ -53,6 +53,6 @@ def main():
     args = parse_arguments()
     total_throughput = calculate_throughput(args.workload)
     print(colors.GREEN + "total throughput for workload " + args.workload + " is equal to " + str(total_throughput) + colors.ENDC)
-    
+
 if __name__ == "__main__":
     main()
