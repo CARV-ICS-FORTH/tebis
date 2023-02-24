@@ -16,7 +16,6 @@
 #include <stdint.h>
 typedef struct region_desc *region_desc_t;
 struct regs_server_desc;
-struct wcursor_level_write_cursor;
 
 struct send_index_context {
 	region_desc_t r_desc;

@@ -21,6 +21,7 @@ add_executable(
   server.c
   region_desc.c
   build_index/build_index.c
+  build_index/build_index_callbacks.c
   send_index/send_index.c
   send_index/send_index_callbacks.c
   send_index/send_index_uuid_checker/send_index_uuid_checker.c

@@ -22,6 +22,7 @@
 #include "allocator/persistent_operations.h"
 #include "btree/btree.h"
 #include "build_index/build_index.h"
+#include "build_index/build_index_callbacks.h"
 #include "conf.h"
 #include "djb2.h"
 #include "globals.h"
@@ -41,6 +42,7 @@
 #include "zk_utils.h"
 #include <arpa/inet.h>
 #include <assert.h>
+#include <btree/compaction_daemon.h>
 #include <btree/compaction_worker.h>
 #include <btree/conf.h>
 #include <btree/gc.h>
@@ -56,6 +58,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <rdma/rdma_verbs.h>
+#include <semaphore.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -402,6 +405,9 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 	regs_insert_region_desc(&region_server->ds_regions, region_desc);
 	if (globals_get_send_index())
 		send_index_init_callbacks(region_server, region_desc);
+	else
+		build_index_init_callbacks(region_server, region_desc);
+
 	region_desc_increase_lsn(region_desc);
 	return region_desc;
 }
@@ -1829,6 +1835,36 @@ void regs_execute_flush_medium_log(struct regs_server_desc const *region_server_
 
 	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_replica_flush_medium_log_rep),
 			       REPLICA_FLUSH_MEDIUM_LOG_REP);
+	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+
+	task->kreon_operation_status = TASK_COMPLETE;
+}
+
+void regs_execute_compact_L0(struct regs_server_desc const *region_server_desc, struct work_task *task)
+{
+	assert(region_server_desc && task);
+	assert(task->msg->msg_type == BUILD_INDEX_COMPACT_L0_REQUEST);
+	assert(!globals_get_send_index());
+	// get the region descriptor
+	struct s2s_msg_compact_L0_request *req =
+		(struct s2s_msg_compact_L0_request *)((char *)task->msg + sizeof(struct msg_header));
+	struct region_desc *r_desc = regs_get_region_desc(region_server_desc, req->region_key, req->region_key_size);
+	if (region_desc_get_replica_state(r_desc) == NULL) {
+		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
+		_exit(EXIT_FAILURE);
+	}
+	task->kreon_operation_status = TASK_COMPACT_L0;
+	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
+	compactiond_force_L0_compaction(dbhandle->db_desc->compactiond);
+	//time for reply
+	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
+						task->msg->offset_reply_in_recv_buffer);
+	struct s2s_msg_compact_L0_reply *reply =
+		(struct s2s_msg_compact_L0_reply *)((char *)task->reply_msg + sizeof(msg_header));
+	reply->uuid = req->uuid;
+
+	regs_fill_reply_header(task->reply_msg, task, sizeof(struct s2s_msg_compact_L0_reply),
+			       BUILD_INDEX_COMPACT_L0_REPLY);
 	set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 
 	task->kreon_operation_status = TASK_COMPLETE;

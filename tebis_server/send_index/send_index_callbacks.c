@@ -150,6 +150,7 @@ static void send_index_fill_reply_fields(struct sc_msg_pair *msg_pair, struct co
 		sizeof(msg_header) + reply->payload_length + reply->padding_and_tail_size;
 }
 
+// TODO (geostyl): there is a similar struct/function for build index, move this functionality to the common dir
 struct send_index_allocate_msg_pair_info {
 	struct connection_rdma *conn;
 	uint32_t request_size;

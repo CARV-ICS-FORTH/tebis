@@ -230,6 +230,8 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case REPLICA_INDEX_GET_BUFFER_REP:
 		case REPLICA_INDEX_FLUSH_REQ:
 		case REPLICA_INDEX_FLUSH_REP:
+		case BUILD_INDEX_COMPACT_L0_REQUEST:
+		case BUILD_INDEX_COMPACT_L0_REPLY:
 		case FLUSH_L0_REQUEST:
 		case FLUSH_L0_REPLY:
 		case CLOSE_COMPACTION_REQUEST:
@@ -473,7 +475,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 			     send_mr, 0);
 	if (ret) {
 		log_fatal("rdma_post_send: %s", strerror(errno));
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	conn->status = CONNECTION_OK;

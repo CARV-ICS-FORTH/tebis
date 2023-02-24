@@ -120,6 +120,7 @@ void regs_execute_test_req(struct regs_server_desc const *region_server_desc, st
 void regs_execute_replica_index_flush_req(struct regs_server_desc const *region_server_desc, struct work_task *task);
 void regs_execute_test_req_fetch_payload(struct regs_server_desc const *mydesc, struct work_task *task);
 void regs_execute_flush_L0_op(struct regs_server_desc const *region_server_desc, struct work_task *task);
+void regs_execute_compact_L0(struct regs_server_desc const *region_server_desc, struct work_task *task);
 
 void regs_execute_send_index_close_compaction(struct regs_server_desc const *region_server_desc,
 					      struct work_task *task);

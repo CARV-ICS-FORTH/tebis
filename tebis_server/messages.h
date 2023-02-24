@@ -20,7 +20,7 @@
 
 #define MSG_MAX_REGION_KEY_SIZE 64
 #define MAX_REPLICA_INDEX_BUFFERS 8
-#define NUMBER_OF_TASKS 15
+#define NUMBER_OF_TASKS 16
 
 enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REQ = 0,
@@ -38,6 +38,7 @@ enum message_type {
 	CLOSE_COMPACTION_REQUEST,
 	REPLICA_INDEX_SWAP_LEVELS_REQUEST,
 	REPLICA_FLUSH_MEDIUM_LOG_REQUEST,
+	BUILD_INDEX_COMPACT_L0_REQUEST,
 	PUT_IF_EXISTS_REQUEST,
 	PUT_REPLY,
 	GET_REPLY,
@@ -54,6 +55,7 @@ enum message_type {
 	REPLICA_INDEX_GET_BUFFER_REP,
 	REPLICA_INDEX_FLUSH_REP,
 	REPLICA_FLUSH_MEDIUM_LOG_REP,
+	BUILD_INDEX_COMPACT_L0_REPLY,
 	/*control stuff*/
 	DISCONNECT,
 	/*test messages*/
@@ -269,6 +271,16 @@ struct s2s_msg_swap_levels_request {
 };
 
 struct s2s_msg_swap_levels_reply {
+	uint64_t uuid;
+};
+
+struct s2s_msg_compact_L0_request {
+	uint64_t uuid;
+	char region_key[MSG_MAX_REGION_KEY_SIZE];
+	uint32_t region_key_size;
+};
+
+struct s2s_msg_compact_L0_reply {
 	uint64_t uuid;
 };
 

@@ -105,6 +105,8 @@ struct sc_msg_pair region_desc_get_flush_index_segment_msg_pair(region_desc_t re
 void region_desc_set_flush_index_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint8_t level_id,
 						  uint8_t clock_dimension, struct sc_msg_pair msg_pair);
 
+void region_desc_set_compact_L0_msg_pair(region_desc_t region_desc, uint32_t backup_id, struct sc_msg_pair msg_pair);
+
 void region_desc_free_flush_index_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id, uint8_t level_id,
 						   uint8_t clock_dimension);
 mregion_t region_desc_get_mregion(region_desc_t region_desc);
@@ -130,8 +132,10 @@ void region_desc_set_flush_medium_log_segment_msg_pair(region_desc_t region_desc
 						       struct sc_msg_pair msg_pair);
 struct sc_msg_pair *region_desc_get_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id,
 								      uint32_t tail_id);
+struct sc_msg_pair region_desc_get_compact_L0_msg_pair(region_desc_t region_desc, uint32_t backup_id);
 void region_desc_free_flush_medium_log_segment_msg_pair(region_desc_t region_desc, uint32_t backup_id,
 							uint32_t tail_id);
 uint64_t region_desc_get_medium_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
 uint64_t region_desc_allocate_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
+
 #endif
