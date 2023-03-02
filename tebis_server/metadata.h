@@ -72,7 +72,9 @@ struct ru_master_log_buffer_seg {
 };
 
 struct ru_master_log_buffer {
-	struct ru_master_log_buffer_seg segment;
+	struct ru_master_log_buffer_seg remote_buffers;
+	struct ibv_mr *primary_buffer;
+	uint32_t primary_buffer_curr_end;
 	uint32_t segment_size;
 };
 

@@ -48,10 +48,10 @@ static void send_index_fill_flush_L0_request(msg_header *request_header, region_
 	req->small_log_tail_dev_offt = small_log_tail_dev_offt;
 	req->big_log_tail_dev_offt = big_log_tail_dev_offt;
 	struct ru_master_log_buffer *rdma_buff = region_desc_get_primary_L0_log_buf(r_desc);
-	req->small_rdma_buffer_curr_end = rdma_buff->segment.curr_end;
+	req->small_rdma_buffer_curr_end = rdma_buff->remote_buffers.curr_end;
 
 	rdma_buff = region_desc_get_primary_big_log_buf(r_desc);
-	req->big_rdma_buffer_curr_end = rdma_buff->segment.curr_end;
+	req->big_rdma_buffer_curr_end = rdma_buff->remote_buffers.curr_end;
 }
 
 static void send_index_fill_get_rdma_buffer_request(msg_header *request_header, region_desc_t r_desc, uint32_t level_id,
@@ -500,9 +500,9 @@ void send_index_compaction_started_callback(void *context, uint64_t small_log_ta
 	if (!src_level_id) {
 		send_index_flush_L0(send_index_cxt, small_log_tail_dev_offt, big_log_tail_dev_offt);
 		struct ru_master_log_buffer *rdma_buff = region_desc_get_primary_L0_log_buf(send_index_cxt->r_desc);
-		rdma_buff->segment.flushed_until_offt = rdma_buff->segment.curr_end;
+		rdma_buff->remote_buffers.flushed_until_offt = rdma_buff->remote_buffers.curr_end;
 		rdma_buff = region_desc_get_primary_big_log_buf(send_index_cxt->r_desc);
-		rdma_buff->segment.flushed_until_offt = rdma_buff->segment.curr_end;
+		rdma_buff->remote_buffers.flushed_until_offt = rdma_buff->remote_buffers.curr_end;
 	}
 
 	send_index_allocate_rdma_buffer_in_replicas(send_index_cxt, src_level_id, src_tree_id, new_level);
@@ -552,7 +552,7 @@ void send_index_replicate_medium_log_chunk(struct send_index_context *context, u
 	assert(r_desc && server);
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(r_desc); ++backup_id) {
 		struct ru_master_log_buffer *remote_medium_log = region_desc_get_primary_medium_log_buf(r_desc);
-		struct ibv_mr remote_mr = remote_medium_log->segment.mr[backup_id];
+		struct ibv_mr remote_mr = remote_medium_log->remote_buffers.mr[backup_id];
 		struct connection_rdma *r_conn = regs_get_data_conn(server,
 								    region_desc_get_backup_hostname(r_desc, backup_id),
 								    region_desc_get_backup_IP(r_desc, backup_id));

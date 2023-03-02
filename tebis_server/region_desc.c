@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <btree/btree.h>
 #include <btree/conf.h>
+#include <infiniband/verbs.h>
 #include <log.h>
 #include <parallax/structures.h>
 #include <pthread.h>
@@ -76,6 +77,11 @@ struct region_desc {
 	int64_t next_lsn_to_be_replicated;
 	enum krm_replica_buf_status replica_buf_status;
 	enum krm_region_status status;
+};
+
+struct region_desc_primary_buffer{
+	struct ibv_mr *mr;
+	uint32_t buffer_size;
 };
 
 static const char *region_desc_role_to_string(region_desc_t region_desc)

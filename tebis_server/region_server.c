@@ -571,22 +571,48 @@ static void regs_announce_server_presence(struct regs_server_desc *region_server
 	free(zk_path);
 }
 
+static struct ibv_mr *regs_allocate_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
+{
+	char *addr = NULL;
+	if (posix_memalign((void**)&addr, 4096, size)) {
+		log_fatal("Failed to allocate aligned RDMA buffer");
+		perror("Reason\n");
+		_exit(EXIT_FAILURE);
+	}
+	/*Zero RDMA buffer*/
+	memset(addr, 0, size);
+
+	struct ibv_mr *new_mr = rdma_reg_write(rdma_cm_id, addr, size);
+	if (!new_mr) {
+		log_fatal("Failed to reg write the buffer");
+		perror("Reason\n");
+		_exit(EXIT_FAILURE);
+	}
+	return new_mr;
+}
+
 static void regs_initialize_rdma_buf_metadata(struct ru_master_log_buffer *rdma_buf, uint32_t backup_id,
 					      struct ibv_mr *mr, enum log_type log_type)
 {
-	rdma_buf->segment_size = rdma_buf->segment.end = SEGMENT_SIZE;
-	rdma_buf->segment.start = rdma_buf->segment.curr_end = 0;
-	if (log_type == SMALL_LOG)
-		rdma_buf->segment.curr_end = sizeof(struct segment_header);
-	rdma_buf->segment.mr[backup_id] = *mr;
-	rdma_buf->segment.replicated_bytes = 0;
-	assert(rdma_buf->segment.mr[backup_id].length == SEGMENT_SIZE);
+	rdma_buf->segment_size = rdma_buf->remote_buffers.end = SEGMENT_SIZE;
+	rdma_buf->remote_buffers.start = rdma_buf->remote_buffers.curr_end = rdma_buf->primary_buffer_curr_end = 0;
+	if (log_type == SMALL_LOG) {
+		rdma_buf->remote_buffers.curr_end = sizeof(struct segment_header);
+		rdma_buf->primary_buffer_curr_end = sizeof(struct segment_header);
+	}
+	rdma_buf->remote_buffers.mr[backup_id] = *mr;
+	rdma_buf->remote_buffers.replicated_bytes = 0;
+	assert(rdma_buf->remote_buffers.mr[backup_id].length == SEGMENT_SIZE);
 }
 
 static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *server, region_desc_t region_desc)
 {
+	if (!region_desc_get_num_backup(region_desc))
+		return;
+
+	struct connection_rdma *conn = NULL;
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(region_desc); ++backup_id) {
-		struct connection_rdma *conn =
+		conn =
 			regs_get_data_conn(server, region_desc_get_backup_hostname(region_desc, backup_id),
 					   region_desc_get_backup_IP(region_desc, backup_id));
 
@@ -646,6 +672,8 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 
 		sc_free_rpc_pair(&get_log_buffer);
 	}
+	struct ru_master_log_buffer *l0_rec_buf = region_desc_get_primary_L0_log_buf(region_desc);
+	l0_rec_buf->primary_buffer = regs_allocate_rdma_buffer(SEGMENT_SIZE, conn->rdma_cm_id);
 }
 
 static void regs_handle_master_command(struct regs_server_desc *region_server, MC_command_t command)
@@ -921,7 +949,7 @@ static void regs_fill_replication_fields(msg_header *msg, struct par_put_metadat
 	set_payload_tail(kv, TU_RDMA_REPLICATION_MSG);
 }
 
-void regs_insert_kv_to_store(struct work_task *task)
+static void regs_insert_kv_to_store(struct work_task *task)
 {
 #if CREATE_TRACE_FILE
 	log_fatal("Fix creation of trace file with the new format");
@@ -970,7 +998,7 @@ static void regs_fill_flush_request(struct region_desc *r_desc, struct s2s_msg_f
 	if (flush_request->log_type == BIG)
 		rdma_buffer = region_desc_get_primary_big_log_buf(r_desc);
 	assert(flush_request->log_type != MEDIUM);
-	flush_request->last_flushed_offt = rdma_buffer->segment.flushed_until_offt;
+	flush_request->last_flushed_offt = rdma_buffer->remote_buffers.flushed_until_offt;
 }
 
 void regs_send_flush_commands(struct regs_server_desc const *server, struct work_task *task)
@@ -1044,10 +1072,13 @@ void regs_wait_for_flush_replies(struct work_task *task)
 		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
 		// if (task->insert_metadata.log_type == BIG)
 		// 	flushed_segment = &r_desc->m_state->big_recovery_rdma_buf.segment;
-		flushed_log->segment.curr_end = 0;
-		if (task->insert_metadata.log_type == L0_RECOVERY)
-			flushed_log->segment.curr_end = sizeof(struct segment_header);
-		flushed_log->segment.replicated_bytes = 0;
+		flushed_log->remote_buffers.curr_end = 0;
+		flushed_log->primary_buffer_curr_end = 0;
+		if (task->insert_metadata.log_type == L0_RECOVERY) {
+			flushed_log->remote_buffers.curr_end = sizeof(struct segment_header);
+			flushed_log->primary_buffer_curr_end = sizeof(struct segment_header);
+		}
+		flushed_log->remote_buffers.replicated_bytes = 0;
 		//for debuging purposes
 		send_index_uuid_checker_validate_uuid(region_desc_get_flush_msg_pair(r_desc, i), FLUSH_COMMAND_REQ);
 		/*free the flush msg*/
@@ -1066,8 +1097,8 @@ inline static uint8_t regs_buffer_have_enough_space(struct ru_master_log_buffer 
 	/* else */
 	/* 	log_debug("[current end of small buf %lu end %lu]", r_buf->segment.curr_end, r_buf->segment.end); */
 	/* put_msg_print_msg(task->msg); */
-	if (r_buf->segment.curr_end >= r_buf->segment.start &&
-	    r_buf->segment.curr_end + task->msg_payload_size <= r_buf->segment.end)
+	if (r_buf->remote_buffers.curr_end >= r_buf->remote_buffers.start &&
+	    r_buf->remote_buffers.curr_end + task->msg_payload_size <= r_buf->remote_buffers.end)
 		return 1;
 	return 0;
 }
@@ -1082,10 +1113,6 @@ static void regs_wait_for_replication_turn(struct work_task *task)
 
 	/*only 1 threads enters this region at a time*/
 	/*find which rdma_buffer must be appended*/
-	// struct ru_master_state *primary = task->r_desc->m_state;
-	// struct ru_master_log_buffer *rdma_buffer_to_fill = &primary->l0_recovery_rdma_buf;
-	// if (task->kv_category == TEBIS_BIG)
-	// 	rdma_buffer_to_fill = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *rdma_buffer_to_fill = task->kv_category == TEBIS_BIG ?
 								   region_desc_get_primary_big_log_buf(task->r_desc) :
 									 region_desc_get_primary_L0_log_buf(task->r_desc);
@@ -1097,14 +1124,57 @@ static void regs_wait_for_replication_turn(struct work_task *task)
 
 // This function is called by the poll_cq thread every time a notification
 // arrives
-static void regs_wait_for_replication_completion_callback(struct rdma_message_context *r_cnxt)
+/* static void regs_wait_for_replication_completion_callback(struct rdma_message_context *r_cnxt) */
+/* { */
+/* 	if (r_cnxt->__is_initialized != 1) { */
+/* 		log_debug("replication completion callback %u", r_cnxt->__is_initialized); */
+/* 		assert(0); */
+/* 		_exit(EXIT_FAILURE); */
+/* 	} */
+/* 	//sem_post(&r_cnxt->wait_for_completion); */
+/* 	r_cnxt->completion_flag = 1; */
+/* } */
+
+static void regs_copy_kv_to_primary_buffer(struct ru_master_log_buffer *r_buf, struct msg_header *msg_hdr,
+					   uint32_t payload_size)
 {
-	if (r_cnxt->__is_initialized != 1) {
-		log_debug("replication completion callback %u", r_cnxt->__is_initialized);
-		assert(0);
-		_exit(EXIT_FAILURE);
+	assert(r_buf && msg_hdr);
+
+	char *primary_buffer = (char *)r_buf->primary_buffer->addr;
+	char *msg_payload = (char *)msg_hdr + sizeof(struct msg_header);
+	memcpy(&primary_buffer[r_buf->primary_buffer_curr_end], msg_payload, payload_size);
+}
+
+static void regs_replicate_kv_to_replicas(struct regs_server_desc const *server, struct work_task *task,
+					  struct ru_master_log_buffer *r_buf)
+{
+	struct region_desc *r_desc = task->r_desc;
+	uint32_t remote_offset = r_buf->remote_buffers.curr_end;
+	char *primary_buffer = (char *)r_buf->primary_buffer->addr;
+
+	task->replicated_bytes = &r_buf->remote_buffers.replicated_bytes;
+	for (uint32_t backup_id = task->last_replica_to_ack; backup_id < region_desc_get_num_backup(r_desc);
+	     ++backup_id) {
+		struct connection_rdma *r_conn = regs_get_data_conn(server,
+								    region_desc_get_backup_hostname(r_desc, backup_id),
+								    region_desc_get_backup_IP(r_desc, backup_id));
+		//client_rdma_init_message_context(&task->msg_ctx[backup_id], NULL);
+
+		//task->msg_ctx[backup_id].args = task;
+		//task->msg_ctx[backup_id].on_completion_callback = regs_wait_for_replication_completion_callback;
+		char *msg_payload = &primary_buffer[r_buf->primary_buffer_curr_end];
+		while (1) {
+			int ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&task->msg_ctx[backup_id]*/, msg_payload,
+						  task->msg_payload_size,
+						  r_buf->primary_buffer,
+						  IBV_SEND_SIGNALED,
+						  (uint64_t)r_buf->remote_buffers.mr[backup_id].addr + remote_offset,
+						  r_buf->remote_buffers.mr[backup_id].rkey);
+
+			if (ret == 0)
+				break;
+		}
 	}
-	sem_post(&r_cnxt->wait_for_completion);
 }
 
 void regs_replicate_task(struct regs_server_desc const *server, struct work_task *task)
@@ -1112,50 +1182,28 @@ void regs_replicate_task(struct regs_server_desc const *server, struct work_task
 	assert(server && task);
 	//log_debug("replicate task");
 	struct region_desc *r_desc = task->r_desc;
-	// struct ru_master_state *primary = task->r_desc->m_state;
-	// struct ru_master_log_buffer *r_buf = &primary->l0_recovery_rdma_buf;
-	// if (task->kv_category == TEBIS_BIG)
-	// 	r_buf = &primary->big_recovery_rdma_buf;
 	struct ru_master_log_buffer *r_buf = task->kv_category == TEBIS_BIG ?
 						     region_desc_get_primary_big_log_buf(r_desc) :
 							   region_desc_get_primary_L0_log_buf(r_desc);
 
-	uint32_t remote_offset = r_buf->segment.curr_end;
-	task->replicated_bytes = &r_buf->segment.replicated_bytes;
-	for (uint32_t backup_id = task->last_replica_to_ack; backup_id < region_desc_get_num_backup(r_desc);
-	     ++backup_id) {
-		struct connection_rdma *r_conn = regs_get_data_conn(server,
-								    region_desc_get_backup_hostname(r_desc, backup_id),
-								    region_desc_get_backup_IP(r_desc, backup_id));
-		client_rdma_init_message_context(&task->msg_ctx[backup_id], NULL);
+	regs_copy_kv_to_primary_buffer(r_buf, task->msg, task->msg_payload_size);
 
-		task->msg_ctx[backup_id].args = task;
-		task->msg_ctx[backup_id].on_completion_callback = regs_wait_for_replication_completion_callback;
-		char *msg_payload = (char *)task->msg + sizeof(struct msg_header);
-		while (1) {
-			int ret = rdma_post_write(r_conn->rdma_cm_id, &task->msg_ctx[backup_id], msg_payload,
-						  task->msg_payload_size,
-						  task->conn->rdma_memory_regions->remote_memory_region,
-						  IBV_SEND_SIGNALED,
-						  (uint64_t)r_buf->segment.mr[backup_id].addr + remote_offset,
-						  r_buf->segment.mr[backup_id].rkey);
-
-			if (ret == 0)
-				break;
-		}
-	}
+	regs_replicate_kv_to_replicas(server, task, r_buf);
 
 	//log_debug("Adding %lu in curr_end", task->msg_payload_size);
-	r_buf->segment.curr_end += task->msg_payload_size;
+	r_buf->remote_buffers.curr_end += task->msg_payload_size;
+	r_buf->primary_buffer_curr_end += task->msg_payload_size;
+	assert(r_buf->primary_buffer_curr_end == r_buf->remote_buffers.curr_end);
 	region_desc_increase_lsn(task->r_desc);
 
-	task->kreon_operation_status = WAIT_FOR_REPLICATION_COMPLETION;
+	task->kreon_operation_status = ALL_REPLICAS_ACKED;
 }
 
 void regs_wait_for_replication_completion(struct work_task *task)
 {
 	for (uint32_t i = task->last_replica_to_ack; i < region_desc_get_num_backup(task->r_desc); ++i) {
-		if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
+		//if (sem_trywait(&task->msg_ctx[i].wait_for_completion) != 0) {
+		if (0 == task->msg_ctx[i].completion_flag) {
 			task->last_replica_to_ack = i;
 			return;
 		}

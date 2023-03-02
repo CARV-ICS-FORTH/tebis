@@ -191,7 +191,7 @@ string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer -g")
 string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
 set(CMAKE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -Werror -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+    "-Wl,-no-as-needed -lm -Werror -g -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
 )
 
 add_subdirectory(tebis_rdma)

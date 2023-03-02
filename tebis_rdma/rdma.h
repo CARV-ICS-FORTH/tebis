@@ -236,8 +236,9 @@ void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply);
 
 struct rdma_message_context {
 	struct msg_header *msg;
-	sem_t wait_for_completion;
+	//sem_t wait_for_completion;
 	struct ibv_wc wc;
+	volatile uint64_t completion_flag;
 	void (*on_completion_callback)(struct rdma_message_context *msg_ctx);
 	void *args;
 	uint8_t __is_initialized;

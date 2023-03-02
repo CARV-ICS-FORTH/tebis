@@ -421,10 +421,9 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		log_fatal("rdma_connect failed: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-	conn->peer_mr = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-	memset(conn->peer_mr, 0, sizeof(struct ibv_mr));
+	conn->peer_mr = calloc(1UL, sizeof(struct ibv_mr));
 	struct ibv_mr *recv_mr = rdma_reg_msgs(rdma_cm_id, conn->peer_mr, sizeof(struct ibv_mr));
-	struct rdma_message_context msg_ctx;
+	struct rdma_message_context msg_ctx = { 0 };
 	client_rdma_init_message_context(&msg_ctx, NULL);
 	msg_ctx.on_completion_callback = on_completion_client;
 	ret = rdma_post_recv(rdma_cm_id, &msg_ctx, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
@@ -464,7 +463,9 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
 
 	// Block until server sends memory region information
-	sem_wait(&msg_ctx.wait_for_completion);
+	//sem_wait(&msg_ctx.wait_for_completion);
+	while (0 == msg_ctx.completion_flag)
+		;
 	rdma_dereg_mr(send_mr);
 	rdma_dereg_mr(recv_mr);
 
@@ -742,7 +743,8 @@ void client_rdma_init_message_context(struct rdma_message_context *msg_ctx, stru
 {
 	memset(msg_ctx, 0, sizeof(*msg_ctx));
 	msg_ctx->msg = msg;
-	sem_init(&msg_ctx->wait_for_completion, 0, 0);
+	//sem_init(&msg_ctx->wait_for_completion, 0, 0);
+	msg_ctx->completion_flag = 0;
 	msg_ctx->__is_initialized = 1;
 }
 
@@ -751,26 +753,14 @@ bool client_rdma_send_message_success(struct rdma_message_context *msg_ctx)
 	assert(msg_ctx->__is_initialized == 1);
 	// on_completion_client will post this semaphore once it gets to the CQE for
 	// this message
-	sem_wait(&msg_ctx->wait_for_completion);
+	//sem_wait(&msg_ctx->wait_for_completion);
+	while (0 == msg_ctx->completion_flag)
+		;
 	assert((uint64_t)msg_ctx == msg_ctx->wc.wr_id);
 	if (msg_ctx->wc.status == IBV_WC_SUCCESS)
 		return true;
 	else
 		return false;
-}
-
-static void error_to_string(int error)
-{
-	switch (error) {
-	case IBV_WC_REM_ACCESS_ERR:
-		log_fatal("Remote memory error");
-		break;
-	case IBV_WC_LOC_ACCESS_ERR:
-		log_fatal("Local memory error");
-		break;
-	default:
-		log_fatal("Unknown error code");
-	}
 }
 
 void *poll_cq(void *arg)
@@ -817,7 +807,7 @@ void *poll_cq(void *arg)
 						(struct rdma_message_context *)wc[i].wr_id;
 
 					if (wc[i].status != IBV_WC_SUCCESS) {
-						error_to_string(wc[i].status);
+						log_fatal("Reason %s", ibv_wc_status_str(wc[i].status));
 						assert(0);
 					}
 
@@ -902,7 +892,8 @@ and posts the * semaphore used to block until the message's completion has
 arrived */
 void on_completion_client(struct rdma_message_context *msg_ctx)
 {
-	sem_post(&msg_ctx->wait_for_completion);
+	// sem_post(&msg_ctx->wait_for_completion);
+	msg_ctx->completion_flag = 1;
 }
 
 uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf)
