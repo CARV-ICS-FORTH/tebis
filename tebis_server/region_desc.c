@@ -14,7 +14,10 @@
 #include "region_desc.h"
 #include "../tebis_rdma/rdma.h"
 #include "allocator/log_structures.h"
+#include "build_index/build_index.h"
+#include "conf.h"
 #include "configurables.h"
+#include "globals.h"
 #include "master/mregion.h"
 #include "metadata.h"
 #include "region_server.h"
@@ -52,6 +55,8 @@ struct region_desc {
 	pthread_rwlock_t replica_log_map_lock;
 	struct region_desc_map_entry *replica_log_map;
 	struct region_desc_map_entry *replica_index_map[MAX_LEVELS];
+	struct region_desc_flush_latency *flush_latencies;
+	struct build_index_worker *worker;
 
 //Primary to Backup compaction flush_index_segment
 #define CLOCK_DIMENTIONS 2
@@ -62,11 +67,7 @@ struct region_desc {
 	struct ibv_mr remote_mem_buf[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct ibv_mr *local_buffer[MAX_LEVELS];
 	struct ibv_mr *medium_log_buffer[LOG_TAIL_NUM_BUFS];
-	// struct sc_msg_pair rpc[KRM_MAX_BACKUPS][MAX_LEVELS];
 	struct rdma_message_context rpc_ctx[KRM_MAX_BACKUPS][MAX_LEVELS];
-	// uint8_t rpc_in_use[KRM_MAX_BACKUPS][MAX_LEVELS];
-	//staff for deserializing the index at the replicas
-	// struct di_buffer *index_buffer[MAX_LEVELS][MAX_HEIGHT];
 	enum server_role role;
 	par_handle *db;
 	union {
@@ -79,10 +80,73 @@ struct region_desc {
 	enum krm_region_status status;
 };
 
-struct region_desc_primary_buffer{
+struct region_desc_primary_buffer {
 	struct ibv_mr *mr;
 	uint32_t buffer_size;
 };
+
+#if ENABLE_MONITORING
+#define REGION_DESC_SAMPLES_SIZE 2048
+struct region_desc_flush_latency {
+	uint64_t *samples;
+	uint32_t num_samples;
+	uint32_t capacity;
+	uint32_t num_flushes;
+};
+
+struct region_desc_flush_latency *region_desc_create_latencies_array(void)
+{
+	struct region_desc_flush_latency *flush_lat = calloc(1UL, sizeof(struct region_desc_flush_latency));
+
+	flush_lat->capacity = REGION_DESC_SAMPLES_SIZE;
+	flush_lat->samples = calloc(flush_lat->capacity, sizeof(*flush_lat->samples));
+	return flush_lat;
+}
+
+static int region_desc_sample_compare(const void *a, const void *b)
+{
+	uint64_t sample_a = *(uint64_t *)a;
+	uint64_t sample_b = *(uint64_t *)b;
+	if (sample_a == sample_b)
+		return 0;
+	return sample_a > sample_b ? 1 : -1;
+}
+void region_desc_add_latency_sample(region_desc_t region_desc, uint64_t sample)
+{
+	struct region_desc_flush_latency *latency_array = region_desc->flush_latencies;
+	if (latency_array->num_samples >= latency_array->capacity) {
+		latency_array->samples =
+			realloc(latency_array->samples, 2 * latency_array->capacity * sizeof(*latency_array->samples));
+		latency_array->capacity *= 2;
+	}
+	latency_array->samples[region_desc->flush_latencies->num_samples++] = sample;
+	qsort(latency_array->samples, latency_array->num_samples, sizeof(*latency_array->samples),
+	      region_desc_sample_compare);
+}
+
+void region_desc_print_latency_stats(region_desc_t region)
+{
+	struct region_desc_flush_latency *latencies = region->flush_latencies;
+	if (0 != ++latencies->num_flushes % 4)
+		return;
+	log_info("***** <Stats for region %s> *******", region_desc_get_id(region));
+	if (latencies->num_samples > 0) {
+		log_info("Min latency (us): %lu", latencies->samples[0]);
+		log_info("Max latency (us): %lu", latencies->samples[latencies->num_samples - 1]);
+		log_info("50 percentile latency (us): %lu", latencies->samples[latencies->num_samples / 2]);
+		log_info("90 percentile latency (us): %lu", latencies->samples[(latencies->num_samples * 90) / 100]);
+		log_info("99 percentile latency (us): %lu", latencies->samples[(latencies->num_samples * 99) / 100]);
+	} else
+		log_info("No samples detected");
+	log_info("***** </Stats for region %s> *******", region_desc_get_id(region));
+}
+
+#endif
+
+struct build_index_worker *region_desc_get_worker(region_desc_t region_desc)
+{
+	return region_desc->worker;
+}
 
 static const char *region_desc_role_to_string(region_desc_t region_desc)
 {
@@ -137,6 +201,13 @@ region_desc_t region_desc_create(mregion_t mregion, enum server_role server_role
 	region_desc->replica_log_map = NULL;
 	if (region_desc_get_num_backup(region_desc))
 		region_desc->m_state = calloc(1UL, sizeof(struct ru_master_state));
+#if ENABLE_MONITORING
+	region_desc->flush_latencies = region_desc_create_latencies_array();
+#endif
+	if (!globals_get_send_index()) {
+		region_desc->worker = build_index_create_worker(region_desc);
+		build_index_start_worker(region_desc->worker);
+	}
 	return region_desc;
 }
 

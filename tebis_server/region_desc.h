@@ -27,6 +27,8 @@ typedef struct region_desc *region_desc_t;
 
 region_desc_t region_desc_create(mregion_t mregion, enum server_role server_role);
 
+struct build_index_worker *region_desc_get_worker(region_desc_t region_desc);
+
 void region_desc_open_parallax_db(region_desc_t region_desc, const char *error_message);
 
 char *region_desc_get_id(region_desc_t region_desc);
@@ -137,5 +139,7 @@ void region_desc_free_flush_medium_log_segment_msg_pair(region_desc_t region_des
 							uint32_t tail_id);
 uint64_t region_desc_get_medium_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
 uint64_t region_desc_allocate_log_segment_offt(region_desc_t r_desc, uint64_t primary_segment_offt);
-
+//stats staff
+void region_desc_add_latency_sample(region_desc_t region_desc, uint64_t sample);
+void region_desc_print_latency_stats(region_desc_t region);
 #endif

@@ -23,10 +23,66 @@
 #include <assert.h>
 #include <btree/btree.h>
 #include <infiniband/verbs.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 // IWYU pragma: no_forward_declare region_desc
+
+#define BUILD_INDEX_QUEUE_SIZE 16
+struct build_index_item {
+	char *buffer;
+	uint32_t size;
+};
+
+struct build_index_queue {
+	struct build_index_item item[BUILD_INDEX_QUEUE_SIZE];
+	pthread_mutex_t mutex;
+	pthread_cond_t empty;
+	pthread_cond_t full;
+	uint32_t in;
+	uint32_t out;
+	uint32_t capacity;
+};
+
+struct build_index_worker {
+	pthread_t context;
+	struct region_desc *r_desc;
+	struct build_index_queue *queue;
+};
+
+void build_index_add_buffer(struct build_index_worker *worker, char *buffer, uint32_t size)
+{
+	struct build_index_queue *queue = worker->queue;
+	char *copy = calloc(1UL, size);
+	memcpy(copy, buffer, size);
+
+	pthread_mutex_lock(&queue->mutex);
+	while ((queue->in + 1) % queue->capacity == queue->out) {
+		pthread_cond_wait(&queue->empty, &queue->mutex);
+	}
+	queue->item[queue->in].buffer = copy;
+	queue->item[queue->in].size = size;
+	queue->in = (queue->in + 1) % queue->capacity;
+	pthread_cond_signal(&queue->full);
+	pthread_mutex_unlock(&queue->mutex);
+	// log_debug("Added a buffer");
+}
+
+struct build_index_item *build_index_consume(struct build_index_queue *queue)
+{
+	struct build_index_item *item = NULL;
+	pthread_mutex_lock(&queue->mutex);
+	while (queue->in == queue->out) {
+		pthread_cond_wait(&queue->full, &queue->mutex);
+	}
+	item = &queue->item[queue->out];
+	queue->out = (queue->out + 1) % queue->capacity;
+	pthread_cond_signal(&queue->empty);
+	pthread_mutex_unlock(&queue->mutex);
+	// log_debug("Got a buffer for processing");
+	return item;
+}
 
 static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_desc)
 {
@@ -37,6 +93,7 @@ static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_des
 									      kv_splice_get_value_size(kv), insertOp),
 					      .kv_type = KV_FORMAT,
 					      .kv_splice = kv };
+	// log_debug("Inserting key %s", kv_splice_base_get_key_buf(&splice_base));
 	par_put_serialized(handle, (char *)&splice_base, &error_message, true, false);
 	if (error_message) {
 		log_fatal("Error uppon inserting key %s, key_size %u", kv_splice_get_key_offset_in_kv(kv),
@@ -45,46 +102,49 @@ static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_des
 	}
 }
 
-void build_index(struct build_index_task *task)
+void build_index(struct region_desc *r_desc, struct build_index_item *item)
 {
-	rdma_buffer_iterator_t small_rdma_buf_iterator =
-		rdma_buffer_iterator_init(task->small_rdma_buffer, task->rdma_buffers_size,
-					  task->small_rdma_buffer + sizeof(struct segment_header));
 	rdma_buffer_iterator_t big_rdma_buf_iterator =
-		rdma_buffer_iterator_init(task->big_rdma_buffer, task->rdma_buffers_size, task->big_rdma_buffer);
+		rdma_buffer_iterator_init(item->buffer, item->size, item->buffer);
 
-	while (rdma_buffer_iterator_is_valid(small_rdma_buf_iterator) == VALID &&
-	       rdma_buffer_iterator_is_valid(big_rdma_buf_iterator) == VALID) {
-		struct lsn *small_iter_curr_lsn = rdma_buffer_iterator_get_lsn(small_rdma_buf_iterator);
-		struct lsn *big_iter_curr_lsn = rdma_buffer_iterator_get_lsn(big_rdma_buf_iterator);
-		if (compare_lsns(small_iter_curr_lsn, big_iter_curr_lsn) < 0) {
-			insert_kv(small_rdma_buf_iterator, task->r_desc);
-			rdma_buffer_iterator_next(small_rdma_buf_iterator);
-		} else {
-			insert_kv(big_rdma_buf_iterator, task->r_desc);
-			rdma_buffer_iterator_next(big_rdma_buf_iterator);
-		}
-	}
-
-	rdma_buffer_iterator_t unterminated_cursor = small_rdma_buf_iterator;
-	if (rdma_buffer_iterator_is_valid(big_rdma_buf_iterator) == VALID)
-		unterminated_cursor = big_rdma_buf_iterator;
-
-	assert(rdma_buffer_iterator_is_valid(unterminated_cursor) == VALID);
-	while (rdma_buffer_iterator_is_valid(unterminated_cursor) == VALID) {
-		insert_kv(unterminated_cursor, task->r_desc);
-		rdma_buffer_iterator_next(unterminated_cursor);
+	while (rdma_buffer_iterator_is_valid(big_rdma_buf_iterator) == VALID) {
+		insert_kv(big_rdma_buf_iterator, r_desc);
+		rdma_buffer_iterator_next(big_rdma_buf_iterator);
 	}
 }
 
-void build_index_procedure(struct region_desc *r_desc)
+static void *build_index_worker(void *build_worker)
 {
-	struct build_index_task build_index_task;
-	struct ru_replica_state *replica_state = region_desc_get_replica_state(r_desc);
-	assert(replica_state);
-	build_index_task.small_rdma_buffer = replica_state->l0_recovery_rdma_buf.mr->addr;
-	build_index_task.big_rdma_buffer = replica_state->big_recovery_rdma_buf.mr->addr;
-	build_index_task.rdma_buffers_size = replica_state->l0_recovery_rdma_buf.rdma_buf_size;
-	build_index_task.r_desc = r_desc;
-	build_index(&build_index_task);
+	struct build_index_worker *build_index_worker = (struct build_index_worker *)build_worker;
+
+	for (;;) {
+		struct build_index_item *item = build_index_consume(build_index_worker->queue);
+		build_index(build_index_worker->r_desc, item);
+		free(item->buffer);
+	}
+	return NULL;
+}
+
+static struct build_index_queue *build_index_create_queue(void)
+{
+	struct build_index_queue *queue = calloc(1UL, sizeof(struct build_index_queue));
+	pthread_mutex_init(&queue->mutex, NULL);
+	pthread_cond_init(&queue->empty, NULL);
+	pthread_cond_init(&queue->full, NULL);
+	queue->capacity = BUILD_INDEX_QUEUE_SIZE;
+	return queue;
+}
+
+struct build_index_worker *build_index_create_worker(struct region_desc *r_desc)
+{
+	struct build_index_worker *worker = calloc(1UL, sizeof(struct build_index_worker));
+	worker->queue = build_index_create_queue();
+	worker->r_desc = r_desc;
+
+	return worker;
+}
+
+void build_index_start_worker(struct build_index_worker *worker)
+{
+	pthread_create(&worker->context, NULL, build_index_worker, worker);
 }
