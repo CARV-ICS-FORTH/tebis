@@ -38,8 +38,8 @@ struct build_index_item {
 struct build_index_queue {
 	struct build_index_item item[BUILD_INDEX_QUEUE_SIZE];
 	pthread_mutex_t mutex;
-	pthread_cond_t empty;
-	pthread_cond_t full;
+	sem_t empty;
+	sem_t full;
 	uint32_t in;
 	uint32_t out;
 	uint32_t capacity;
@@ -49,6 +49,7 @@ struct build_index_worker {
 	pthread_t context;
 	struct region_desc *r_desc;
 	struct build_index_queue *queue;
+	uint64_t count;
 };
 
 void build_index_add_buffer(struct build_index_worker *worker, char *buffer, uint32_t size)
@@ -57,30 +58,27 @@ void build_index_add_buffer(struct build_index_worker *worker, char *buffer, uin
 	char *copy = calloc(1UL, size);
 	memcpy(copy, buffer, size);
 
+	sem_wait(&queue->empty);
+
 	pthread_mutex_lock(&queue->mutex);
-	while ((queue->in + 1) % queue->capacity == queue->out) {
-		pthread_cond_wait(&queue->empty, &queue->mutex);
-	}
 	queue->item[queue->in].buffer = copy;
 	queue->item[queue->in].size = size;
 	queue->in = (queue->in + 1) % queue->capacity;
-	pthread_cond_signal(&queue->full);
 	pthread_mutex_unlock(&queue->mutex);
-	// log_debug("Added a buffer");
+	sem_post(&queue->full);
+	log_debug("Added a buffer");
 }
 
 struct build_index_item *build_index_consume(struct build_index_queue *queue)
 {
 	struct build_index_item *item = NULL;
+	sem_wait(&queue->full);
 	pthread_mutex_lock(&queue->mutex);
-	while (queue->in == queue->out) {
-		pthread_cond_wait(&queue->full, &queue->mutex);
-	}
 	item = &queue->item[queue->out];
 	queue->out = (queue->out + 1) % queue->capacity;
-	pthread_cond_signal(&queue->empty);
 	pthread_mutex_unlock(&queue->mutex);
-	// log_debug("Got a buffer for processing");
+	sem_post(&queue->empty);
+	log_debug("Got a buffer for processing");
 	return item;
 }
 
@@ -102,15 +100,22 @@ static void insert_kv(rdma_buffer_iterator_t iterator, struct region_desc *r_des
 	}
 }
 
-void build_index(struct region_desc *r_desc, struct build_index_item *item)
+void build_index(struct build_index_worker *worker, struct build_index_item *item)
 {
 	rdma_buffer_iterator_t big_rdma_buf_iterator =
 		rdma_buffer_iterator_init(item->buffer, item->size, item->buffer);
 
+	uint64_t count = worker->count;
+	log_info("(Before) Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
 	while (rdma_buffer_iterator_is_valid(big_rdma_buf_iterator) == VALID) {
-		insert_kv(big_rdma_buf_iterator, r_desc);
+		// if (++worker->count % 20000 == 0)
+		// 	log_info("Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
+		++worker->count;
+		insert_kv(big_rdma_buf_iterator, worker->r_desc);
 		rdma_buffer_iterator_next(big_rdma_buf_iterator);
 	}
+	assert(worker->count - count != 0);
+	log_info("(After) Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
 }
 
 static void *build_index_worker(void *build_worker)
@@ -119,7 +124,7 @@ static void *build_index_worker(void *build_worker)
 
 	for (;;) {
 		struct build_index_item *item = build_index_consume(build_index_worker->queue);
-		build_index(build_index_worker->r_desc, item);
+		build_index(build_index_worker, item);
 		free(item->buffer);
 	}
 	return NULL;
@@ -129,8 +134,8 @@ static struct build_index_queue *build_index_create_queue(void)
 {
 	struct build_index_queue *queue = calloc(1UL, sizeof(struct build_index_queue));
 	pthread_mutex_init(&queue->mutex, NULL);
-	pthread_cond_init(&queue->empty, NULL);
-	pthread_cond_init(&queue->full, NULL);
+	sem_init(&queue->empty, 0, BUILD_INDEX_QUEUE_SIZE);
+	sem_init(&queue->full, 0, 0);
 	queue->capacity = BUILD_INDEX_QUEUE_SIZE;
 	return queue;
 }

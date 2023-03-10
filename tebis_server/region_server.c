@@ -1083,6 +1083,11 @@ void regs_wait_for_flush_replies(struct work_task *task)
 			flushed_log->remote_buffers.curr_end = sizeof(struct segment_header);
 			flushed_log->primary_buffer_curr_end = sizeof(struct segment_header);
 		}
+		//build index
+		if (!globals_get_send_index()) {
+			flushed_log->remote_buffers.curr_end = 0;
+			flushed_log->primary_buffer_curr_end = 0;
+		}
 		flushed_log->remote_buffers.replicated_bytes = 0;
 		//for debuging purposes
 		send_index_uuid_checker_validate_uuid(region_desc_get_flush_msg_pair(r_desc, i), FLUSH_COMMAND_REQ);
@@ -1480,8 +1485,8 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct region_desc *r_desc =
 		regs_get_region_desc(region_server_desc, flush_req->region_key, flush_req->region_key_size);
-	log_debug("Flushing region: %s with min key %s r_desc is %lu", region_desc_get_id((r_desc)),
-		  region_desc_get_min_key(r_desc), (unsigned long)r_desc);
+	// log_debug("Flushing region: %s with min key %s r_desc is %lu", region_desc_get_id((r_desc)),
+	// 	  region_desc_get_min_key(r_desc), (unsigned long)r_desc);
 	if (region_desc_get_replica_state(r_desc) == NULL) {
 		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
@@ -1491,7 +1496,7 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	uint32_t rdma_buffer_size = r_state->l0_recovery_rdma_buf.rdma_buf_size;
 
-	log_debug("primary offt %lu", flush_req->primary_segment_offt);
+	// log_debug("primary offt %lu", flush_req->primary_segment_offt);
 	if (!globals_get_send_index()) {
 		build_index_add_buffer(region_desc_get_worker(r_desc), (char *)r_state->big_recovery_rdma_buf.mr->addr,
 				       SEGMENT_SIZE);

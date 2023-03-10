@@ -15,6 +15,7 @@
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
 #include <assert.h>
+#include <log.h>
 #include <stdlib.h>
 
 struct rdma_buffer_iterator {
