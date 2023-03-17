@@ -674,6 +674,8 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 	}
 	struct ru_master_log_buffer *l0_rec_buf = region_desc_get_primary_L0_log_buf(region_desc);
 	l0_rec_buf->primary_buffer = regs_allocate_rdma_buffer(SEGMENT_SIZE, conn->rdma_cm_id);
+	struct ru_master_log_buffer *big_rec_buf = region_desc_get_primary_big_log_buf(region_desc);
+	big_rec_buf->primary_buffer = regs_allocate_rdma_buffer(SEGMENT_SIZE, conn->rdma_cm_id);
 }
 
 static void regs_handle_master_command(struct regs_server_desc *region_server, MC_command_t command)
