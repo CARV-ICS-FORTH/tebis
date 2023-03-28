@@ -1,8 +1,20 @@
-/** TODO: support reply for SCAN-request */
+/**
+ * @file server_handle.c
+ * @author Orestis Chiotakis (orchiot@ics.forth.gr)
+ * @brief ...
+ * @version 0.1
+ * @date 2023-02-24
+ *
+ * @copyright Copyright (c) 2023
+ *
+ */
 
 #define _GNU_SOURCE
 
+#include <assert.h>
+
 #include "server_handle.h"
+#include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "plog.h"
 
@@ -18,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// #include <threads.h>
 #include <unistd.h>
 
 #include <sys/epoll.h>
@@ -106,6 +119,8 @@ struct server_handle {
 struct tcp_req {
 	req_t type;
 	kv_t kv;
+
+	struct kv_splice_base kv_splice_base;
 };
 
 struct tcp_rep {
@@ -115,11 +130,14 @@ struct tcp_rep {
 	/** TODO: linked list ---> do we know how big each 'SCAN' request is? */
 };
 
+#ifdef TEBIS_FORMAT
+#warn "lol"
+#endif
+
 struct server_handle *g_sh; // CTRL-C
+_Thread_local const char *par_error_message_tl;
 
 #define reset_errno() errno = 0
-#define offset_of_struct_field(x, f) (__u64)(&((typeof(x) *)(0UL))->f)
-#define offset_of_struct_field$(s, f) (__u64)(&((s *)(0UL))->f)
 
 #define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
@@ -129,22 +147,20 @@ struct server_handle *g_sh; // CTRL-C
 #define infinite_loop_end() }
 #define event_loop_start(index, limit) for (int index = 0; index < limit; ++index) {
 #define event_loop_end() }
-#define likely(expr) __builtin_expect(expr, 1L)
-#define unlikely(expr) __builtin_expect(expr, 0L)
+#define likely(expr) __builtin_expect((expr), 1L)
+#define unlikely(expr) __builtin_expect((expr), 0L)
 
 #define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->val.val_buffer)) = (__u8)(retc) // return code
-
-#define repbuf_hdr_write_count(rep, count) *((__u64 *)(rep->val.val_buffer + 1UL)) = htobe64((__u64)(count)) // count
-
+#define repbuf_hdr_write_count(rep, count) *((__u32 *)(rep->val.val_buffer + 1UL)) = htobe32((__u32)(count)) // count
 #define repbuf_hdr_write_total_size(rep, tsize) \
-	*((__u64 *)(rep->val.val_buffer + 9UL)) = htobe64((__u64)(tsize)) // total size
+	*((__u32 *)(rep->val.val_buffer + 9UL)) = htobe32((__u32)(tsize)) // total size
 
-#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf.mem))
+#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf + __reqhdr_type_offset))
+#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset)))
+#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset)))
 
-#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be64toh(*((__u32 *)(buf.mem + 1UL)))
-
-#define reqbuf_hdr_read_payload_size(req, buf) \
-	req->kv.value.size = be64toh(*((__u32 *)(buf.mem + 5UL + req->kv.key.size)))
+#define __offsetof_struct(x, f) (__u64)(&((typeof(x) *)(0UL))->f) // gnu11
+#define __offsetof_struct$(s, f) (__u64)(&((s *)(0UL))->f)
 
 #define MAX_REGIONS 128
 
@@ -314,10 +330,10 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 
 			if (is_v6) {
 				opts->inaddr.ss_family = AF_INET6;
-				off = offset_of_struct_field$(struct sockaddr_in6, sin6_addr);
+				off = __offsetof_struct$(struct sockaddr_in6, sin6_addr);
 			} else {
 				opts->inaddr.ss_family = AF_INET;
-				off = offset_of_struct_field$(struct sockaddr_in, sin_addr);
+				off = __offsetof_struct$(struct sockaddr_in, sin_addr);
 			}
 
 			if (!inet_pton(opts->inaddr.ss_family, argv[i], &(opts->inaddr) + off)) {
@@ -329,11 +345,11 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 			++opt_sum;
 			opts->paddr = argv[i];
 		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+		help:
 			fprintf(stdout, HELP_STRING);
 			free(opts);
 			exit(EXIT_SUCCESS);
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
-		version:
 			fprintf(stdout, VERSION_STRING);
 			free(opts);
 			exit(EXIT_SUCCESS);
@@ -354,7 +370,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 	}
 
 	if (opt_sum != NECESSARY_OPTIONS)
-		goto version;
+		goto help;
 
 	opts->magic_init_num = MAGIC_INIT_NUM;
 
@@ -634,32 +650,41 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 	if (unlikely(recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
 		return -(EXIT_FAILURE);
 
-	reqbuf_hdr_read_type(req, this->buf);
+	reqbuf_hdr_read_type(req, this->buf.mem);
 
-	/** TODO: think(): will the request (req-type) ever be invalid/wrong? req_is_invalid() macro */
+	if (unlikely(req_is_invalid(req)))
+	{
+		errno = ENOTSUP;
+		return -(EXIT_FAILURE);
+	}
 
 	if (unlikely(req_is_new_connection(req)))
 		return $client_version_check(client_sock, this);
 
-	/* [1B type | 4B key-size | key | 4B value-size | value] */
+	/* [1B type | 4B key-size | 4B value-size | key | value] */
 
-	reqbuf_hdr_read_key_size(req, this->buf);
-	reqbuf_hdr_read_payload_size(req, this->buf);
+	reqbuf_hdr_read_key_size(req, this->buf.mem);
+	reqbuf_hdr_read_payload_size(req, this->buf.mem);
 
-	req->kv.key.data = this->buf.mem + 5UL;
+	req->kv.key.data = this->buf.mem + __reqhdr_size;
 
 	if (req_has_value(req))
-		req->kv.value.data = this->buf.mem + req->kv.key.size + 9UL;
+		req->kv.value.data = req->kv.key.data + req->kv.key.size;
+	else {
+		req->kv.value.data = NULL;
+		req->kv.value.size = 0U;
+		req->kv_splice_base.kv_splice->value_size = 0U;
+	}
 
 	return EXIT_SUCCESS;
 }
 
 static inline long int $rep_send(int client_sock, struct tcp_rep *rep)
 {
-	/** buffer scheme: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
+	/** [1B retcode | 4B count | 4B total-size | <4B size, value> | ...] */
 
 	repbuf_hdr_write_retcode(rep, rep->retc);
-	repbuf_hdr_write_count(rep, 1UL);
+	repbuf_hdr_write_count(rep, 1U);
 	repbuf_hdr_write_total_size(rep, rep->val.val_size);
 
 	return send(client_sock, rep->val.val_buffer, rep->val.val_size + TT_REPHDR_SIZE, 0);
@@ -668,7 +693,11 @@ static inline long int $rep_send(int client_sock, struct tcp_rep *rep)
 static void *$handle_events(void *arg)
 {
 	struct worker *this = arg;
-	struct tcp_req req = { 0 };
+	struct tcp_req req = { .kv_splice_base.is_tombstone = false,
+			       .kv_splice_base.kv_type = KV_FORMAT,
+			       .kv_splice_base.kv_cat = 100,
+				   .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL)};
+
 	struct tcp_rep rep = { .val.val_buffer = this->buf.mem,
 			       .val.val_buffer_size = this->buf.bytes - 9U,
 			       .val.val_size = 0U };
@@ -728,13 +757,15 @@ static void *$handle_events(void *arg)
 
 		++this->task_counter; // get info about load balancing (temp)
 
-		if (unlikely($req_recv(this, client_sock, &req) < 0))
+		if (unlikely($req_recv(this, client_sock, &req) < 0)) {
+			plog(PL_ERROR "$rep_recv(): %s", strerror(errno));
 			goto client_error;
+		}
 
 		$par_handle_req(this, &req, &rep);
 
 		if (unlikely($rep_send(client_sock, &rep) < 0L)) {
-			//
+			plog(PL_ERROR "$rep_send(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -765,15 +796,14 @@ static void *$handle_events(void *arg)
 /** TODO: change buffer schemes according to parallax */
 static int $par_handle_req(struct worker *restrict this, struct tcp_req *restrict req, struct tcp_rep *restrict rep)
 {
-	const char *error_message;
-
 	switch (req->type) {
 	case REQ_GET:
 
-		par_get_serialized(this->par_handle, req->kv.key.data, &rep->val, &error_message);
+		par_get_serialized(this->par_handle, req->kv.key.data - 4UL, &rep->val,
+				   &par_error_message_tl); // '-4UL' temp solution
 
-		if (error_message) {
-			plog(PL_ERROR "par_get(): %s");
+		if (par_error_message_tl) {
+			plog(PL_ERROR "par_get_serialized(): %s");
 			return -(EXIT_FAILURE);
 		}
 
@@ -781,10 +811,11 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 
 	case REQ_PUT:
 
-		par_put_serialized(this->par_handle, req->kv.key.data, &error_message, 1, 0);
+		par_put_serialized(this->par_handle, req->kv.key.data - 4UL, &par_error_message_tl, 1,
+				   0); // '-4UL' temp solution
 
-		if (error_message) {
-			plog(PL_ERROR "par_put(): %s");
+		if (par_error_message_tl) {
+			plog(PL_ERROR "par_put_serialized(): %s");
 			return -(EXIT_FAILURE);
 		}
 

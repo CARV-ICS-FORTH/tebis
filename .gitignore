@@ -50,3 +50,5 @@ docs/xml/*
 remote_build/
 compile_commands.txt
 .vscode
+notes.txt
+__build/

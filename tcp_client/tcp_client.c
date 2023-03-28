@@ -6,6 +6,7 @@
 #include "tebis_tcp_errors.h"
 
 #include <arpa/inet.h>
+#include <linux/types.h>
 
 #include <errno.h>
 #include <log.h>
@@ -22,24 +23,29 @@
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
 #define req_has_value(rtype) (rtype >= REQ_SCAN)
-#define is_req_invalid(rtype) ((uint32_t)(rtype) >= OPSNO)
+#define is_req_invalid(rtype) ((__u32)(rtype) >= OPSNO)
+
+#define reqhdr_type_offset 0UL
+#define reqhdr_keysz_offset 1UL
+#define reqhdr_valsz_offset 5UL
+#define reqhdr_key_offset 9UL
 
 struct internal_tcp_rep {
-	uint32_t retc;
-	uint32_t flags;
-	uint64_t count;
-	uint64_t size;
+	__u32 retc;
+	__u32 flags;
+	__u32 count;
+	__u32 size;
 
-	uint64_t bindex; // buf-index used for pop()ing tcp replies
+	__u32 bindex; // buf-index used for pop()ing tcp replies
 	struct buffer buf;
 };
 
 struct internal_tcp_req {
 	req_t type;
 
-	uint32_t flags;
-	uint32_t keysz;
-	uint32_t paysz;
+	__u32 flags;
+	__u32 keysz;
+	__u32 paysz;
 
 	struct buffer buf;
 
@@ -54,7 +60,7 @@ struct client_handle {
 #define CLHF_SND_REQ (1 << 0)
 
 	//{ int (*destroy)(void)}
-	// uint64_t x = &((struct client_handle *)(0)->destroy)
+	// __u64 x = &((struct client_handle *)(0)->destroy)
 
 	int sock;
 };
@@ -83,7 +89,7 @@ static int server_version_check(int ssock)
 		return -(EXIT_FAILURE);
 	}
 
-	printf("TEBIS_SERVER_VERSION: 0x%x\n", *((uint32_t *)(tbuf)));
+	printf("TEBIS_SERVER_VERSION: 0x%x\n", *((__u32 *)(tbuf)));
 
 	return EXIT_SUCCESS;
 }
@@ -174,7 +180,7 @@ int chandle_destroy(cHandle chandle)
 
 	/** END OF ERROR HANDLING **/
 
-	uint64_t discardbuf;
+	__u64 discardbuf;
 
 	shutdown(ch->sock, SHUT_WR); // sends FIN
 	recv(ch->sock, &discardbuf, sizeof(discardbuf), 0); // zero will be returned
@@ -189,7 +195,7 @@ int chandle_destroy(cHandle chandle)
 c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t paysz)
 {
 	struct internal_tcp_req *ireq;
-	uint64_t tsize;
+	__u64 tsize;
 
 	if (is_req_invalid(rtype) || !keysz) {
 		errno = ENOTSUP;
@@ -208,7 +214,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 			return NULL;
 		}
 
-		tsize = keysz + paysz + TT_REQHDR_SIZE;
+		tsize = keysz + paysz + REQHDR_SIZE;
 
 		if (tsize > ireq->buf.bytes) {
 			tsize = ((tsize + sizeof(*ireq)) | 0xfffUL) + 1UL; // efficient page-alignment
@@ -224,7 +230,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 		}
 	} else /* create() new request */
 	{
-		tsize = ((TT_REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
+		tsize = ((REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
 
 		if ((ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 			return NULL;
@@ -238,13 +244,13 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 	ireq->paysz = paysz;
 	ireq->type = rtype;
 
-	*((char *)(ireq->buf.mem)) = rtype;
-	*((uint32_t *)(ireq->buf.mem + 1UL)) = htobe64(keysz);
+	*((char *)(ireq->buf.mem + reqhdr_type_offset)) = rtype;
+	*((__u32 *)(ireq->buf.mem + reqhdr_keysz_offset)) = htobe32(keysz);
 
 	if (req_has_value(rtype))
-		*((uint32_t *)(ireq->buf.mem + 5UL + keysz)) = htobe64(paysz);
-
-	// ireq->buf.mem += TT_REQHDR_SIZE;
+		*((__u32 *)(ireq->buf.mem + reqhdr_valsz_offset)) = htobe32(paysz);
+	else
+		*((__u32 *)(ireq->buf.mem + reqhdr_valsz_offset)) = (__u32)(0U);
 
 	return ireq;
 }
@@ -287,7 +293,7 @@ void *c_tcp_req_expose_key(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	return ireq->buf.mem + 5UL;
+	return ireq->buf.mem + reqhdr_key_offset;
 }
 
 void *c_tcp_req_expose_payload(c_tcp_req req)
@@ -314,7 +320,7 @@ void *c_tcp_req_expose_payload(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	return ireq->buf.mem + 9UL + ireq->keysz;
+	return ireq->buf.mem + reqhdr_key_offset + ireq->keysz;
 }
 
 c_tcp_rep c_tcp_rep_new(size_t size)
@@ -327,7 +333,7 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 	/** END OF ERROR HANDLING **/
 
 	struct internal_tcp_rep *irep;
-	uint64_t tsize = ((TT_REPHDR_SIZE + sizeof(*irep) + size) | 0xfffUL) + 1UL; // efficient page-alignment
+	__u64 tsize = ((TT_REPHDR_SIZE + sizeof(*irep) + size) | 0xfffUL) + 1UL; // efficient page-alignment
 
 	if ((irep = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 		return NULL;
@@ -346,7 +352,7 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count) // internal-use-only
 {
 	struct internal_tcp_rep *irep = *rep;
-	uint64_t tsize = TT_REPHDR_SIZE + size;
+	__u64 tsize = TT_REPHDR_SIZE + size;
 
 	/** TODO: irep->buf.mem is unecessary. irep->buf.mem is always equal to irep + sizeof(*irep) */
 
@@ -358,7 +364,7 @@ static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count)
 		if ((*rep = mremap(irep, irep->buf.bytes, tsize, MREMAP_MAYMOVE)) == MAP_FAILED) {
 			log_error("mmap() failed");
 			perror("mmap()");
-			printf("mmap-size = 0x%lx [size=0x%lx]\n", tsize, size);
+			printf("mmap-size = 0x%llx [size=0x%lx]\n", tsize, size);
 			return -(EXIT_FAILURE);
 		}
 
@@ -420,10 +426,10 @@ int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val)
 
 	char *tmp = irep->buf.mem + irep->bindex;
 
-	val->size = *((uint64_t *)(tmp));
-	val->data = tmp + sizeof(uint64_t);
+	val->size = *((__u64 *)(tmp));
+	val->data = tmp + sizeof(__u64);
 
-	irep->bindex += sizeof(uint64_t) + val->size;
+	irep->bindex += sizeof(__u64) + val->size;
 
 	return EXIT_SUCCESS;
 }
@@ -453,7 +459,7 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	uint64_t tsize = ireq->keysz + 5UL;
+	__u64 tsize = ireq->keysz + 5UL;
 
 	if (req_has_value(ireq->type))
 		tsize += ireq->paysz + 4UL;
@@ -496,8 +502,8 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	}
 
 	irep->retc = *((uint8_t *)(irep->buf.mem));
-	irep->count = be64toh(*((uint64_t *)(irep->buf.mem + 1UL)));
-	irep->size = be64toh(*((uint64_t *)(irep->buf.mem + 9UL))); // total size (payload-sizes + payloads)
+	irep->count = be32toh(*((__u32 *)(irep->buf.mem + 1UL)));
+	irep->size = be32toh(*((__u32 *)(irep->buf.mem + 5UL))); // total size (payload-sizes + payloads)
 
 	if (irep->retc != TT_REQ_SUCC) {
 		/// TODO: return a custom error-code or set an appropriate errno (?)
@@ -507,7 +513,7 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	}
 
 	if (c_tcp_rep_update(rep, irep->retc, irep->size, irep->count) < 0) {
-		log_error("c_tcp_rep_update() failed! (s:%lu, c:%lu)\n", irep->size, irep->count);
+		log_error("c_tcp_rep_update() failed! (s:%u, c:%u)\n", irep->size, irep->count);
 		return -(EXIT_FAILURE);
 	}
 

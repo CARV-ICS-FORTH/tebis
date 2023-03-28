@@ -61,7 +61,7 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	this->rep = (typeof(this->rep))((char *)(this->req) + (this->threads * sizeof(*(this->req))));
 
 	for (int i = 0; i < this->threads; ++i) {
-		if (chandle_init(this->chandle + i, SITH6_IP_56G, "25565") < 0) {
+		if (chandle_init(this->chandle + i, SITH2_IP_56G, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
