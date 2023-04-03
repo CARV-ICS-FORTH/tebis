@@ -459,12 +459,12 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	__u64 tsize = ireq->keysz + 5UL;
+	__u64 total_size = __reqhdr_size + ireq->keysz;
 
 	if (req_has_value(ireq->type))
-		tsize += ireq->paysz + 4UL;
+		total_size += ireq->paysz;
 
-	if (send(ch->sock, ireq->buf.mem, tsize, 0) < 0)
+	if (send(ch->sock, ireq->buf.mem, total_size, 0) < 0)
 		return -(EXIT_FAILURE);
 
 	ch->flags2 &= ~(CLHF_SND_REQ);

@@ -135,7 +135,7 @@ _Thread_local const char *par_error_message_tl;
 
 #define reset_errno() errno = 0
 
-#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO && (__u32)(req->type) != REQ_INIT_CONN)
+#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
 #define req_has_value(req) (req->type >= REQ_SCAN)
 
@@ -151,9 +151,15 @@ _Thread_local const char *par_error_message_tl;
 #define repbuf_hdr_write_total_size(rep, tsize) \
 	*((__u32 *)(rep->val.val_buffer + 9UL)) = htobe32((__u32)(tsize)) // total size
 
+#define reqbuf_net_to_host(buf)\
+do {\
+	*((__u32 *)(buf + __reqhdr_keysz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset)));\
+	*((__u32 *)(buf + __reqhdr_valsz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset)));\
+} while(0)
+
 #define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf + __reqhdr_type_offset))
-#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset)))
-#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset)))
+#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = *((__u32 *)(buf + __reqhdr_keysz_offset))
+#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = *((__u32 *)(buf + __reqhdr_valsz_offset))
 
 #define __offsetof_struct(x, f) (__u64)(&((typeof(x) *)(0UL))->f) // gnu11
 #define __offsetof_struct$(s, f) (__u64)(&((s *)(0UL))->f)
@@ -646,17 +652,19 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 
 	reqbuf_hdr_read_type(req, this->buf.mem);
 
+	if (unlikely(req_is_new_connection(req)))
+		return $client_version_check(client_sock, this);
+
 	if (unlikely(req_is_invalid(req))) {
 		errno = ENOTSUP;
 		return -(EXIT_FAILURE);
 	}
 
-	if (unlikely(req_is_new_connection(req)))
-		return $client_version_check(client_sock, this);
-
 	/* [1B type | 4B key-size | 4B value-size | key | value] */
 
+	reqbuf_net_to_host(this->buf.mem);
 	reqbuf_hdr_read_key_size(req, this->buf.mem);
+	// plog(PL_INFO "keysz = %u", req->kv.key.size);
 
 	if (unlikely(!req->kv.key.size)) {
 		errno = EBADMSG;
@@ -664,6 +672,7 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 	}
 
 	reqbuf_hdr_read_payload_size(req, this->buf.mem);
+	// plog(PL_INFO "valsz = %u", req->kv.value.size);
 
 	req->kv.key.data = this->buf.mem + __reqhdr_size;
 
@@ -760,6 +769,10 @@ static void *$handle_events(void *arg)
 			goto client_error;
 		}
 
+		// printf("\033[1;31mreq-type = 0x%x\033[0m\n", req.type);
+		if (req.type == REQ_INIT_CONN)
+			continue;
+
 		$par_handle_req(this, &req, &rep);
 
 		if (unlikely($rep_send(client_sock, &rep) < 0L)) {
@@ -798,7 +811,7 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 	case REQ_GET:
 
 		par_get_serialized(this->par_handle, req->kv.key.data - 8UL, &rep->val,
-				   &par_error_message_tl); // '-4UL' temp solution
+				   &par_error_message_tl); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_get_serialized(): %s");
@@ -809,13 +822,16 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 
 	case REQ_PUT:
 
-		par_put_serialized(this->par_handle, req->kv.key.data - 4UL, &par_error_message_tl,
-				   1); // '-4UL' temp solution
+		plog(PL_INFO "[keysz, valsz] = [%u, %u]", *((__u32 *)(req->kv.key.data - 8UL)), *((__u32 *)(req->kv.key.data - 4UL)));
+		par_put_serialized(this->par_handle, req->kv.key.data - 8UL, &par_error_message_tl,
+				   1); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
 			return -(EXIT_FAILURE);
 		}
+
+		printf("\033[1;33mSUCCESS\033[0m\n");
 
 		break;
 

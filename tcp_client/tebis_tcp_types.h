@@ -53,7 +53,6 @@ typedef enum {
 
 typedef enum {
 
-	/** old: [1B type | 4B key-size | key | 4B value-size | value] **/
 	/** [1B type | 4B key-size | 4B value-size | key | value ] **/
 
 	/** GET-request family **/
@@ -89,10 +88,13 @@ typedef enum {
 
 struct tcp_req_hdr_reference {
 	__u8 type;
+
 	__u32 key_size;
 	__u32 value_size;
 
 	char key_value[];
+
+#define __reqhdr_size (9U)
 
 } __attribute__((packed));
 
@@ -101,8 +103,14 @@ struct tcp_rep_hdr_reference {
 	__u32 count;
 	__u32 total_size;
 
-	char values[];
+	char values[]; // gnu11
 
 } __attribute__((packed));
+
+#define __reqhdr_type_offset (__offsetof_struct$(struct tcp_req_hdr_reference, type))
+#define __reqhdr_keysz_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_size))
+#define __reqhdr_valsz_offset (__offsetof_struct$(struct tcp_req_hdr_reference, value_size))
+// #define __reqhdr_key_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_value))
+// #define __reqhdr_val_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_size))
 
 #endif /** TEBIS_TCP_TYPES_H **/

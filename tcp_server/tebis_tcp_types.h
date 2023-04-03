@@ -89,7 +89,6 @@ typedef enum {
 struct tcp_req_hdr_reference {
 	__u8 type;
 
-	/** TODO: replace fields below with 'struct kv_splice' */
 	__u32 key_size;
 	__u32 value_size;
 
