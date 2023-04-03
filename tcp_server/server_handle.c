@@ -151,11 +151,11 @@ _Thread_local const char *par_error_message_tl;
 #define repbuf_hdr_write_total_size(rep, tsize) \
 	*((__u32 *)(rep->val.val_buffer + 9UL)) = htobe32((__u32)(tsize)) // total size
 
-#define reqbuf_net_to_host(buf)\
-do {\
-	*((__u32 *)(buf + __reqhdr_keysz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset)));\
-	*((__u32 *)(buf + __reqhdr_valsz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset)));\
-} while(0)
+#define reqbuf_net_to_host(buf)                                                                                 \
+	do {                                                                                                    \
+		*((__u32 *)(buf + __reqhdr_keysz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset))); \
+		*((__u32 *)(buf + __reqhdr_valsz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset))); \
+	} while (0)
 
 #define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf + __reqhdr_type_offset))
 #define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = *((__u32 *)(buf + __reqhdr_keysz_offset))
@@ -822,7 +822,8 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 
 	case REQ_PUT:
 
-		plog(PL_INFO "[keysz, valsz] = [%u, %u]", *((__u32 *)(req->kv.key.data - 8UL)), *((__u32 *)(req->kv.key.data - 4UL)));
+		plog(PL_INFO "[keysz, valsz] = [%u, %u]", *((__u32 *)(req->kv.key.data - 8UL)),
+		     *((__u32 *)(req->kv.key.data - 4UL)));
 		par_put_serialized(this->par_handle, req->kv.key.data - 8UL, &par_error_message_tl,
 				   1); // '-8UL' temp solution
 
