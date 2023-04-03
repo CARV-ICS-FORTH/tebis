@@ -118,7 +118,7 @@ int c_tcp_rep_destroy(c_tcp_rep rep);
  * @param val
  * @return int
  */
-int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val) __attribute_deprecated__;
+int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val) /* __attribute_deprecated__ */;
 
 /**
  * @brief

@@ -71,7 +71,7 @@ FetchContent_Declare(
 
 FetchContent_Declare(
   parallax
-  GIT_REPOSITORY git@github.com:CARV-ICS-FORTH/parallax.git
+  GIT_REPOSITORY https://github.com/CARV-ICS-FORTH/parallax.git
   GIT_TAG teboparallax_synced)
 
 # Using FetchContent_Declare results in build failed because both 'json-c' and

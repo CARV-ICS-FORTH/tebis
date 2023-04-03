@@ -1,10 +1,10 @@
 #ifndef TEBIS_TCP_TYPES_H
 #define TEBIS_TCP_TYPES_H
 
+#include <linux/types.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include <linux/types.h>
 
 #define TT_VERSION 0x01000000 //0x000.000.00 [major, minor, patch]
 #define TT_MAX_LISTEN 512
@@ -88,7 +88,6 @@ typedef enum {
 } rep_t;
 
 struct tcp_req_hdr_reference {
-
 	__u8 type;
 	__u32 key_size;
 	__u32 value_size;
@@ -98,7 +97,6 @@ struct tcp_req_hdr_reference {
 } __attribute__((packed));
 
 struct tcp_rep_hdr_reference {
-
 	__u8 return_code;
 	__u32 count;
 	__u32 total_size;

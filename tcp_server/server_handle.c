@@ -13,10 +13,10 @@
 
 #include <assert.h>
 
-#include "server_handle.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "plog.h"
+#include "server_handle.h"
 
 #include <arpa/inet.h>
 
@@ -130,16 +130,12 @@ struct tcp_rep {
 	/** TODO: linked list ---> do we know how big each 'SCAN' request is? */
 };
 
-#ifdef TEBIS_FORMAT
-#warn "lol"
-#endif
-
 struct server_handle *g_sh; // CTRL-C
 _Thread_local const char *par_error_message_tl;
 
 #define reset_errno() errno = 0
 
-#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
+#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO && (__u32)(req->type) != REQ_INIT_CONN)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
 #define req_has_value(req) (req->type >= REQ_SCAN)
 
@@ -587,8 +583,6 @@ static int $handle_new_connection(struct worker *this)
 		return -(EXIT_FAILURE);
 	}
 
-	//
-
 	epev.data.fd = tmpfd;
 	epev.events = EPOLLIN | EPOLLONESHOT;
 
@@ -652,8 +646,7 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 
 	reqbuf_hdr_read_type(req, this->buf.mem);
 
-	if (unlikely(req_is_invalid(req)))
-	{
+	if (unlikely(req_is_invalid(req))) {
 		errno = ENOTSUP;
 		return -(EXIT_FAILURE);
 	}
@@ -664,6 +657,12 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 	/* [1B type | 4B key-size | 4B value-size | key | value] */
 
 	reqbuf_hdr_read_key_size(req, this->buf.mem);
+
+	if (unlikely(!req->kv.key.size)) {
+		errno = EBADMSG;
+		return -(EXIT_FAILURE);
+	}
+
 	reqbuf_hdr_read_payload_size(req, this->buf.mem);
 
 	req->kv.key.data = this->buf.mem + __reqhdr_size;
@@ -694,9 +693,8 @@ static void *$handle_events(void *arg)
 {
 	struct worker *this = arg;
 	struct tcp_req req = { .kv_splice_base.is_tombstone = false,
-			       .kv_splice_base.kv_type = KV_FORMAT,
-			       .kv_splice_base.kv_cat = 100,
-				   .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL)};
+			       .kv_splice_base.cat = 100,
+			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
 
 	struct tcp_rep rep = { .val.val_buffer = this->buf.mem,
 			       .val.val_buffer_size = this->buf.bytes - 9U,
@@ -799,7 +797,7 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 	switch (req->type) {
 	case REQ_GET:
 
-		par_get_serialized(this->par_handle, req->kv.key.data - 4UL, &rep->val,
+		par_get_serialized(this->par_handle, req->kv.key.data - 8UL, &rep->val,
 				   &par_error_message_tl); // '-4UL' temp solution
 
 		if (par_error_message_tl) {
@@ -811,11 +809,11 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 
 	case REQ_PUT:
 
-		par_put_serialized(this->par_handle, req->kv.key.data - 4UL, &par_error_message_tl, 1,
-				   0); // '-4UL' temp solution
+		par_put_serialized(this->par_handle, req->kv.key.data - 4UL, &par_error_message_tl,
+				   1); // '-4UL' temp solution
 
 		if (par_error_message_tl) {
-			plog(PL_ERROR "par_put_serialized(): %s");
+			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
 			return -(EXIT_FAILURE);
 		}
 

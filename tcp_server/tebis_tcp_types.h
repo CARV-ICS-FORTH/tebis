@@ -95,7 +95,7 @@ struct tcp_req_hdr_reference {
 
 	char key_value[];
 
-	#define __reqhdr_size (9U)
+#define __reqhdr_size (9U)
 
 } __attribute__((packed));
 
