@@ -33,10 +33,8 @@
 struct internal_tcp_rep {
 	__u32 retc;
 	__u32 flags;
-	__u32 count;
 	__u32 size;
 
-	__u32 bindex; // buf-index used for pop()ing tcp replies
 	struct buffer buf;
 };
 
@@ -341,42 +339,34 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 	irep->buf.mem = (char *)(irep) + sizeof(*irep);
 	irep->buf.bytes = tsize - sizeof(*irep);
 	irep->flags = MAGIC_INIT_NUM;
-	irep->bindex = 0UL;
-	irep->count = 0UL;
 	irep->size = 0UL;
 	irep->retc = 0U;
 
 	return irep;
 }
 
-static int c_tcp_rep_update(c_tcp_rep *rep, int retc, size_t size, size_t count) // internal-use-only
+static int c_tcp_rep_update(struct internal_tcp_rep **irep, int retc, size_t size) // internal-use-only
 {
-	struct internal_tcp_rep *irep = *rep;
-	__u64 tsize = TT_REPHDR_SIZE + size;
-
 	/** TODO: irep->buf.mem is unecessary. irep->buf.mem is always equal to irep + sizeof(*irep) */
 
-	// if (tsize <= irep->buf.bytes)
-	// irep->buf.mem = (char *)(irep) + sizeof(*irep);  /** TODO: this if-statement is unecessary, thus remove it! */
-	if (tsize > irep->buf.bytes) {
-		tsize = ((tsize + sizeof(*irep)) | 0xfffUL) + 1UL;
+	struct internal_tcp_rep *_irep = *irep;
 
-		if ((*rep = mremap(irep, irep->buf.bytes, tsize, MREMAP_MAYMOVE)) == MAP_FAILED) {
+	if (size > _irep->buf.bytes) {
+		size = ((size + TT_REPHDR_SIZE + sizeof(*irep)) | 0xfffUL) + 1UL;
+
+		if ((*irep = mremap(irep, _irep->buf.bytes, size, MREMAP_MAYMOVE)) == MAP_FAILED) {
 			log_error("mmap() failed");
 			perror("mmap()");
-			printf("mmap-size = 0x%llx [size=0x%lx]\n", tsize, size);
 			return -(EXIT_FAILURE);
 		}
 
-		irep = *rep;
-		irep->buf.mem = (char *)(irep) + sizeof(*irep);
-		irep->buf.bytes = tsize - sizeof(*irep);
+		_irep = *irep;
+		_irep->buf.mem = (char *)(irep) + sizeof(*irep);
+		_irep->buf.bytes = size - sizeof(*irep);
 	}
 
-	irep->count = count;
-	irep->size = tsize;
-	irep->retc = retc;
-	// irep->bindex = 0UL;
+	_irep->size = size;
+	_irep->retc = retc;
 
 	return EXIT_SUCCESS;
 }
@@ -399,37 +389,6 @@ int c_tcp_rep_destroy(c_tcp_rep rep)
 
 	if (munmap(irep, irep->buf.bytes + sizeof(*irep)) < 0)
 		return -(EXIT_FAILURE);
-
-	return EXIT_SUCCESS;
-}
-
-int c_tcp_rep_pop_value(c_tcp_rep rep, generic_data_t *val)
-{
-	if (!rep || !val) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	struct internal_tcp_rep *irep = rep;
-
-	if (irep->flags != MAGIC_INIT_NUM) {
-		errno = EINVAL;
-		return -(EXIT_FAILURE);
-	}
-
-	if (irep->bindex >= irep->size) {
-		errno = ENODATA;
-		return -(EXIT_FAILURE);
-	}
-
-	/** END OF ERROR HANDLING **/
-
-	char *tmp = irep->buf.mem + irep->bindex;
-
-	val->size = *((__u64 *)(tmp));
-	val->data = tmp + sizeof(__u64);
-
-	irep->bindex += sizeof(__u64) + val->size;
 
 	return EXIT_SUCCESS;
 }
@@ -487,10 +446,10 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 		return -(EXIT_FAILURE);
 	}
 
-	/* if (ch->flags2 & CLHF_SND_REQ) { // per-thread flag
+	if (ch->flags2 & CLHF_SND_REQ) { // per-thread flag
 		errno = EPERM;
 		return -(EXIT_FAILURE);
-	} */
+	}
 
 	/** END OF ERROR HANDLING **/
 
@@ -502,18 +461,16 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	}
 
 	irep->retc = *((uint8_t *)(irep->buf.mem));
-	irep->count = be32toh(*((__u32 *)(irep->buf.mem + 1UL)));
-	irep->size = be32toh(*((__u32 *)(irep->buf.mem + 5UL))); // total size (payload-sizes + payloads)
+	irep->size = be32toh(*((__u32 *)(irep->buf.mem + 1UL)));
 
 	if (irep->retc != TT_REQ_SUCC) {
-		/// TODO: return a custom error-code or set an appropriate errno (?)
 		errno = ECANCELED;
 		ch->flags2 |= CLHF_SND_REQ;
 		return -(EXIT_FAILURE);
 	}
 
-	if (c_tcp_rep_update(rep, irep->retc, irep->size, irep->count) < 0) {
-		log_error("c_tcp_rep_update() failed! (s:%u, c:%u)\n", irep->size, irep->count);
+	if (c_tcp_rep_update(&irep, irep->retc, irep->size) < 0) {
+		log_error("c_tcp_rep_update() failed! (size: %u)\n", irep->size);
 		return -(EXIT_FAILURE);
 	}
 

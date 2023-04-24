@@ -90,10 +90,9 @@ struct server_options {
 /** server worker **/
 
 struct worker {
-	pthread_t tid;
 	par_handle par_handle;
+	pthread_t tid;
 
-	__u64 task_counter;
 	__s32 epfd;
 	__s32 sock;
 
@@ -126,8 +125,6 @@ struct tcp_req {
 struct tcp_rep {
 	retcode_t retc;
 	struct par_value val;
-
-	/** TODO: linked list ---> do we know how big each 'SCAN' request is? */
 };
 
 struct server_handle *g_sh; // CTRL-C
@@ -147,7 +144,6 @@ _Thread_local const char *par_error_message_tl;
 #define unlikely(expr) __builtin_expect((expr), 0L)
 
 #define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->val.val_buffer)) = (__u8)(retc) // return code
-#define repbuf_hdr_write_count(rep, count) *((__u32 *)(rep->val.val_buffer + 1UL)) = htobe32((__u32)(count)) // count
 #define repbuf_hdr_write_total_size(rep, tsize) \
 	*((__u32 *)(rep->val.val_buffer + 9UL)) = htobe32((__u32)(tsize)) // total size
 
@@ -213,7 +209,7 @@ static inline long int $rep_send(int client_sock, struct tcp_rep *rep) __attribu
  */
 static void *$handle_events(void *arg) __attribute__((nonnull));
 
-static int $par_handle_req(struct worker *restrict this, struct tcp_req *restrict req, struct tcp_rep *restrict rep)
+static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull));
 
 /***** public functions *****/
@@ -235,7 +231,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 	struct server_options *opts;
 	int opt_sum = 0;
 
-	if (!(*sconfig = malloc(sizeof(*opts))))
+	if (!(*sconfig = calloc(1UL, sizeof(*opts))))
 		return -(EXIT_FAILURE);
 
 	opts = *sconfig;
@@ -338,7 +334,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 				off = __offsetof_struct$(struct sockaddr_in, sin_addr);
 			}
 
-			if (!inet_pton(opts->inaddr.ss_family, argv[i], &(opts->inaddr) + off)) {
+			if (!inet_pton(opts->inaddr.ss_family, argv[i], (char *)(&opts->inaddr) + off)) {
 				fprintf(stderr, ERROR_STRING " tcp-server: invalid address\n");
 				free(opts);
 				exit(EXIT_FAILURE);
@@ -421,7 +417,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	struct server_handle *shandle = *server_handle;
 
 	shandle->opts = sconf;
-	shandle->workers = (struct worker *)((__u32 *)(shandle) + sizeof(struct server_handle));
+	shandle->workers = (struct worker *)((char *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
 
@@ -501,6 +497,7 @@ int server_handle_destroy(sHandle server_handle)
 	close(shandle->sock);
 	close(shandle->epfd);
 	munmap(shandle->workers[0].buf.mem, shandle->opts->threadno * DEF_BUF_SIZE);
+	free(shandle->opts);
 
 	const char *error_message = par_close(shandle->par_handle);
 
@@ -563,13 +560,16 @@ int server_spawn_threads(sHandle server_handle)
 		}
 	}
 
+	// convert 'main()-thread' to 'server-thread'
+
 	shandle->workers[index].tid = pthread_self();
 	shandle->workers[index].sock = shandle->sock;
 	shandle->workers[index].epfd = shandle->epfd;
+	shandle->workers[index].par_handle = shandle->par_handle;
 	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
 	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 
-	$handle_events(shandle->workers + index); // convert 'main()-thread' to 'server-thread'
+	$handle_events(shandle->workers + index);
 
 	return EXIT_SUCCESS;
 }
@@ -664,7 +664,6 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 
 	reqbuf_net_to_host(this->buf.mem);
 	reqbuf_hdr_read_key_size(req, this->buf.mem);
-	// plog(PL_INFO "keysz = %u", req->kv.key.size);
 
 	if (unlikely(!req->kv.key.size)) {
 		errno = EBADMSG;
@@ -672,7 +671,6 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 	}
 
 	reqbuf_hdr_read_payload_size(req, this->buf.mem);
-	// plog(PL_INFO "valsz = %u", req->kv.value.size);
 
 	req->kv.key.data = this->buf.mem + __reqhdr_size;
 
@@ -692,7 +690,6 @@ static inline long int $rep_send(int client_sock, struct tcp_rep *rep)
 	/** [1B retcode | 4B count | 4B total-size | <4B size, value> | ...] */
 
 	repbuf_hdr_write_retcode(rep, rep->retc);
-	repbuf_hdr_write_count(rep, 1U);
 	repbuf_hdr_write_total_size(rep, rep->val.val_size);
 
 	return send(client_sock, rep->val.val_buffer, rep->val.val_size + TT_REPHDR_SIZE, 0);
@@ -704,10 +701,6 @@ static void *$handle_events(void *arg)
 	struct tcp_req req = { .kv_splice_base.is_tombstone = false,
 			       .kv_splice_base.cat = 100,
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
-
-	struct tcp_rep rep = { .val.val_buffer = this->buf.mem,
-			       .val.val_buffer_size = this->buf.bytes - 9U,
-			       .val.val_size = 0U };
 
 	int events;
 	int client_sock;
@@ -762,8 +755,6 @@ static void *$handle_events(void *arg)
 
 		/** request **/
 
-		++this->task_counter; // get info about load balancing (temp)
-
 		if (unlikely($req_recv(this, client_sock, &req) < 0)) {
 			plog(PL_ERROR "$rep_recv(): %s", strerror(errno));
 			goto client_error;
@@ -773,10 +764,8 @@ static void *$handle_events(void *arg)
 		if (req.type == REQ_INIT_CONN)
 			continue;
 
-		$par_handle_req(this, &req, &rep);
-
-		if (unlikely($rep_send(client_sock, &rep) < 0L)) {
-			plog(PL_ERROR "$rep_send(): %s", strerror(errno));
+		if (unlikely($par_handle_req(this, client_sock, &req) < 0L)) {
+			plog(PL_ERROR "$par_handle_req(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -804,26 +793,34 @@ static void *$handle_events(void *arg)
 	__builtin_unreachable();
 }
 
-/** TODO: change buffer schemes according to parallax */
-static int $par_handle_req(struct worker *restrict this, struct tcp_req *restrict req, struct tcp_rep *restrict rep)
+static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
+	struct par_value pval;
+
 	switch (req->type) {
 	case REQ_GET:
 
-		par_get_serialized(this->par_handle, req->kv.key.data - 8UL, &rep->val,
+		par_get_serialized(this->par_handle, req->kv.key.data - 8UL, &pval,
 				   &par_error_message_tl); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
-			plog(PL_ERROR "par_get_serialized(): %s");
+			plog(PL_ERROR "par_get_serialized(): %s", par_error_message_tl);
 			return -(EXIT_FAILURE);
 		}
+
+		*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
+		*((__u32 *)(this->buf.mem + 1UL)) = htobe32(pval.val_size);
+
+		/** TODO: for future parallax developer; zero-copy solution? */
+
+		memcpy(this->buf.mem + TT_REPHDR_SIZE, pval.val_buffer, pval.val_size);
+
+		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + pval.val_size, 0);
 
 		break;
 
 	case REQ_PUT:
 
-		plog(PL_INFO "[keysz, valsz] = [%u, %u]", *((__u32 *)(req->kv.key.data - 8UL)),
-		     *((__u32 *)(req->kv.key.data - 4UL)));
 		par_put_serialized(this->par_handle, req->kv.key.data - 8UL, &par_error_message_tl,
 				   1); // '-8UL' temp solution
 
@@ -832,12 +829,18 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 			return -(EXIT_FAILURE);
 		}
 
-		printf("\033[1;33mSUCCESS\033[0m\n");
+		/* PUT-req does not return a value */
+
+		*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
+		*((__u32 *)(this->buf.mem + 1UL)) = 0U;
+
+		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE, 0);
 
 		break;
 
 	default:
 
+		// printf("req->type = %d\n", req->type);
 		errno = ENOTSUP;
 		return -(EXIT_FAILURE);
 	}
@@ -850,13 +853,7 @@ static int $par_handle_req(struct worker *restrict this, struct tcp_req *restric
 void server_sig_handler_SIGINT(int signum)
 {
 	printf("received \033[1;31mSIGINT (%d)\033[0m --- printing thread-stats\n", signum);
-
-	for (uint i = 0, lim = g_sh->opts->threadno; i < lim; ++i)
-		printf("worker[%u] completed %llu tasks\n", i, g_sh->workers[i].task_counter);
-
 	server_handle_destroy(g_sh);
 	printf("\n");
 	_Exit(EXIT_SUCCESS);
 }
-
-/** TODO: replies on the same NUMA node */

@@ -16,6 +16,8 @@ extern "C" {
 #define SITH5_IP_56G "192.168.2.125"
 #define SITH6_IP_56G "192.168.2.126"
 
+#define SERVER_HOST SITH6_IP_56G
+
 using namespace ycsbc;
 
 /** PRIVATE **/
@@ -61,7 +63,7 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	this->rep = (typeof(this->rep))((char *)(this->req) + (this->threads * sizeof(*(this->req))));
 
 	for (int i = 0; i < this->threads; ++i) {
-		if (chandle_init(this->chandle + i, SITH2_IP_56G, "25565") < 0) {
+		if (chandle_init(this->chandle + i, SERVER_HOST, "25565") < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
@@ -119,7 +121,7 @@ int tcpDB::Read(int id, const std::string &table, const std::string &key, const 
 
 	generic_data_t val;
 
-	c_tcp_rep_pop_value(rep, &val); // value="saloustros"
+	// c_tcp_rep_pop_value(rep, &val); // value="saloustros"
 
 	return YCSBDB::kOK;
 }
@@ -171,7 +173,7 @@ int tcpDB::Scan(int id, const std::string &table, const std::string &key, int re
 
 int tcpDB::Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
 {
-	c_tcp_req_factory(&this->req[id], REQ_PUT_IFEX, key.size(), this->values_size(values));
+	c_tcp_req_factory(&this->req[id], REQ_PUT, key.size(), this->values_size(values));
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);
 

@@ -8,7 +8,7 @@
 
 #define TT_VERSION 0x01000000 //0x000.000.00 [major, minor, patch]
 #define TT_MAX_LISTEN 512
-#define TT_REPHDR_SIZE 17UL
+#define TT_REPHDR_SIZE 5UL
 #define REQHDR_SIZE 9UL
 
 #define __x86_PAGESIZE (1UL << 12)
@@ -53,7 +53,7 @@ typedef enum {
 
 typedef enum {
 
-	/** [1B type | 4B key-size | 4B value-size | key | value ] **/
+	/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
 	/** GET-request family **/
 
@@ -73,8 +73,7 @@ typedef enum {
 
 typedef enum {
 
-	/** old: [1B retc | 8B count | 8B tsize | <8B size, payload> | ...] **/
-	/** [1B retcode | 4B count | 4B total-size | <4B size, value> | ...] */
+	/** [ 1B retcode | 4B size | value ] */
 
 	REP_GET,
 	REP_DEL,
