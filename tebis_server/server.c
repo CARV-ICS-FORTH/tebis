@@ -474,6 +474,8 @@ static int ds_is_server2server_job(struct msg_header *msg)
 	case CLOSE_COMPACTION_REPLY:
 	case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
 	case REPLICA_INDEX_SWAP_LEVELS_REPLY:
+	case REPLICA_FLUSH_MEDIUM_LOG_REQUEST:
+	case REPLICA_FLUSH_MEDIUM_LOG_REP:
 		return 1;
 	default:
 		return 0;
