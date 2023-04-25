@@ -105,16 +105,11 @@ void build_index(struct build_index_worker *worker, struct build_index_item *ite
 	rdma_buffer_iterator_t big_rdma_buf_iterator =
 		rdma_buffer_iterator_init(item->buffer, item->size, item->buffer);
 
-	log_info("(Before) Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
 	while (rdma_buffer_iterator_is_valid(big_rdma_buf_iterator) == VALID) {
-		// if (++worker->count % 20000 == 0)
-		// 	log_info("Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
 		++worker->count;
 		insert_kv(big_rdma_buf_iterator, worker->r_desc);
 		rdma_buffer_iterator_next(big_rdma_buf_iterator);
 	}
-	assert(worker->count - count != 0);
-	log_info("(After) Inserted %lu keys for region %s", worker->count, region_desc_get_id(worker->r_desc));
 }
 
 static void *build_index_worker(void *build_worker)
