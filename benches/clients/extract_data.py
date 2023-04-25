@@ -9,7 +9,7 @@ import json
 
 workload_bytes_per_op = {
   "s": 29,
-  "m": 119,
+  "m": 120,
   "l": 1219,
   "sd": 0.6*30 + 0.2*120 + 0.2*1020,
   "md": 0.2*30 + 0.6*120 + 0.2*1020,
@@ -249,7 +249,7 @@ def generate_report(working_dir, workload_type, record_count, operations, server
 
 number = "{:9.2f}"
 
-def print_workload(stats_workload, workload, servers):
+def print_workload(stats_workload, workload, servers, workload_type):
   print(workload_labels[workload])
   print("------------------------------------------------")
   print("OVERALL (Average)")
@@ -257,9 +257,20 @@ def print_workload(stats_workload, workload, servers):
   print(number.format(stats_workload["overall"]["cycles_per_op"]) + "  Cycles/op")
   print(number.format(stats_workload["overall"]["io_amplification"]) + " IO Amplification")
   print_stats(stats_workload["overall"])
+  bytes_load = workload_bytes_per_op[workload_type] * record_count
+  bytes_run = workload_bytes_per_op[workload_type] * operations
   for server in servers:
     print()
     print(server[0] + " | Device: " + server[1])
+    if "load" in workload:
+        print(number.format(stats_workload[server[0]]["device"]["mb_read"] * 2**20 / bytes_load) + " Read IO amplification")
+        print(number.format(stats_workload[server[0]]["device"]["mb_written"] * 2**20 / bytes_load) + " Write IO amplification")
+    else:
+        print(number.format(stats_workload[server[0]]["device"]["mb_read"] * 2**20 / bytes_run) + " Read IO amplification")
+        print(number.format(stats_workload[server[0]]["device"]["mb_written"] * 2**20 / bytes_run) + " Write IO amplification")
+    cycles_per_second = stats_workload[server[0]]["cpu"]["util"] * cycles_sithx * cores_sithx / 100
+    cycles_per_op = cycles_per_second / stats_workload["overall"]["ops"]
+    print(number.format(cycles_per_op) + " Cycles/op")
     print_stats(stats_workload[server[0]])
 
 def print_stats(stats):
@@ -412,7 +423,7 @@ if __name__ == '__main__':
 
   if not JSON_OUTPUT:
     for workload in workload_res_dirs:
-      print_workload(stats[workload], workload, servers)
+      print_workload(stats[workload], workload, servers, workload_type)
       print()
   else:
     json_object = json.dumps(stats)

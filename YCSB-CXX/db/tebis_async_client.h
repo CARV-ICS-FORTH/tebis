@@ -326,7 +326,7 @@ class tebisAsyncClientDB : public YCSBDB {
 	int Update(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values)
 	{
 		static std::string value3(1200, 'a');
-		static std::string value2(100, 'a');
+		static std::string value2(120, 'a');
 		static std::string value(5, 'a');
 		int y = kv_count++ % 10;
 
@@ -377,7 +377,7 @@ class tebisAsyncClientDB : public YCSBDB {
 	int Insert(int id, const std::string &table /*ignored*/, const std::string &key, std::vector<KVPair> &values)
 	{
 		static std::string value3(1200, 'a');
-		static std::string value2(100, 'a');
+		static std::string value2(120, 'a');
 		static std::string value(10, 'a');
 		int y = kv_count++ % 10;
 

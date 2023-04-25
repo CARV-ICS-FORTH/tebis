@@ -474,6 +474,8 @@ static int ds_is_server2server_job(struct msg_header *msg)
 	case CLOSE_COMPACTION_REPLY:
 	case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
 	case REPLICA_INDEX_SWAP_LEVELS_REPLY:
+	case REPLICA_FLUSH_MEDIUM_LOG_REQUEST:
+	case REPLICA_FLUSH_MEDIUM_LOG_REP:
 		return 1;
 	default:
 		return 0;
@@ -910,11 +912,11 @@ int main(int argc, char *argv[])
 	uint32_t growth_factor = strtoul(argv[next_argv++], NULL, 10);
 	globals_set_growth_factor(growth_factor);
 
-	if (strcmp(argv[next_argv], "send_index") == 0)
+	if (strcmp(argv[next_argv], "send_index") == 0) {
 		globals_set_send_index(1);
-	else if (strcmp(argv[next_argv], "build_index") == 0)
+	} else if (strcmp(argv[next_argv], "build_index") == 0) {
 		globals_set_send_index(0);
-	else {
+	} else {
 		log_fatal("what do you want send or build index?");
 		_exit(EXIT_FAILURE);
 	}

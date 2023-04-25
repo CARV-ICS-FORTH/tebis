@@ -65,6 +65,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <uthash.h>
 #include <zookeeper/zookeeper.h>
@@ -574,7 +575,7 @@ static void regs_announce_server_presence(struct regs_server_desc *region_server
 static struct ibv_mr *regs_allocate_rdma_buffer(uint32_t size, struct rdma_cm_id *rdma_cm_id)
 {
 	char *addr = NULL;
-	if (posix_memalign((void**)&addr, 4096, size)) {
+	if (posix_memalign((void **)&addr, 4096, size)) {
 		log_fatal("Failed to allocate aligned RDMA buffer");
 		perror("Reason\n");
 		_exit(EXIT_FAILURE);
@@ -612,9 +613,8 @@ static void regs_init_log_buffers_with_replicas(struct regs_server_desc const *s
 
 	struct connection_rdma *conn = NULL;
 	for (uint32_t backup_id = 0; backup_id < region_desc_get_num_backup(region_desc); ++backup_id) {
-		conn =
-			regs_get_data_conn(server, region_desc_get_backup_hostname(region_desc, backup_id),
-					   region_desc_get_backup_IP(region_desc, backup_id));
+		conn = regs_get_data_conn(server, region_desc_get_backup_hostname(region_desc, backup_id),
+					  region_desc_get_backup_IP(region_desc, backup_id));
 
 		log_debug("Sending GET_RDMA_BUFFERs req to Server %s",
 			  region_desc_get_backup_hostname(region_desc, backup_id));
@@ -1069,7 +1069,10 @@ void regs_wait_for_flush_replies(struct work_task *task)
 		// re-zero the metadat of the flushed segment
 		struct ru_master_log_buffer *flushed_log = task->insert_metadata.log_type == BIG ?
 								   region_desc_get_primary_big_log_buf(r_desc) :
-									 region_desc_get_primary_L0_log_buf(r_desc);
+								   region_desc_get_primary_L0_log_buf(r_desc);
+
+		if (!globals_get_send_index())
+			flushed_log = region_desc_get_primary_big_log_buf(r_desc);
 		// if (task->insert_metadata.log_type == BIG)
 		// 	struct ru_master_log_buffer_seg *flushed_segment = flushed_log->segment;
 		// if (task->insert_metadata.log_type == BIG)
@@ -1079,6 +1082,11 @@ void regs_wait_for_flush_replies(struct work_task *task)
 		if (task->insert_metadata.log_type == L0_RECOVERY) {
 			flushed_log->remote_buffers.curr_end = sizeof(struct segment_header);
 			flushed_log->primary_buffer_curr_end = sizeof(struct segment_header);
+		}
+		//build index
+		if (!globals_get_send_index()) {
+			flushed_log->remote_buffers.curr_end = 0;
+			flushed_log->primary_buffer_curr_end = 0;
 		}
 		flushed_log->remote_buffers.replicated_bytes = 0;
 		//for debuging purposes
@@ -1117,7 +1125,10 @@ static void regs_wait_for_replication_turn(struct work_task *task)
 	/*find which rdma_buffer must be appended*/
 	struct ru_master_log_buffer *rdma_buffer_to_fill = task->kv_category == TEBIS_BIG ?
 								   region_desc_get_primary_big_log_buf(task->r_desc) :
-									 region_desc_get_primary_L0_log_buf(task->r_desc);
+								   region_desc_get_primary_L0_log_buf(task->r_desc);
+
+	if (!globals_get_send_index())
+		rdma_buffer_to_fill = region_desc_get_primary_big_log_buf(task->r_desc);
 
 	task->kreon_operation_status = REPLICATE;
 	if (!regs_buffer_have_enough_space(rdma_buffer_to_fill, task))
@@ -1167,9 +1178,7 @@ static void regs_replicate_kv_to_replicas(struct regs_server_desc const *server,
 		char *msg_payload = &primary_buffer[r_buf->primary_buffer_curr_end];
 		while (1) {
 			int ret = rdma_post_write(r_conn->rdma_cm_id, NULL /*&task->msg_ctx[backup_id]*/, msg_payload,
-						  task->msg_payload_size,
-						  r_buf->primary_buffer,
-						  IBV_SEND_SIGNALED,
+						  task->msg_payload_size, r_buf->primary_buffer, IBV_SEND_SIGNALED,
 						  (uint64_t)r_buf->remote_buffers.mr[backup_id].addr + remote_offset,
 						  r_buf->remote_buffers.mr[backup_id].rkey);
 
@@ -1184,9 +1193,13 @@ void regs_replicate_task(struct regs_server_desc const *server, struct work_task
 	assert(server && task);
 	//log_debug("replicate task");
 	struct region_desc *r_desc = task->r_desc;
+
 	struct ru_master_log_buffer *r_buf = task->kv_category == TEBIS_BIG ?
 						     region_desc_get_primary_big_log_buf(r_desc) :
-							   region_desc_get_primary_L0_log_buf(r_desc);
+						     region_desc_get_primary_L0_log_buf(r_desc);
+	//for build index case
+	if (!globals_get_send_index())
+		r_buf = region_desc_get_primary_big_log_buf(r_desc);
 
 	regs_copy_kv_to_primary_buffer(r_buf, task->msg, task->msg_payload_size);
 
@@ -1463,13 +1476,17 @@ void regs_execute_delete_req(struct regs_server_desc const *region_server_desc, 
 void regs_execute_flush_command_req(struct regs_server_desc const *region_server_desc, struct work_task *task)
 {
 	assert(task->msg->msg_type == FLUSH_COMMAND_REQ);
+#if ENABLE_MONITORING
+	struct timeval start;
+	gettimeofday(&start, NULL);
+#endif
 	// log_debug("Primary orders a flush!");
 	struct s2s_msg_flush_cmd_req *flush_req =
 		(struct s2s_msg_flush_cmd_req *)((char *)task->msg + sizeof(struct msg_header));
 	struct region_desc *r_desc =
 		regs_get_region_desc(region_server_desc, flush_req->region_key, flush_req->region_key_size);
-	log_debug("Flushing region: %s with min key %s r_desc is %lu", region_desc_get_id((r_desc)),
-		  region_desc_get_min_key(r_desc), (unsigned long)r_desc);
+	// log_debug("Flushing region: %s with min key %s r_desc is %lu", region_desc_get_id((r_desc)),
+	// 	  region_desc_get_min_key(r_desc), (unsigned long)r_desc);
 	if (region_desc_get_replica_state(r_desc) == NULL) {
 		log_fatal("No state for backup region %s", region_desc_get_id(r_desc));
 		_exit(EXIT_FAILURE);
@@ -1479,10 +1496,12 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 	struct ru_replica_state *r_state = region_desc_get_replica_state(r_desc);
 	uint32_t rdma_buffer_size = r_state->l0_recovery_rdma_buf.rdma_buf_size;
 
-	log_debug("primary offt %lu", flush_req->primary_segment_offt);
+	// log_debug("primary offt %lu", flush_req->primary_segment_offt);
 	if (!globals_get_send_index()) {
-		build_index_procedure(r_desc);
-		region_desc_zero_rdma_buffer(r_desc, L0_RECOVERY);
+		build_index_add_buffer(region_desc_get_worker(r_desc), (char *)r_state->big_recovery_rdma_buf.mr->addr,
+				       SEGMENT_SIZE);
+		// build_index_procedure(r_desc);
+		// region_desc_zero_rdma_buffer(r_desc, L0_RECOVERY);
 		region_desc_zero_rdma_buffer(r_desc, BIG);
 	} else {
 		if (!region_desc_is_segment_in_logmap(r_desc, flush_req->primary_segment_offt)) {
@@ -1514,6 +1533,13 @@ void regs_execute_flush_command_req(struct regs_server_desc const *region_server
 		}
 	}
 
+#if ENABLE_MONITORING
+	struct timeval end;
+	gettimeofday(&end, NULL);
+	uint64_t diff = (end.tv_sec * 1000000 + end.tv_usec) - (start.tv_sec * 1000000 + start.tv_usec);
+	region_desc_add_latency_sample(r_desc, diff);
+	region_desc_print_latency_stats(r_desc);
+#endif
 	//time for reply :-)
 	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
 				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
@@ -1904,8 +1930,8 @@ void regs_execute_compact_L0(struct regs_server_desc const *region_server_desc, 
 		_exit(EXIT_FAILURE);
 	}
 	task->kreon_operation_status = TASK_COMPACT_L0;
-	struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
-	compactiond_force_L0_compaction(dbhandle->db_desc->compactiond);
+	// struct db_handle *dbhandle = (struct db_handle *)region_desc_get_db(r_desc);
+	// compactiond_force_L0_compaction(dbhandle->db_desc->compactiond);
 	//time for reply
 	task->reply_msg = (struct msg_header *)((char *)task->conn->rdma_memory_regions->local_memory_buffer +
 						task->msg->offset_reply_in_recv_buffer);
