@@ -1,24 +1,30 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#include "server_communication.h"
+#include "../tebis_rdma/rdma.h"
 #include "../utilities/circular_buffer.h"
 #include "conf.h"
-#include "djb2.h"
-#include "globals.h"
+#include "configurables.h"
 #include "messages.h"
-#include "metadata.h"
-#include "uthash.h"
-#include <infiniband/verbs.h>
+#include <assert.h>
 #include <log.h>
-#include <rdma/rdma_cma.h>
-#include <rdma/rdma_verbs.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
-const uint32_t S2S_MSG_SIZE = 256;
+#include <unistd.h>
 
-struct sc_conn_per_server {
-	uint64_t hash_key;
-	struct krm_server_name server;
-	struct connection_rdma *conn;
-	UT_hash_handle hh;
-};
+const uint32_t S2S_MSG_SIZE = S2S_MSG_SIZE_VALUE;
 
 struct fill_request_msg_info {
 	struct msg_header *request;
@@ -27,9 +33,7 @@ struct fill_request_msg_info {
 	uint32_t req_type;
 	struct msg_header *reply;
 };
-struct sc_conn_per_server *sc_root_data_cps = NULL;
-struct sc_conn_per_server *sc_root_compaction_cps = NULL;
-static pthread_mutex_t conn_map_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void fill_request_msg(connection_rdma *conn, struct fill_request_msg_info msg_info)
 {
 	msg_info.request->payload_length = 0;
@@ -105,6 +109,7 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 	}
 
 	pthread_mutex_lock(&conn->buffer_lock);
+	pthread_mutex_lock(&conn->allocation_lock);
 	switch (req_type) {
 	case GET_RDMA_BUFFER_REQ:
 		rep_type = GET_RDMA_BUFFER_REP;
@@ -117,6 +122,21 @@ struct sc_msg_pair sc_allocate_rpc_pair(struct connection_rdma *conn, uint32_t r
 		break;
 	case REPLICA_INDEX_FLUSH_REQ:
 		rep_type = REPLICA_INDEX_FLUSH_REP;
+		break;
+	case FLUSH_L0_REQUEST:
+		rep_type = FLUSH_L0_REPLY;
+		break;
+	case CLOSE_COMPACTION_REQUEST:
+		rep_type = CLOSE_COMPACTION_REPLY;
+		break;
+	case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
+		rep_type = REPLICA_INDEX_SWAP_LEVELS_REPLY;
+		break;
+	case REPLICA_FLUSH_MEDIUM_LOG_REQUEST:
+		rep_type = REPLICA_FLUSH_MEDIUM_LOG_REP;
+		break;
+	case BUILD_INDEX_COMPACT_L0_REQUEST:
+		rep_type = BUILD_INDEX_COMPACT_L0_REPLY;
 		break;
 	default:
 		log_fatal("Unsupported s2s message type %d", type);
@@ -173,6 +193,7 @@ retry_allocate_reply:
 	fill_request_msg(conn, msg_info);
 
 exit:
+	pthread_mutex_unlock(&conn->allocation_lock);
 	pthread_mutex_unlock(&conn->buffer_lock);
 	return rep;
 }
@@ -182,6 +203,9 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 	msg_header *request = p->request;
 	msg_header *reply = p->reply;
 	assert(request->reply_length_in_recv_buffer != 0);
+	pthread_mutex_lock(&p->conn->buffer_lock);
+	pthread_mutex_lock(&p->conn->allocation_lock);
+
 	zero_rendezvous_locations_l(reply, request->reply_length_in_recv_buffer);
 	free_space_from_circular_buffer(p->conn->recv_circular_buf, (char *)reply,
 					request->reply_length_in_recv_buffer);
@@ -192,50 +216,6 @@ void sc_free_rpc_pair(struct sc_msg_pair *p)
 
 	assert(size % MESSAGE_SEGMENT_SIZE == 0);
 	free_space_from_circular_buffer(p->conn->send_circular_buf, (char *)request, size);
-}
-
-extern int krm_zk_get_server_name(char *dataserver_name, struct krm_server_desc const *my_desc,
-				  struct krm_server_name *dst, int *zk_rc);
-
-static struct connection_rdma *sc_get_conn(struct krm_server_desc const *mydesc, char *hostname,
-					   struct sc_conn_per_server **sc_root_cps)
-{
-	struct sc_conn_per_server *cps = NULL;
-	uint64_t key;
-
-	key = djb2_hash((unsigned char *)hostname, strlen(hostname));
-	HASH_FIND_PTR(*sc_root_cps, &key, cps);
-	if (cps == NULL) {
-		pthread_mutex_lock(&conn_map_lock);
-		HASH_FIND_PTR(*sc_root_cps, &key, cps);
-		if (cps == NULL) {
-			/*ok update server info from zookeeper*/
-			cps = (struct sc_conn_per_server *)malloc(sizeof(struct sc_conn_per_server));
-			int rc = krm_zk_get_server_name(hostname, mydesc, &cps->server, NULL);
-			if (rc) {
-				log_fatal("Failed to refresh info for server %s", hostname);
-				_exit(EXIT_FAILURE);
-			}
-			char *IP = cps->server.RDMA_IP_addr;
-			cps->conn = crdma_client_create_connection_list_hosts(ds_get_channel(mydesc), &IP, 1,
-									      MASTER_TO_REPLICA_CONNECTION);
-
-			/*init list here*/
-			cps->hash_key = key;
-			HASH_ADD_PTR(*sc_root_cps, hash_key, cps);
-		}
-		pthread_mutex_unlock(&conn_map_lock);
-	}
-
-	return cps->conn;
-}
-
-struct connection_rdma *sc_get_data_conn(struct krm_server_desc const *mydesc, char *hostname)
-{
-	return sc_get_conn(mydesc, hostname, &sc_root_data_cps);
-}
-
-struct connection_rdma *sc_get_compaction_conn(struct krm_server_desc *mydesc, char *hostname)
-{
-	return sc_get_conn(mydesc, hostname, &sc_root_compaction_cps);
+	pthread_mutex_unlock(&p->conn->allocation_lock);
+	pthread_mutex_unlock(&p->conn->buffer_lock);
 }

@@ -45,3 +45,6 @@ __pycache__/
 *$py.class
 docs/html/*
 docs/xml/*
+.cache
+.ccls-cache
+remote_build/

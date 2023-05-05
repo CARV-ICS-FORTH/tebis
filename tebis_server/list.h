@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
-#include <stdio.h>
+#ifndef LIST_H
+#define LIST_H
 
 typedef void (*destroy_node_data)(void *data);
 
@@ -42,3 +42,4 @@ int tebis_klist_remove_element(struct tebis_klist *list, void *data);
 int tebis_klist_delete_element(struct tebis_klist *list, void *data);
 
 void tebis_klist_destroy(struct tebis_klist *list);
+#endif

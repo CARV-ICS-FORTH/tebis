@@ -1,7 +1,13 @@
+
 #include "../utilities/spin_loop.h"
+#include "configurables.h"
 #include "metadata.h"
 #include "zk_utils.h"
 #include <log.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <zookeeper/zookeeper.h>
 static uint8_t is_connected = 0;
 

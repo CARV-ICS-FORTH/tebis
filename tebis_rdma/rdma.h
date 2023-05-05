@@ -1,39 +1,31 @@
-#pragma once
-
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#ifndef RDMA_H
+#define RDMA_H
 
 #include <infiniband/verbs.h>
-#include <inttypes.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <pthread.h>
-#include <rdma/rdma_cma.h>
 #include <semaphore.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <unistd.h>
 
-#include "../tebis_server/conf.h"
 #include "../tebis_server/messages.h"
 #include "../utilities/circular_buffer.h"
-#include "../utilities/macros.h"
-#include "../utilities/queue.h"
 #include "../utilities/simple_concurrent_list.h"
 #include "memory_region_pool.h"
 
-#define TU_CONNECTION_RC 1 // 1 -> RC, 0 -> UC
 #define VALIDATE_CHECKSUMS 0
-
-// Allow to perform our own Reliable Connection. It can be used with TU_CONNECTION_RC 1 or 0
-//#define TU_CONNECTION_RC_CONTROL 1 // 1 will control time per msg, 0 will not control nothing
 
 #define CONNECTION_BUFFER_WITH_MUTEX_LOCK
 
@@ -92,28 +84,6 @@ typedef enum worker_status { IDLE_SPINNING, IDLE_SLEEPING, BUSY, WORKER_NOT_RUNN
 typedef void (*on_connection_created)(void *vconn);
 
 void *socket_thread(void *args);
-#if TU_CONNECTION_RC_CONTROL
-// To control the pending messages, a be able to: 1) re-sent in case something is missing, 2) compute the RTT
-struct rdma_sent_queue {
-	struct msg_header *message; // Message sent
-	struct timespec sent_time; // Time in which the message was sent
-	struct timespec recv_time; // Time the reply was received.
-	int recv_flag; // 1 : The reply message has been received, 0: message sent, but reply not received
-	uint64_t ns_rtt;
-	int resent;
-	int64_t id_msg;
-};
-
-#define TU_SIZE_MSG_QUEUE MRQ_MAX_ELEMENTS //512 //4096 //1024
-#define TU_BITS_SIZE_MSG_QUEUE 15 //9 //12 //10
-#define TU_MASK_SIZE_MSG_QUEUE (MASK(TU_BITS_SIZE_MSG_QUEUE))
-
-#define TU_MSG_FREE 0
-#define TU_MSG_SENT 1
-#define TU_MSG_RECV 2
-#define TU_MSG_RECV_RECV 3
-
-#endif
 
 struct polling_msg {
 #if SPINNING_NO_LIST
@@ -266,8 +236,9 @@ void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply);
 
 struct rdma_message_context {
 	struct msg_header *msg;
-	sem_t wait_for_completion;
+	//sem_t wait_for_completion;
 	struct ibv_wc wc;
+	volatile uint64_t completion_flag;
 	void (*on_completion_callback)(struct rdma_message_context *msg_ctx);
 	void *args;
 	uint8_t __is_initialized;
@@ -300,3 +271,4 @@ struct ibv_context *get_rdma_device_context(char *devname);
 void *poll_cq(void *arg);
 
 uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf);
+#endif

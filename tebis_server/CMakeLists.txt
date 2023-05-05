@@ -9,6 +9,7 @@ add_library(
   ../tebis_rdma_client/msg_factory.c
   ../tebis_rdma_client/tebis_rdma_client.c
   ../tebis_server/globals.c
+  ../common/common.c
   zk_utils.c
   djb2.c)
 add_dependencies(tebis_client cjson)
@@ -18,10 +19,22 @@ target_link_libraries(tebis_client ${Zookeeper_LIBRARY})
 add_executable(
   tebis_server
   server.c
-  metadata_server.c
-  build_index.c
-  rdma_buffer_iterator.c
-  remote_compaction.c
+  region_desc.c
+  build_index/build_index.c
+  build_index/build_index_callbacks.c
+  send_index/send_index.c
+  send_index/send_index_callbacks.c
+  send_index/send_index_uuid_checker/send_index_uuid_checker.c
+  send_index/send_index_segment_iterator.c
+  send_index/send_index_rewriter.c
+  ../common/common.c
+  rdma_buffer_iterator/rdma_buffer_iterator.c
+  master/master.c
+  master/region_log.c
+  master/mregion.c
+  master/mregion_server.c
+  master/command.c
+  region_server.c
   deserialize_index.c
   zk_utils.c
   djb2.c

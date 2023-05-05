@@ -1,0 +1,4 @@
+run_a run ycsb_execution_plans/workloada
+run_b run ycsb_execution_plans/workloadb
+run_c run ycsb_execution_plans/workloadc
+run_d run ycsb_execution_plans/workloadd

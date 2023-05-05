@@ -1,25 +1,37 @@
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #define _GNU_SOURCE
 #include "tebis_rdma_client.h"
+#include "../common/common.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/djb2.h"
+#include "../tebis_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/queue.h"
+#include "../utilities/spin_loop.h"
 #include "client_utils.h"
+#include "msg_factory.h"
 #include <assert.h>
-#include <immintrin.h>
-#include <infiniband/verbs.h>
+#include <log.h>
 #include <pthread.h>
-#include <rdma/rdma_verbs.h>
-#include <semaphore.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
-//#include "../kreon_server/client_regions.h"
-#include "../tebis_rdma/rdma.h"
-#include "../tebis_server/djb2.h"
-#include "../tebis_server/globals.h"
-#include "../tebis_server/messages.h"
-#include "../utilities/spin_loop.h"
-#include "msg_factory.h"
-#include <log.h>
+#include <unistd.h>
 #define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;
@@ -85,87 +97,6 @@ struct krc_spinner {
 static struct krc_spinner *spinner = NULL;
 pthread_t spinner_cnxt;
 
-extern void on_completion_client(struct rdma_message_context *);
-static int _krc_send_heartbeat(struct rdma_cm_id *rdma_cm_id)
-{
-	struct rdma_message_context send_ctx;
-	//log_info("Sending heartbeat!");
-	client_rdma_init_message_context(&send_ctx, NULL);
-	send_ctx.on_completion_callback = on_completion_client;
-	if (rdma_post_write(rdma_cm_id, &send_ctx, NULL, 0, NULL, IBV_SEND_SIGNALED, 0, 0)) {
-		log_warn("Failed to send heartbeat: %s", strerror(errno));
-		return KREON_FAILURE;
-	}
-
-	if (!client_rdma_send_message_success(&send_ctx)) {
-		log_warn("Remote side is down!");
-		return KREON_FAILURE;
-	}
-	return KREON_SUCCESS;
-}
-
-/* Spin until an incoming message has been detected. For our RDMA network protocol implementation, this is
- * detected by reading the value TU_RDMA_REGULAR_MSG in the last byte of the buffer where we expect the
- * message.
- *
- * \return KREON_SUCCESS if a message is successfully received
- * \return KREON_FAILURE if the remote side is down
- */
-static int krc_rdma_write_spin_wait_for_msg_tail(struct rdma_cm_id *rdma_cm_id, volatile struct msg_header *msg)
-{
-	const unsigned timeout = 1700000; // 10 sec
-	int ret = KREON_SUCCESS;
-
-	while (1) {
-		for (uint32_t i = 0; get_receive_field(msg) != TU_RDMA_REGULAR_MSG && i < timeout; ++i)
-			;
-
-		if (get_receive_field(msg) == TU_RDMA_REGULAR_MSG)
-			break;
-
-		if (_krc_send_heartbeat(rdma_cm_id) == KREON_FAILURE)
-			return KREON_FAILURE;
-	}
-	return ret;
-}
-
-static int krc_rdma_write_spin_wait_for_header_tail(struct rdma_cm_id *rdma_cm_id, volatile struct msg_header *msg)
-{
-	const unsigned timeout = 1700000; // 10 sec
-	int ret = KREON_SUCCESS;
-
-	while (1) {
-		for (uint32_t i = 0; msg->receive != TU_RDMA_REGULAR_MSG && i < timeout; ++i)
-			;
-
-		if (msg->receive == TU_RDMA_REGULAR_MSG)
-			break;
-
-		if (_krc_send_heartbeat(rdma_cm_id) == KREON_FAILURE)
-			return KREON_FAILURE;
-	}
-	return ret;
-}
-
-static int krc_wait_for_message_reply(struct msg_header *req, struct connection_rdma *conn)
-{
-	volatile struct msg_header *rep_header =
-		(struct msg_header *)&conn->recv_circular_buf->memory_region[req->offset_reply_in_recv_buffer];
-	//Spin until header arrives
-	if (krc_rdma_write_spin_wait_for_header_tail(conn->rdma_cm_id, rep_header) == KREON_FAILURE)
-		return KREON_FAILURE;
-
-	assert(rep_header->receive == TU_RDMA_REGULAR_MSG);
-	if (!rep_header->payload_length)
-		return KREON_SUCCESS;
-
-	//Spin until payload arrives
-	if (krc_rdma_write_spin_wait_for_msg_tail(conn->rdma_cm_id, rep_header) == KREON_FAILURE)
-		return KREON_FAILURE;
-
-	return KREON_SUCCESS;
-}
-
 /**
  * This function fills the fields of a request msg header, related to its reply
  * request must know where its reply is at the recv circular buffer in order to be able to reply to that specific offset
@@ -202,12 +133,12 @@ static void send_no_op_operation(connection_rdma *conn)
 	no_op_request->reply_length_in_recv_buffer =
 		sizeof(msg_header) + no_op_reply->payload_length + no_op_reply->padding_and_tail_size;
 
-	if (__send_rdma_message(conn, no_op_request, NULL) != KREON_SUCCESS) {
+	if (__send_rdma_message(conn, no_op_request, NULL) != TEBIS_SUCCESS) {
 		log_fatal("failed to send message");
 		_exit(EXIT_FAILURE);
 	}
 
-	if (krc_wait_for_message_reply(no_op_request, conn) != KREON_SUCCESS) {
+	if (teb_spin_for_message_reply(no_op_request, conn) != TEBIS_SUCCESS) {
 		log_fatal("Kreon dataserver is down!");
 		_exit(EXIT_FAILURE);
 	}
@@ -364,19 +295,19 @@ static krc_ret_code krc_internal_put(uint32_t key_size, void *key, uint32_t val_
 		sizeof(msg_header) + rep_header->payload_length + rep_header->padding_and_tail_size;
 	//log_info("put rep length %lu", req_header->reply_length);
 	/*send the actual put*/
-	if (client_send_rdma_message(conn, req_header) != KREON_SUCCESS) {
+	if (client_send_rdma_message(conn, req_header) != TEBIS_SUCCESS) {
 		log_warn("failed to send message");
 		_exit(EXIT_FAILURE);
 	}
 
-	if (krc_wait_for_message_reply(req_header, conn) != KREON_SUCCESS) {
+	if (krc_wait_for_message_reply(req_header, conn) != TEBIS_SUCCESS) {
 		log_fatal("Kreon dataserver is down!");
 		_exit(EXIT_FAILURE);
 	}
 
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
 	/*check ret code*/
-	if (put_rep->status != KREON_SUCCESS) {
+	if (put_rep->status != TEBIS_SUCCESS) {
 		log_fatal("put operation failed for key %s", (char *)key);
 		_exit(EXIT_FAILURE);
 	}
@@ -416,7 +347,7 @@ krc_value *krc_get(uint32_t key_size, void *key, uint32_t reply_length, uint32_t
 	req_header->request_message_local_addr = req_header;
 	rep_header->receive = 0;
 	/*sent the request*/
-	if (send_rdma_message_busy_wait(conn, req_header) != KREON_SUCCESS) {
+	if (send_rdma_message_busy_wait(conn, req_header) != TEBIS_SUCCESS) {
 		log_warn("failed to send message");
 		exit(EXIT_FAILURE);
 	}
@@ -484,7 +415,7 @@ krc_value *krc_get_with_offset(uint32_t key_size, void *key, uint32_t offset, ui
 	req_header->request_message_local_addr = req_header;
 	rep_header->receive = 0;
 	/*sent the request*/
-	if (send_rdma_message_busy_wait(conn, req_header) != KREON_SUCCESS) {
+	if (send_rdma_message_busy_wait(conn, req_header) != TEBIS_SUCCESS) {
 		log_warn("failed to send message");
 		exit(EXIT_FAILURE);
 	}
@@ -568,12 +499,12 @@ krc_ret_code krc_get(uint32_t key_size, char *key, char **buffer, uint32_t *size
 		rep_header->receive = 0;
 
 		/*send the request*/
-		if (client_send_rdma_message(conn, req_header) != KREON_SUCCESS) {
+		if (client_send_rdma_message(conn, req_header) != TEBIS_SUCCESS) {
 			log_warn("failed to send message");
 			_exit(EXIT_FAILURE);
 		}
 		// Wait for the reply
-		if (krc_wait_for_message_reply(req_header, conn) != KREON_SUCCESS) {
+		if (krc_wait_for_message_reply(req_header, conn) != TEBIS_SUCCESS) {
 			log_fatal("Kreon dataserver is down!");
 			_exit(EXIT_FAILURE);
 		}
@@ -648,12 +579,12 @@ uint8_t krc_exists(uint32_t key_size, void *key)
 	fill_request_msg(conn, req_header, rep_header);
 	rep_header->receive = 0;
 	/*send the request*/
-	if (client_send_rdma_message(conn, req_header) != KREON_SUCCESS) {
+	if (client_send_rdma_message(conn, req_header) != TEBIS_SUCCESS) {
 		log_warn("failed to send message");
 		_exit(EXIT_FAILURE);
 	}
 	// Wait for the reply to arrive
-	if (krc_wait_for_message_reply(req_header, conn) != KREON_SUCCESS) {
+	if (krc_wait_for_message_reply(req_header, conn) != TEBIS_SUCCESS) {
 		log_fatal("Kreon dataserver is down!");
 		_exit(EXIT_FAILURE);
 	}
@@ -693,7 +624,7 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 	req_header->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, req_header);
 	rep_header->receive = 0;
 	/*sent the request*/
-	if (send_rdma_message_busy_wait(conn, req_header) != KREON_SUCCESS) {
+	if (send_rdma_message_busy_wait(conn, req_header) != TEBIS_SUCCESS) {
 		log_warn("failed to send message");
 		_exit(EXIT_FAILURE);
 	}
@@ -709,7 +640,7 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 
 	msg_delete_rep *del_rep = (msg_delete_rep *)((uint64_t)rep_header + sizeof(msg_header));
 
-	if (del_rep->status != KREON_SUCCESS) {
+	if (del_rep->status != TEBIS_SUCCESS) {
 		log_warn("Key %s not found!", (char *)key);
 		error_code = KRC_KEY_NOT_FOUND;
 	} else
@@ -872,12 +803,12 @@ uint8_t krc_scan_get_next(krc_scannerp sp, char **key, size_t *keySize, char **v
 			rep_header->receive = 0;
 
 			/*send the request*/
-			if (client_send_rdma_message(conn, req_header) != KREON_SUCCESS) {
+			if (client_send_rdma_message(conn, req_header) != TEBIS_SUCCESS) {
 				log_warn("failed to send message");
 				_exit(EXIT_FAILURE);
 			}
 			// Wait for the reply to arrive
-			if (krc_wait_for_message_reply(req_header, conn) != KREON_SUCCESS) {
+			if (krc_wait_for_message_reply(req_header, conn) != TEBIS_SUCCESS) {
 				log_fatal("Kreon dataserver is down!");
 				_exit(EXIT_FAILURE);
 			}
@@ -1038,7 +969,7 @@ void krc_scan_close(krc_scannerp sp)
 }
 
 static unsigned operation_count = 0, replies_arrived = 0;
-krc_ret_code krc_close()
+krc_ret_code krc_close(void)
 {
 	if (rep_checker_stat == KRC_REPLY_CHECKER_RUNNING) {
 		/*wait to flush outstanding requests from all queues*/
@@ -1097,7 +1028,7 @@ static inline void krc_send_async_request(struct connection_rdma *conn, struct m
 	__sync_fetch_and_add(&spinner->outstanding_requests, 1);
 	__sync_fetch_and_add(&operation_count, 1);
 	req->reply->receive = UINT8_MAX;
-	if (__send_rdma_message(req->conn, req->request, NULL) != KREON_SUCCESS) {
+	if (__send_rdma_message(req->conn, req->request, NULL) != TEBIS_SUCCESS) {
 		log_fatal("failed to send message");
 		_exit(EXIT_FAILURE);
 	}
@@ -1119,13 +1050,15 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, seed);
 
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
-	uint32_t req_size = calculate_put_msg_size(key_size, val_size);
+	uint32_t req_size = calculate_put_request_msg_size(key_size, val_size);
 	//log_debug("key_size val_size is <%u,%u>, total put_msg size is %u", key_size, val_size, req_size);
 	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
-	struct put_msg_data put_data = { .key_size = key_size, .key = key, .value_size = val_size, .value = value };
-	create_put_msg(put_data, req_header);
+	struct msg_data_put_request put_data = {
+		.key_size = key_size, .key = key, .value_size = val_size, .value = value
+	};
+	create_put_request_msg(put_data, req_header);
 
 	/*Now the reply part*/
 	put_rep = (msg_put_rep *)((uint64_t)rep_header + sizeof(msg_header));
@@ -1181,7 +1114,7 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 		req->start_time = now;
 	}
 	size_t elapsed_sec = now.tv_sec - req->start_time.tv_sec;
-	if (elapsed_sec > 1000000L && _krc_send_heartbeat(req->conn->rdma_cm_id) != KREON_SUCCESS) {
+	if (elapsed_sec > 1000000L && teb_send_heartbeat(req->conn->rdma_cm_id) != TEBIS_SUCCESS) {
 		log_fatal("Kreon dataserver has failed!");
 		_exit(EXIT_FAILURE);
 	}
@@ -1209,18 +1142,18 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		break;
 	}
 	case GET_REPLY: {
-		struct msg_get_rep *msg_rep = (struct msg_get_rep *)((uint64_t)req->reply + sizeof(struct msg_header));
-		if (!msg_rep->key_found) {
+		struct msg_data_get_reply msg_rep = get_reply_get_msg_data(req->reply);
+		if (!msg_rep.key_found) {
 			log_fatal("Key not found!");
 			_exit(EXIT_FAILURE);
 		}
 
-		if (msg_rep->value_size > *req->buf_size) {
+		if (msg_rep.value_size > (int32_t)*req->buf_size) {
 			log_fatal("Reply larger than buffer!");
 			_exit(EXIT_FAILURE);
 		}
-		memcpy(req->buf, msg_rep->value, msg_rep->value_size);
-		*req->buf_size = msg_rep->value_size;
+		memcpy(req->buf, msg_rep.value, msg_rep.value_size);
+		*req->buf_size = msg_rep.value_size;
 		break;
 	}
 	default:
@@ -1292,17 +1225,16 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	globals_append_trace_file(key_size, key, 0, NULL, TEB_GET);
 #endif
 
-	uint32_t reply_size = *buf_size;
-	uint32_t request_size = calculate_get_msg_size(key_size);
+	uint32_t reply_size = calculate_get_reply_msg_size(*buf_size);
+	uint32_t request_size = calculate_get_request_msg_size(key_size);
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 	/*get the rdma communication buffers*/
 	struct msg_header *req_header = NULL;
 	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY,
-			  sizeof(msg_get_rep) + reply_size);
+	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY, reply_size);
 
-	create_get_msg(key_size, key, reply_size, (char *)req_header + sizeof(struct msg_header));
+	create_get_request_msg(key_size, key, *buf_size, (char *)req_header + sizeof(struct msg_header));
 
 	fill_request_msg(conn, req_header, rep_header);
 	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);

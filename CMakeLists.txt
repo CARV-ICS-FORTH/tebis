@@ -1,5 +1,3 @@
-# File: CMakeLists.txt Author: Michalis Vardoulakis <mvard@ics.forth.gr>
-
 cmake_minimum_required(VERSION 3.11.0)
 project(tebis VERSION 1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -41,6 +39,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
                                                "MinSizeRel" "RelWithDebInfo")
 endif()
 
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+  add_definitions(-DRELEASE_BUILD_TYPE)
+else()
+  add_definitions(-DDEBUG_BUILD_TYPE)
+endif()
+
+add_definitions(-DBUILD_TYPE=${default_build_type})
+
 include(GNUInstallDirs)
 include(cmake_utils/mkfs.cmake.in)
 include(cmake_utils/ycsb.cmake.in)
@@ -55,12 +61,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   log # Recommendation: Stick close to the original name.
   GIT_REPOSITORY https://github.com/innerout/log.c.git
-  GIT_PROGRESS TRUE)
-
-FetchContent_Declare(
-  libbloom # Recommendation: Stick close to the original name.
-  GIT_REPOSITORY https://github.com/innerout/libbloom
-  GIT_TAG cmake)
+  GIT_PROGRESS YES)
 
 FetchContent_Declare(
   cmake-scripts
@@ -77,7 +78,7 @@ else()
   FetchContent_Declare(
     parallax
     GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-    GIT_TAG tebis_kv_format)
+    GIT_TAG teboparallax_synced)
 
 endif(USE_FORKED_PARALLAX)
 unset(USE_FORKED_PARALLAX CACHE)
@@ -101,7 +102,6 @@ set(cjson_LIBRARY ${BINARY_DIR}/libcjson.a)
 
 FetchContent_GetProperties(uthash)
 FetchContent_GetProperties(log)
-FetchContent_GetProperties(libbloom)
 FetchContent_GetProperties(cjson)
 FetchContent_GetProperties(cmake-scripts)
 FetchContent_GetProperties(parallax)
@@ -119,14 +119,6 @@ if(NOT log_POPULATED)
   add_subdirectory(${log_SOURCE_DIR} ${log_BINARY_DIR})
   include_directories(${log_SOURCE_DIR}/include)
   FetchContent_MakeAvailable(log)
-endif()
-
-if(NOT libbloom_POPULATED)
-  FetchContent_Populate(libbloom)
-  add_subdirectory(${libbloom_SOURCE_DIR} ${libbloom_BINARY_DIR})
-  include_directories(${libbloom_SOURCE_DIR}/include)
-  message(${libbloom_SOURCE_DIR}/include)
-  FetchContent_MakeAvailable(libbloom)
 endif()
 
 if(NOT cmake-scripts_POPULATED)
@@ -187,18 +179,18 @@ if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
   string(APPEND CMAKE_CXX_FLAGS APPEND " -w")
 endif()
 string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
-string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
+string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic -g")
 string(
   APPEND
   CMAKE_C_FLAGS
   " -Wstrict-prototypes -Wall -Werror -Wextra -pedantic -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
-string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
+string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer -g")
 string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
 set(CMAKE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -Werror -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+    "-Wl,-no-as-needed -lm -Werror -g -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
 )
 
 add_subdirectory(tebis_rdma)
@@ -206,6 +198,7 @@ add_subdirectory(tebis_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
+file(COPY "benches" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 if(tebis_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR

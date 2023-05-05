@@ -1,38 +1,37 @@
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#define _GNU_SOURCE
+
 #include "rdma.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/simple_concurrent_list.h"
 #include "memory_region_pool.h"
+#include <assert.h>
+#include <errno.h>
 #include <infiniband/verbs.h>
+#include <log.h>
+#include <pthread.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_verbs.h>
-#include <stdint.h>
-#define _GNU_SOURCE /* See feature_test_macros(7) */
-#include <arpa/inet.h>
-#include <assert.h>
-#include <ctype.h>
-#include <errno.h>
-#include <getopt.h>
-#include <immintrin.h>
-#include <limits.h>
-#include <malloc.h>
-#include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <unistd.h>
-
-#include "../tebis_server/djb2.h"
-#include "../tebis_server/globals.h"
-#include "../tebis_server/messages.h"
-#include "../tebis_server/metadata.h"
-#include "get_clock.h"
-
-#include "../utilities/circular_buffer.h"
-#include "../utilities/simple_concurrent_list.h"
-#include "../utilities/spin_loop.h"
-#include <log.h>
 
 #define CTX_HANDSHAKE_SUCCESS 0
 #define CTX_HANDSHAKE_FAILURE 1
@@ -196,9 +195,9 @@ int client_send_rdma_message(struct connection_rdma *conn, struct msg_header *ms
 	client_rdma_init_message_context(&msg_ctx, msg);
 	msg_ctx.on_completion_callback = on_completion_client;
 	int ret = __send_rdma_message(conn, msg, &msg_ctx);
-	if (ret == KREON_SUCCESS) {
+	if (ret == TEBIS_SUCCESS) {
 		if (!client_rdma_send_message_success(&msg_ctx))
-			ret = KREON_FAILURE;
+			ret = TEBIS_FAILURE;
 	}
 	return ret;
 }
@@ -231,6 +230,16 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		case REPLICA_INDEX_GET_BUFFER_REP:
 		case REPLICA_INDEX_FLUSH_REQ:
 		case REPLICA_INDEX_FLUSH_REP:
+		case BUILD_INDEX_COMPACT_L0_REQUEST:
+		case BUILD_INDEX_COMPACT_L0_REPLY:
+		case FLUSH_L0_REQUEST:
+		case FLUSH_L0_REPLY:
+		case CLOSE_COMPACTION_REQUEST:
+		case CLOSE_COMPACTION_REPLY:
+		case REPLICA_INDEX_SWAP_LEVELS_REQUEST:
+		case REPLICA_INDEX_SWAP_LEVELS_REPLY:
+		case REPLICA_FLUSH_MEDIUM_LOG_REQUEST:
+		case REPLICA_FLUSH_MEDIUM_LOG_REP:
 		case PUT_REPLY:
 		case GET_REPLY:
 		case NO_OP:
@@ -271,7 +280,7 @@ int __send_rdma_message(connection_rdma *conn, msg_header *msg, struct rdma_mess
 		}
 	}
 
-	return KREON_SUCCESS;
+	return TEBIS_SUCCESS;
 }
 
 void client_free_rpc_pair(connection_rdma *conn, volatile msg_header *reply)
@@ -412,10 +421,9 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 		log_fatal("rdma_connect failed: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
-	conn->peer_mr = (struct ibv_mr *)malloc(sizeof(struct ibv_mr));
-	memset(conn->peer_mr, 0, sizeof(struct ibv_mr));
+	conn->peer_mr = calloc(1UL, sizeof(struct ibv_mr));
 	struct ibv_mr *recv_mr = rdma_reg_msgs(rdma_cm_id, conn->peer_mr, sizeof(struct ibv_mr));
-	struct rdma_message_context msg_ctx;
+	struct rdma_message_context msg_ctx = { 0 };
 	client_rdma_init_message_context(&msg_ctx, NULL);
 	msg_ctx.on_completion_callback = on_completion_client;
 	ret = rdma_post_recv(rdma_cm_id, &msg_ctx, conn->peer_mr, sizeof(struct ibv_mr), recv_mr);
@@ -455,7 +463,9 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 	conn->rendezvous = conn->rdma_memory_regions->remote_memory_buffer;
 
 	// Block until server sends memory region information
-	sem_wait(&msg_ctx.wait_for_completion);
+	//sem_wait(&msg_ctx.wait_for_completion);
+	while (0 == msg_ctx.completion_flag)
+		;
 	rdma_dereg_mr(send_mr);
 	rdma_dereg_mr(recv_mr);
 
@@ -466,7 +476,7 @@ void crdma_init_client_connection_list_hosts(connection_rdma *conn, char **hosts
 			     send_mr, 0);
 	if (ret) {
 		log_fatal("rdma_post_send: %s", strerror(errno));
-		exit(EXIT_FAILURE);
+		_exit(EXIT_FAILURE);
 	}
 
 	conn->status = CONNECTION_OK;
@@ -716,7 +726,7 @@ void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connect
 	/*remove connection from its corresponding list*/
 	pthread_mutex_lock(&channel->spin_list_conn_lock[conn->responsible_spinning_thread_id]);
 	mark_element_for_deletion_from_simple_concurrent_list(conn->responsible_spin_list, conn);
-	DPRINT("\t * Removed connection form list successfully :-) \n");
+	log_debug("\t * Removed connection form list successfully :-) \n");
 	channel->nconn--;
 	channel->nused--;
 	pthread_mutex_unlock(&channel->spin_list_conn_lock[conn->responsible_spinning_thread_id]);
@@ -726,14 +736,15 @@ void close_and_free_RDMA_connection(struct channel_rdma *channel, struct connect
 	rdma_destroy_id(conn->rdma_cm_id);
 
 	free(conn);
-	DPRINT("\t*Destroyed RDMA connection successfully\n");
+	log_debug("\t*Destroyed RDMA connection successfully\n");
 }
 
 void client_rdma_init_message_context(struct rdma_message_context *msg_ctx, struct msg_header *msg)
 {
 	memset(msg_ctx, 0, sizeof(*msg_ctx));
 	msg_ctx->msg = msg;
-	sem_init(&msg_ctx->wait_for_completion, 0, 0);
+	//sem_init(&msg_ctx->wait_for_completion, 0, 0);
+	msg_ctx->completion_flag = 0;
 	msg_ctx->__is_initialized = 1;
 }
 
@@ -742,26 +753,14 @@ bool client_rdma_send_message_success(struct rdma_message_context *msg_ctx)
 	assert(msg_ctx->__is_initialized == 1);
 	// on_completion_client will post this semaphore once it gets to the CQE for
 	// this message
-	sem_wait(&msg_ctx->wait_for_completion);
+	//sem_wait(&msg_ctx->wait_for_completion);
+	while (0 == msg_ctx->completion_flag)
+		;
 	assert((uint64_t)msg_ctx == msg_ctx->wc.wr_id);
 	if (msg_ctx->wc.status == IBV_WC_SUCCESS)
 		return true;
 	else
 		return false;
-}
-
-static void error_to_string(int error)
-{
-	switch (error) {
-	case IBV_WC_REM_ACCESS_ERR:
-		log_fatal("Remote memory error");
-		break;
-	case IBV_WC_LOC_ACCESS_ERR:
-		log_fatal("Local memory error");
-		break;
-	default:
-		log_fatal("Unknown error code");
-	}
 }
 
 void *poll_cq(void *arg)
@@ -808,7 +807,7 @@ void *poll_cq(void *arg)
 						(struct rdma_message_context *)wc[i].wr_id;
 
 					if (wc[i].status != IBV_WC_SUCCESS) {
-						error_to_string(wc[i].status);
+						log_fatal("Reason %s", ibv_wc_status_str(wc[i].status));
 						assert(0);
 					}
 
@@ -881,7 +880,7 @@ void on_completion_server(struct rdma_message_context *msg_ctx)
 		log_fatal("conn type is %d %s\n", conn->type, ibv_wc_status_str(wc->status));
 		conn->status = CONNECTION_ERROR;
 		/*raise(SIGINT);*/
-		_exit(KREON_FAILURE);
+		_exit(TEBIS_FAILURE);
 	}
 
 	free(msg_ctx);
@@ -893,7 +892,8 @@ and posts the * semaphore used to block until the message's completion has
 arrived */
 void on_completion_client(struct rdma_message_context *msg_ctx)
 {
-	sem_post(&msg_ctx->wait_for_completion);
+	// sem_post(&msg_ctx->wait_for_completion);
+	msg_ctx->completion_flag = 1;
 }
 
 uint32_t calc_offset_in_send_and_target_recv_buffer(struct msg_header *msg, circular_buffer *c_buf)
