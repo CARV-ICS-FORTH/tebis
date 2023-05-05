@@ -95,7 +95,7 @@ def fetch_write_traffic(filename):
 def calculate_disk_read_traffic(diskstats_before, diskstats_after):
     read_traffic_before = fetch_read_traffic(diskstats_before)
     read_traffic_after = fetch_read_traffic(diskstats_after)
-    
+
     diff = int(read_traffic_after) - int(read_traffic_before)
     diff_bytes = diff * 512
     diff_in_MB = diff_bytes / 1024 / 1024
@@ -104,7 +104,7 @@ def calculate_disk_read_traffic(diskstats_before, diskstats_after):
 def calculate_disk_write_traffic(diskstats_before, diskstats_after):
     write_traffic_before = fetch_write_traffic(diskstats_before)
     write_traffic_after = fetch_write_traffic(diskstats_after)
-    
+
     diff = int(write_traffic_after) - int(write_traffic_before)
     diff_bytes = diff * 512
     diff_in_MB = diff_bytes / 1024 / 1024

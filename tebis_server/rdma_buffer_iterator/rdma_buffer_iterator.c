@@ -1,8 +1,22 @@
+// Copyright [2023] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "rdma_buffer_iterator.h"
 #include "btree/kv_pairs.h"
 #include "btree/lsn.h"
-#include "log.h"
 #include <assert.h>
+#include <log.h>
+#include <stdlib.h>
 
 struct rdma_buffer_iterator {
 	char *start_offt;
@@ -18,14 +32,15 @@ uint8_t rdma_buffer_iterator_is_in_bounds(rdma_buffer_iterator_t iter)
 	return 1;
 }
 
-rdma_buffer_iterator_t rdma_buffer_iterator_init(char *rdma_buffer_start_offt, int64_t rdma_buffer_size)
+rdma_buffer_iterator_t rdma_buffer_iterator_init(char *rdma_buffer_start_offt, int64_t rdma_buffer_size,
+						 char *iterator_starting_offt)
 {
 	assert(rdma_buffer_start_offt);
 	rdma_buffer_iterator_t iterator = calloc(1, sizeof(struct rdma_buffer_iterator));
 	iterator->rdma_buffer_size = rdma_buffer_size;
 	iterator->start_offt = rdma_buffer_start_offt;
 	iterator->end_offt = iterator->start_offt + rdma_buffer_size;
-	iterator->curr_offset = iterator->start_offt;
+	iterator->curr_offset = iterator_starting_offt;
 	return iterator;
 }
 

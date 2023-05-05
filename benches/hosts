@@ -1,6 +1,4 @@
-sith3.cluster.ics.forth.gr:8080 leader
-sith3.cluster.ics.forth.gr:8081 
-sith6.cluster.ics.forth.gr:8080 
-sith6.cluster.ics.forth.gr:8081 
-sith2.cluster.ics.forth.gr:8080 
-sith2.cluster.ics.forth.gr:8081 
+sith3.cluster.ics.forth.gr:8080:1
+sith3.cluster.ics.forth.gr:8081:1
+sith2.cluster.ics.forth.gr:8080:1
+sith2.cluster.ics.forth.gr:8081:1

@@ -11,9 +11,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # set_source_files_properties(test_scans.c PROPERTIES COMPILE_FLAGS "-O3")
 # set_source_files_properties(test_dirty_scans.c PROPERTIES COMPILE_FLAGS "-O3")
 
-# set_source_files_properties(test_krc_scans.c PROPERTIES COMPILE_FLAGS "-O3")
+set_source_files_properties(kadmos.c PROPERTIES COMPILE_FLAGS "-O3")
 
-# set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
+set(CMAKE_EXE_LINKER_FLAGS "-Wl,-no-as-needed -lm -lrt -pthread -lnuma")
 
 # add_executable(streaming_btree_test test_streaming_btree.c)
 # target_link_libraries(streaming_btree_test runtime)
@@ -31,6 +31,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ../utilities/circular_buffer.c)
 
 # target_link_libraries(test_circular_buffer log ${Zookeeper_LIBRARY})
+
+add_executable(
+  kadmos kadmos.c ../tebis_server/zk_utils.c ../tebis_server/master/command.c
+         ../tebis_server/master/mregion.c)
+target_link_libraries(kadmos log ${Zookeeper_LIBRARY})
 
 # Targets with dependencies to Zookeeper should be added in this if block
 # if(Zookeeper_LIBRARY) add_executable(test_krc_api test_krc_api.c)

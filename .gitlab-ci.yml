@@ -22,7 +22,7 @@ build_rdma_gcc:
   <<: *debug_build_commands
   script:
     - mkdir -p build;cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug
+    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DTEBIS_FORMAT=ON
     - make all
 
 build_rdma_clang:
@@ -30,7 +30,7 @@ build_rdma_clang:
   <<: *debug_build_commands
   script:
     - mkdir -p build;cd build
-    - cmake .. -DCMAKE_BUILD_TYPE=Debug
+    - cmake .. -DCMAKE_BUILD_TYPE=Debug -DTEBIS_FORMAT=ON
     - make all
 
 iwyu-report:

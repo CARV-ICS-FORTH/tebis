@@ -1,15 +1,35 @@
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #include "client_utils.h"
+#include "../tebis_rdma/rdma.h"
+#include "../tebis_server/conf.h"
+#include "../tebis_server/configurables.h"
 #include "../tebis_server/djb2.h"
 #include "../tebis_server/globals.h"
+#include "../tebis_server/messages.h"
+#include "../tebis_server/metadata.h"
 #include "../tebis_server/zk_utils.h"
 #include "../utilities/spin_loop.h"
 #include <cJSON.h>
 #include <log.h>
 #include <pthread.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <uthash.h>
+#include <zookeeper.jute.h>
 #include <zookeeper/zookeeper.h>
 
 static int cu_is_connected = 0;
@@ -99,14 +119,19 @@ exit:
 
 static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_name *dst)
 {
-	char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
+	// char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_SERVERS_PATH, KRM_SLASH, dataserver_name);
+	char *server_path = zku_concat_strings(4, KRM_ROOT_PATH, KRM_REGION_SERVERS_EPOCHS, KRM_SLASH, dataserver_name);
 	struct Stat stat;
 	char buffer[2048];
 	int buffer_len = 2048;
 	int rc = zoo_get(cu_zh, server_path, 0, buffer, &buffer_len, &stat);
-	free(server_path);
-	if (rc != ZOK)
+
+	if (rc != ZOK) {
+		log_warn("Oops where is info about this guy: %s", server_path);
+		free(server_path);
 		return -1;
+	}
+	free(server_path);
 
 	// Parse json string with server's krm_server_name struct
 	cJSON *server_json = cJSON_ParseWithLength(buffer, buffer_len);
@@ -125,12 +150,13 @@ static int cu_fetch_zk_server_entry(char *dataserver_name, struct krm_server_nam
 		cJSON_Delete(server_json);
 		return -1;
 	}
-	strncpy(dst->hostname, cJSON_GetStringValue(hostname), KRM_HOSTNAME_SIZE);
-	strncpy(dst->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved), KRM_HOSTNAME_SIZE);
+	strncpy(dst->hostname, cJSON_GetStringValue(hostname), strlen(cJSON_GetStringValue(hostname)));
+	strncpy(dst->kreon_ds_hostname, cJSON_GetStringValue(dataserver_name_retrieved),
+		strlen(cJSON_GetStringValue(dataserver_name_retrieved)));
 	dst->kreon_ds_hostname_length = strlen(cJSON_GetStringValue(dataserver_name_retrieved));
-	strncpy(dst->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), KRM_MAX_RDMA_IP_SIZE);
+	strncpy(dst->RDMA_IP_addr, cJSON_GetStringValue(rdma_ip), strlen(cJSON_GetStringValue(rdma_ip)));
 	dst->epoch = cJSON_GetNumberValue(epoch);
-	strncpy(dst->kreon_leader, cJSON_GetStringValue(leader), KRM_HOSTNAME_SIZE);
+	strncpy(dst->kreon_leader, cJSON_GetStringValue(leader), strlen(cJSON_GetStringValue(leader)));
 
 	cJSON_Delete(server_json);
 	return 0;
@@ -194,25 +220,26 @@ static uint8_t cu_fetch_region_table(void)
 			log_fatal("Failed to parse json string of region %s", region_path);
 			_exit(EXIT_FAILURE);
 		}
-		struct krm_region r;
-		strncpy(r.id, cJSON_GetStringValue(id), KRM_MAX_REGION_ID_SIZE);
-		strncpy(r.min_key, cJSON_GetStringValue(min_key), KRM_MAX_KEY_SIZE);
-		if (!strcmp(r.min_key, "-oo")) {
-			memset(r.min_key, 0, KRM_MAX_KEY_SIZE);
-			r.min_key_size = 1;
+		struct krm_region region = { 0 };
+		strncpy(region.id, cJSON_GetStringValue(id), strlen(cJSON_GetStringValue(id)));
+		strncpy(region.min_key, cJSON_GetStringValue(min_key), strlen(cJSON_GetStringValue(min_key)));
+		if (!strcmp(region.min_key, "-oo")) {
+			memset(region.min_key, 0, KRM_MAX_KEY_SIZE);
+			region.min_key_size = 1;
 		} else {
-			r.min_key_size = strlen(r.min_key);
+			region.min_key_size = strlen(region.min_key);
 		}
-		strncpy(r.max_key, cJSON_GetStringValue(max_key), KRM_MAX_KEY_SIZE);
-		r.max_key_size = strlen(r.max_key);
-		r.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
+		strncpy(region.max_key, cJSON_GetStringValue(max_key), strlen(cJSON_GetStringValue(max_key)));
+		region.max_key_size = strlen(region.max_key);
+		region.stat = (enum krm_region_status)cJSON_GetNumberValue(status);
 		// Find primary's krm_server_name struct
-		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &r.primary) != 0) {
+		if (cu_fetch_zk_server_entry(cJSON_GetStringValue(primary), &region.primary) != 0) {
 			log_fatal("Could not fetch zookeeper entry for server %s", cJSON_GetStringValue(primary));
+			assert(0);
 			_exit(EXIT_FAILURE);
 		}
 
-		r_desc.region = r;
+		r_desc.region = region;
 		cu_insert_region(&client_regions, &r_desc);
 
 		cJSON_Delete(region_json);
@@ -320,6 +347,7 @@ retry:
 			if (rc) {
 				log_warn("Failed to refresh server info %s from zookeeper",
 					 r_desc->region.primary.kreon_ds_hostname);
+				_exit(EXIT_FAILURE);
 				pthread_mutex_unlock(&client_regions.conn_lock);
 				return NULL;
 			}

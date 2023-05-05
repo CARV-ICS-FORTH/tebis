@@ -39,14 +39,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
                                                "MinSizeRel" "RelWithDebInfo")
 endif()
 
-
 if(CMAKE_BUILD_TYPE MATCHES "Release")
   add_definitions(-DRELEASE_BUILD_TYPE)
 else()
   add_definitions(-DDEBUG_BUILD_TYPE)
 endif()
 
-add_definitions( -DBUILD_TYPE=${default_build_type} )
+add_definitions(-DBUILD_TYPE=${default_build_type})
 
 include(GNUInstallDirs)
 include(cmake_utils/mkfs.cmake.in)
@@ -180,18 +179,18 @@ if("${DISABLE_ALL_WARNINGS}" STREQUAL ON)
   string(APPEND CMAKE_CXX_FLAGS APPEND " -w")
 endif()
 string(APPEND CMAKE_C_FLAGS_RELEASE " -std=gnu11 -Wall -fpic")
-string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic")
+string(APPEND CMAKE_C_FLAGS_DEBUG " -fno-omit-frame-pointer -fpic -g")
 string(
   APPEND
   CMAKE_C_FLAGS
   " -Wstrict-prototypes -Wall -Werror -Wextra -pedantic -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
 string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
-string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer")
+string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer -g")
 string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
 set(CMAKE_LINKER_FLAGS
-    "-Wl,-no-as-needed -lm -Werror -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
+    "-Wl,-no-as-needed -lm -Werror -g -pthread -lnuma -libverbs -lrdmacm -lrt ${CMAKE_LINKER_FLAGS}"
 )
 
 add_subdirectory(tebis_rdma)

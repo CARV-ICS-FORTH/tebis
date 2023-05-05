@@ -1,26 +1,37 @@
+// Copyright [2019] [FORTH-ICS]
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 #define _GNU_SOURCE
 #include "tebis_rdma_client.h"
-#include "client_utils.h"
-#include <assert.h>
-#include <immintrin.h>
-#include <infiniband/verbs.h>
-#include <pthread.h>
-#include <rdma/rdma_verbs.h>
-#include <semaphore.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-#include <time.h>
-//#include "../kreon_server/client_regions.h"
 #include "../common/common.h"
 #include "../tebis_rdma/rdma.h"
+#include "../tebis_server/conf.h"
 #include "../tebis_server/djb2.h"
-#include "../tebis_server/globals.h"
 #include "../tebis_server/messages.h"
+#include "../utilities/circular_buffer.h"
+#include "../utilities/queue.h"
 #include "../utilities/spin_loop.h"
+#include "client_utils.h"
 #include "msg_factory.h"
+#include <assert.h>
 #include <log.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
 #define KRC_GET_SIZE (16 * 1024)
 
 static volatile uint32_t reply_checker_exit = 0;
@@ -958,7 +969,7 @@ void krc_scan_close(krc_scannerp sp)
 }
 
 static unsigned operation_count = 0, replies_arrived = 0;
-krc_ret_code krc_close()
+krc_ret_code krc_close(void)
 {
 	if (rep_checker_stat == KRC_REPLY_CHECKER_RUNNING) {
 		/*wait to flush outstanding requests from all queues*/

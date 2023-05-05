@@ -6,8 +6,8 @@
 #   Default data size: 1 KB records (10 fields, 100 bytes each, plus key)
 #   Request distribution: zipfian
 #
-recordcount=20000000
-operationcount=20000000
+recordcount=12500000
+operationcount=12500000
 
 workload=com.yahoo.ycsb.workloads.CoreWorkload
 
@@ -28,5 +28,5 @@ status.interval=1
 #start concurrently. zookeeper host:port is the address of the zookeeper server
 #if distributedsetup is set to false it is a normal local ycsb
 distributedsetup=false
-numofclients=7
+numofclients=8
 zookeeper=127.0.0.1:2181

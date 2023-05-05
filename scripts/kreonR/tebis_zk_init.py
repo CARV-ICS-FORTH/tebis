@@ -7,13 +7,20 @@ from kazoo.client import KazooState
 from kazoo.security import OPEN_ACL_UNSAFE
 import json
 
-ROOT_PATH = "/kreonR"
+ROOT_PATH = "/tebis"
+REGION_LOG_PATH = ROOT_PATH + "/region_log"
 SERVERS_PATH = ROOT_PATH + "/servers"
+REGION_SERVERS_EPOCHS = ROOT_PATH + "/region_servers_epochs"
 MAILBOX_PATH = ROOT_PATH + "/mailbox"
+LEADER_MAILBOX_PATH = MAILBOX_PATH + "/leader"
 REGIONS_PATH = ROOT_PATH + "/regions"
 LEADER_PATH = ROOT_PATH + "/leader"
 ALIVE_LEADER_PATH = ROOT_PATH + "/alive_leader"
-ALIVE_DATASERVERS_PATH = ROOT_PATH + "/alive_dataservers"
+ALIVE_DATASERVERS_PATH = ROOT_PATH + "/alive_region_servers"
+# new staff
+ELECTIONS_PATH = ROOT_PATH + "/elections"
+LEADER_CLOCK_PATH = ROOT_PATH + "/clock"
+TRANSACTIONS = ROOT_PATH + "/transactions"
 
 
 def parse_arguments():
@@ -61,10 +68,24 @@ def main():
     # kreonR
     # |- servers mailbox regions leader alive_leader alive_dataservers
     zk.create(ROOT_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(REGION_LOG_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(SERVERS_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(REGION_SERVERS_EPOCHS, acl=OPEN_ACL_UNSAFE)
     zk.create(MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(LEADER_MAILBOX_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(REGIONS_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(LEADER_PATH, acl=OPEN_ACL_UNSAFE)
+    zk.create(ELECTIONS_PATH, acl=OPEN_ACL_UNSAFE)
+    clock_info = {
+        "clock": 0,
+    }
+    zk.create(
+        LEADER_CLOCK_PATH,
+        acl=OPEN_ACL_UNSAFE,
+        value=bytes(json.dumps(clock_info), "utf8"),
+    )
+
+    zk.create(TRANSACTIONS, acl=OPEN_ACL_UNSAFE)
     zk.create(ALIVE_LEADER_PATH, acl=OPEN_ACL_UNSAFE)
     zk.create(ALIVE_DATASERVERS_PATH, acl=OPEN_ACL_UNSAFE)
 
@@ -88,17 +109,17 @@ def main():
             elif len(cols) == 2:
                 assert cols[1].lower() == "leader"
                 leader = cols[0]
-            zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
+            #zk.create(MAILBOX_PATH + "/" + cols[0], acl=OPEN_ACL_UNSAFE)
             # build/kreon_server/create_server_node zk_host cols[0]
             server_path = SERVERS_PATH + "/" + cols[0]
-            hostname, port = cols[0].split(":")
+            hostname, port, epoch = cols[0].split(":")
             server_name = {
                 "hostname": hostname,
                 "port": port,
                 "dataserver_name": cols[0],
                 "leader": "",
                 "RDMA_IP_addr": "",
-                "epoch": 0,
+                "epoch": epoch,
             }
             zk.create(
                 server_path,
