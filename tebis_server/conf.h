@@ -15,4 +15,4 @@ enum tebis_op_status {
 
 #define TU_HEADER_SIZE (sizeof(struct msg_header))
 #define TU_TAIL_SIZE (sizeof(uint8_t))
-#define ENABLE_MONITORING 1
+#define ENABLE_MONITORING 0
