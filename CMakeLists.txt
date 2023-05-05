@@ -72,8 +72,8 @@ FetchContent_Declare(
 if(USE_FORKED_PARALLAX)
   FetchContent_Declare(
     parallax
-    GIT_REPOSITORY https://github.com/gesalous/parallax-1.git
-    GIT_TAG tebis_kv_format)
+    GIT_REPOSITORY git@github.com:CARV-ICS-FORTH/parallax.git
+    GIT_TAG teboparallax_synced)
 else()
   FetchContent_Declare(
     parallax
