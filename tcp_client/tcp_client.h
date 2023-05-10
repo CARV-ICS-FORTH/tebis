@@ -13,6 +13,7 @@ typedef void *cHandle;
 
 #define TT_DEFAULT_PORT 25565 // Minecraft's port
 
+void c_tcp_print_req(c_tcp_req req);
 /** TODO: add documentation */
 
 /**

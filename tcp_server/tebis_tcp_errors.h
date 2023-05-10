@@ -15,11 +15,17 @@
 #define TTE_WAIT_REP -2
 #define TTE_WAIT_REQ -3
 
+/**
+ * @brief Tebis-TCP Error (tterr)
+ *
+ */
 typedef enum {
 
 	TT_ERR_NONE = 0,
+	TT_ERR_GENERIC = -1,
 	TT_ERR_CONN_DROP = -2,
-	TT_ERR_
-} tterr_t;
+	TT_ERR_NOT_SUP = -3,
+	TT_ERR_ZERO_KEY = -4
+} tterr_e;
 
 #endif /** TEBIS_TCP_ERRORS_H **/

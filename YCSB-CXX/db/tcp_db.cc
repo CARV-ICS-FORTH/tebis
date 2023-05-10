@@ -16,10 +16,10 @@ extern "C" {
 #define SITH5_IP_56G "192.168.2.125"
 #define SITH6_IP_56G "192.168.2.126"
 
-#define SERVER_HOST SITH6_IP_56G
+#define DEFAULT_HOST SITH6_IP_56G
+#define DEFAULT_PORT "25565"
 
 using namespace ycsbc;
-
 /** PRIVATE **/
 
 int tcpDB::serialize_values(std::vector<KVPair> &values, char *buf)
@@ -49,8 +49,8 @@ size_t tcpDB::values_size(std::vector<KVPair> &values)
 
 tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 {
-	// this->chandle = NULL;
 	this->threads = stoi(props.GetProperty("threadcount", "1"));
+
 	printf("\033[1;31mthreads = %d\033[0m\n", this->threads);
 
 	if (!(this->chandle =
@@ -62,8 +62,12 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	this->req = (typeof(this->req))((char *)(this->chandle) + (this->threads * sizeof(*(this->chandle))));
 	this->rep = (typeof(this->rep))((char *)(this->req) + (this->threads * sizeof(*(this->req))));
 
+	const char *ip = props.GetProperty("serverip", DEFAULT_HOST).c_str();
+	const char *port = props.GetProperty("serverport", DEFAULT_PORT).c_str();
+
 	for (int i = 0; i < this->threads; ++i) {
-		if (chandle_init(this->chandle + i, SERVER_HOST, "25565") < 0) {
+
+		if (chandle_init(this->chandle + i, ip, port) < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
 		}
@@ -118,10 +122,6 @@ int tcpDB::Read(int id, const std::string &table, const std::string &key, const 
 		perror("c_tcp_recv_rep() failed >");
 		return -(EXIT_FAILURE);
 	}
-
-	generic_data_t val;
-
-	// c_tcp_rep_pop_value(rep, &val); // value="saloustros"
 
 	return YCSBDB::kOK;
 }
@@ -209,6 +209,7 @@ int tcpDB::Update(int id, const std::string &table, const std::string &key, std:
 
 int tcpDB::Insert(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
 {
+	// printf("\033[1;31mID = %d\033[0m\n", id);
 	c_tcp_req_factory(&this->req[id], REQ_PUT, key.size(), this->values_size(values));
 
 	char *__key = (char *)c_tcp_req_expose_key(this->req[id]);

@@ -13,6 +13,7 @@
 
 #include <assert.h>
 
+#include "btree/btree.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "plog.h"
@@ -26,6 +27,7 @@
 #include <linux/types.h>
 #include <log.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,8 +97,10 @@ struct worker {
 
 	__s32 epfd;
 	__s32 sock;
+	__u64 core;
 
 	struct buffer buf;
+	struct par_value pval;
 };
 
 /** server handle **/
@@ -134,14 +138,14 @@ _Thread_local const char *par_error_message_tl;
 
 #define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
-#define req_has_value(req) (req->type >= REQ_SCAN)
+#define req_has_value(req) (req->type > REQ_SCAN)
 
 #define infinite_loop_start() for (;;) {
 #define infinite_loop_end() }
 #define event_loop_start(index, limit) for (int index = 0; index < limit; ++index) {
 #define event_loop_end() }
-#define likely(expr) __builtin_expect((expr), 1L)
-#define unlikely(expr) __builtin_expect((expr), 0L)
+// #define likely(expr) expr //__builtin_expect((expr), 1L)
+// #define unlikely(expr) expr //__builtin_expect((expr), 0L)
 
 #define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->val.val_buffer)) = (__u8)(retc) // return code
 #define repbuf_hdr_write_total_size(rep, tsize) \
@@ -195,15 +199,6 @@ static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_r
 /**
  * @brief
  *
- * @param client_sock
- * @param rep
- * @return int
- */
-static inline long int $rep_send(int client_sock, struct tcp_rep *rep) __attribute__((nonnull(2), always_inline));
-
-/**
- * @brief
- *
  * @param arg
  * @return void*
  */
@@ -212,9 +207,26 @@ static void *$handle_events(void *arg) __attribute__((nonnull));
 static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull));
 
-/***** public functions *****/
+/**
+ * @brief
+ *
+ */
+static void $parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req) __attribute__((nonnull));
 
-void server_sig_handler_SIGINT(int signum);
+/**
+ * @brief
+ *
+ */
+static int $pin_thread_to_core(int core);
+
+/**
+ * @brief
+ *
+ * @param signum
+ */
+static void server_sig_handler_SIGINT(int signum);
+
+/***** public functions *****/
 
 int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *restrict *restrict argv)
 {
@@ -530,18 +542,22 @@ int server_spawn_threads(sHandle server_handle)
 
 	__u32 threads = shandle->opts->threadno;
 
-	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
+	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * (DEF_BUF_SIZE + KV_MAX_SIZE), PROT_READ | PROT_WRITE,
 						MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
 		return -(EXIT_FAILURE);
 
 	__u32 index;
 
 	for (index = 0U, --threads; index < threads; ++index) {
+		shandle->workers[index].core = index;
 		shandle->workers[index].sock = shandle->sock;
 		shandle->workers[index].epfd = shandle->epfd;
 		shandle->workers[index].par_handle = shandle->par_handle;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
-		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
+		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
+		shandle->workers[index].pval.val_size = 0U;
+		shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
+		shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
 
 		if (pthread_create(&shandle->workers[index].tid, NULL, $handle_events,
 				   shandle->workers + index)) { // one of the server threads failed!
@@ -562,19 +578,23 @@ int server_spawn_threads(sHandle server_handle)
 
 	// convert 'main()-thread' to 'server-thread'
 
+	shandle->workers[index].core = index;
 	shandle->workers[index].tid = pthread_self();
 	shandle->workers[index].sock = shandle->sock;
 	shandle->workers[index].epfd = shandle->epfd;
 	shandle->workers[index].par_handle = shandle->par_handle;
 	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
-	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
+	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
+	shandle->workers[index].pval.val_size = 0U;
+	shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
+	shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
 
 	$handle_events(shandle->workers + index);
 
 	return EXIT_SUCCESS;
 }
 
-/***** private functions (def) *****/
+/***** private functions *****/
 
 static int $handle_new_connection(struct worker *this)
 {
@@ -619,7 +639,7 @@ static int $handle_new_connection(struct worker *this)
 
 static int $client_version_check(int client_sock, struct worker *worker)
 {
-	__u32 version = be32toh(*((__u8 *)(worker->buf.mem) + 1UL));
+	__u32 version = be32toh(*((__u32 *)(worker->buf.mem + 1UL)));
 
 	/** TODO: send a respond to client that uses an outdated version */
 
@@ -645,59 +665,77 @@ static int $client_version_check(int client_sock, struct worker *worker)
 	return EXIT_SUCCESS;
 }
 
-static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static void $parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req)
 {
-	if (unlikely(recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0) < 0))
-		return -(EXIT_FAILURE);
+	// steps:
+	// 1. convert the header (in-buffer) from network-order to host-order*
+	// 2. save header's contents inside
+	// * parallax will use the same buffer using zero-copy!
+
+	/** GET: [ 1B type | 4B key-size | key ] **/
+	/** PUT: [ 1B type | 4B key-size | 4B value-size | key | value ] **/
+
+	*((__u32 *)(buf + 1UL)) = be32toh(*((__u32 *)(buf + 1UL)));
+	req->kv.key.size = *((__u32 *)(buf + 1UL));
+
+	if (req->type == REQ_PUT) {
+		*((__u32 *)(buf + 5UL)) = be32toh(*((__u32 *)(buf + 5UL)));
+		req->kv.value.size = *((__u32 *)(buf + 5UL));
+		req->kv.key.data = buf + 9UL;
+		req->kv.value.data = (buf + 9UL) + req->kv.key.size;
+	} else /* REQ_GET */ {
+		req->kv.value.size = 0U;
+		req->kv.value.data = NULL;
+		req->kv.key.data = buf + 5UL;
+	}
+}
+
+static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+{
+	__s64 ret = recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0);
+
+	if (unlikely(ret < 0))
+		return TT_ERR_GENERIC;
 
 	reqbuf_hdr_read_type(req, this->buf.mem);
 
 	if (unlikely(req_is_new_connection(req)))
 		return $client_version_check(client_sock, this);
 
-	if (unlikely(req_is_invalid(req))) {
-		errno = ENOTSUP;
-		return -(EXIT_FAILURE);
+	if (unlikely(req_is_invalid(req)))
+		return TT_ERR_NOT_SUP;
+
+	$parse_rest_of_header(this->buf.mem, req);
+
+	if (unlikely(!req->kv.key.size))
+		return TT_ERR_ZERO_KEY;
+
+	register __u64 off = ret;
+	register __s64 bytes_left =
+		(req->kv.key.size + req->kv.value.size + ((req->type == REQ_GET) ? 5UL : 9UL)) - ret;
+
+	while (bytes_left) {
+		ret = recv(client_sock, this->buf.mem + off, bytes_left, 0);
+
+		if (unlikely(ret < 0))
+			return TT_ERR_GENERIC;
+
+		off += ret;
+		bytes_left -= ret;
 	}
 
-	/* [1B type | 4B key-size | 4B value-size | key | value] */
-
-	reqbuf_net_to_host(this->buf.mem);
-	reqbuf_hdr_read_key_size(req, this->buf.mem);
-
-	if (unlikely(!req->kv.key.size)) {
-		errno = EBADMSG;
-		return -(EXIT_FAILURE);
-	}
-
-	reqbuf_hdr_read_payload_size(req, this->buf.mem);
-
-	req->kv.key.data = this->buf.mem + __reqhdr_size;
-
-	if (req_has_value(req))
-		req->kv.value.data = req->kv.key.data + req->kv.key.size;
-	else {
-		req->kv.value.data = NULL;
-		req->kv.value.size = 0U;
-		req->kv_splice_base.kv_splice->value_size = 0U;
-	}
-
-	return EXIT_SUCCESS;
-}
-
-static inline long int $rep_send(int client_sock, struct tcp_rep *rep)
-{
-	/** [1B retcode | 4B count | 4B total-size | <4B size, value> | ...] */
-
-	repbuf_hdr_write_retcode(rep, rep->retc);
-	repbuf_hdr_write_total_size(rep, rep->val.val_size);
-
-	return send(client_sock, rep->val.val_buffer, rep->val.val_size + TT_REPHDR_SIZE, 0);
+	return TT_ERR_NONE;
 }
 
 static void *$handle_events(void *arg)
 {
 	struct worker *this = arg;
+
+	if ($pin_thread_to_core(this->core) < 0) {
+		plog(PL_ERROR "$pin_thread_to_core(): %s", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
 	struct tcp_req req = { .kv_splice_base.is_tombstone = false,
 			       .kv_splice_base.cat = 100,
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
@@ -705,6 +743,7 @@ static void *$handle_events(void *arg)
 	int events;
 	int client_sock;
 	int event_bits;
+	int ret;
 
 	struct epoll_event rearm_event = { .events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT };
 	struct epoll_event epoll_events[EPOLL_MAX_EVENTS];
@@ -755,12 +794,18 @@ static void *$handle_events(void *arg)
 
 		/** request **/
 
-		if (unlikely($req_recv(this, client_sock, &req) < 0)) {
-			plog(PL_ERROR "$rep_recv(): %s", strerror(errno));
+		ret = $req_recv(this, client_sock, &req);
+
+		if (unlikely(ret == TT_ERR_CONN_DROP)) {
+			plog(PL_INFO "client terminated connection!\n");
 			goto client_error;
 		}
 
-		// printf("\033[1;31mreq-type = 0x%x\033[0m\n", req.type);
+		if (unlikely(ret == TT_ERR_GENERIC)) {
+			plog(PL_ERROR "$req_recv(): %s", strerror(errno));
+			goto client_error;
+		}
+
 		if (req.type == REQ_INIT_CONN)
 			continue;
 
@@ -795,48 +840,57 @@ static void *$handle_events(void *arg)
 
 static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-	struct par_value pval;
+	__u32 tmp;
 
 	switch (req->type) {
 	case REQ_GET:
 
-		par_get_serialized(this->par_handle, req->kv.key.data - 8UL, &pval,
-				   &par_error_message_tl); // '-8UL' temp solution
+		/** [ 1B type | 4B key-size | key ] **/
+
+		par_get_serialized(this->par_handle, req->kv.key.data - 4UL, &this->pval,
+				   &par_error_message_tl); // '-5UL' temp solution
 
 		if (par_error_message_tl) {
-			plog(PL_ERROR "par_get_serialized(): %s", par_error_message_tl);
-			return -(EXIT_FAILURE);
+			plog(PL_WARN "par_get_serialized(): %s", par_error_message_tl);
+
+			tmp = strlen(par_error_message_tl) + 1U;
+			*((__u8 *)(this->buf.mem)) = TT_REQ_FAIL;
+			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(tmp);
+
+			memcpy(this->buf.mem + TT_REPHDR_SIZE, par_error_message_tl, tmp);
+		} else {
+			*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
+			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(this->pval.val_size);
+
+			tmp = this->pval.val_size;
+			memcpy(this->buf.mem + TT_REPHDR_SIZE, this->pval.val_buffer, tmp);
 		}
 
-		*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
-		*((__u32 *)(this->buf.mem + 1UL)) = htobe32(pval.val_size);
-
-		/** TODO: for future parallax developer; zero-copy solution? */
-
-		memcpy(this->buf.mem + TT_REPHDR_SIZE, pval.val_buffer, pval.val_size);
-
-		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + pval.val_size, 0);
-
-		break;
+		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + tmp, 0);
 
 	case REQ_PUT:
+
+		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
 		par_put_serialized(this->par_handle, req->kv.key.data - 8UL, &par_error_message_tl,
 				   1); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
-			return -(EXIT_FAILURE);
-		}
+
+			tmp = strlen(par_error_message_tl);
+			*((__u8 *)(this->buf.mem)) = TT_REQ_FAIL;
+			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(tmp);
+
+			memcpy(this->buf.mem + TT_REPHDR_SIZE, par_error_message_tl, tmp);
+		} else
+			*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
 
 		/* PUT-req does not return a value */
 
-		*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
 		*((__u32 *)(this->buf.mem + 1UL)) = 0U;
 
 		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE, 0);
-
-		break;
 
 	default:
 
@@ -848,11 +902,22 @@ static int $par_handle_req(struct worker *restrict this, int client_sock, struct
 	return EXIT_SUCCESS;
 }
 
+static int $pin_thread_to_core(int core)
+{
+	cpu_set_t cpuset;
+
+	CPU_ZERO(&cpuset);
+	CPU_SET(core, &cpuset);
+
+	return sched_setaffinity(0, sizeof(cpuset), &cpuset);
+}
+
 /***** server signal handlers *****/
 
 void server_sig_handler_SIGINT(int signum)
 {
 	printf("received \033[1;31mSIGINT (%d)\033[0m --- printing thread-stats\n", signum);
+
 	server_handle_destroy(g_sh);
 	printf("\n");
 	_Exit(EXIT_SUCCESS);

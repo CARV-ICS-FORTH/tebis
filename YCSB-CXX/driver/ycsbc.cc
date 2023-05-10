@@ -433,7 +433,23 @@ void ParseCommandLine(int argc, const char *argv[], utils::Properties &props)
 	int argindex = 1;
 
 	while (argindex < argc && StrStartWith(argv[argindex], "-")) {
-		if (strcmp(argv[argindex], "-threads") == 0) {
+		if (strcmp(argv[argindex], "-ip") == 0) {
+			++argindex;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+			props.SetProperty("serverip", argv[argindex]);
+			++argindex;
+		} else if (strcmp(argv[argindex], "-port") == 0) {
+			++argindex;
+			if (argindex >= argc) {
+				UsageMessage(argv[0]);
+				exit(-1);
+			}
+			props.SetProperty("serverport", argv[argindex]);
+			++argindex;
+		} else if (strcmp(argv[argindex], "-threads") == 0) {
 			argindex++;
 			if (argindex >= argc) {
 				UsageMessage(argv[0]);

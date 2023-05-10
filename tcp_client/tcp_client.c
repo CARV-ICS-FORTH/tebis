@@ -22,7 +22,7 @@
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
-#define req_has_value(rtype) (rtype >= REQ_SCAN)
+#define req_has_value(rtype) (rtype > REQ_SCAN)
 #define is_req_invalid(rtype) ((__u32)(rtype) >= OPSNO)
 
 #define reqhdr_type_offset 0UL
@@ -67,10 +67,10 @@ struct client_handle {
 
 static int server_version_check(int ssock)
 {
-	uint8_t tbuf[5];
+	__u8 tbuf[5];
 
 	*tbuf = REQ_INIT_CONN;
-	*(tbuf + 1UL) = htobe32(TT_VERSION);
+	*((__u32 *)(tbuf + 1UL)) = htobe32(TT_VERSION);
 
 	if (send(ssock, tbuf, 5UL, 0) < 0) {
 		log_error("send()");
@@ -212,7 +212,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 			return NULL;
 		}
 
-		tsize = keysz + paysz + REQHDR_SIZE;
+		tsize = keysz + paysz + (req_has_value(rtype) ? __reqhdr_size : 5UL);
 
 		if (tsize > ireq->buf.bytes) {
 			tsize = ((tsize + sizeof(*ireq)) | 0xfffUL) + 1UL; // efficient page-alignment
@@ -228,7 +228,7 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 		}
 	} else /* create() new request */
 	{
-		tsize = ((REQHDR_SIZE + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
+		tsize = ((__reqhdr_size + sizeof(*ireq) + keysz + paysz) | 0xfffUL) + 1UL; // efficient page-align
 
 		if ((ireq = mmap(NULL, tsize, TT_MAP_PROT, TT_MAP_FLAGS, -1, 0UL)) == MAP_FAILED)
 			return NULL;
@@ -242,13 +242,11 @@ c_tcp_req c_tcp_req_factory(c_tcp_req *req, req_t rtype, size_t keysz, size_t pa
 	ireq->paysz = paysz;
 	ireq->type = rtype;
 
-	*((char *)(ireq->buf.mem + reqhdr_type_offset)) = rtype;
-	*((__u32 *)(ireq->buf.mem + reqhdr_keysz_offset)) = htobe32(keysz);
+	*((char *)(ireq->buf.mem)) = rtype;
+	*((__u32 *)(ireq->buf.mem + 1UL)) = htobe32(keysz);
 
 	if (req_has_value(rtype))
-		*((__u32 *)(ireq->buf.mem + reqhdr_valsz_offset)) = htobe32(paysz);
-	else
-		*((__u32 *)(ireq->buf.mem + reqhdr_valsz_offset)) = (__u32)(0U);
+		*((__u32 *)(ireq->buf.mem + 5UL)) = htobe32(paysz);
 
 	return ireq;
 }
@@ -291,7 +289,9 @@ void *c_tcp_req_expose_key(c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	return ireq->buf.mem + reqhdr_key_offset;
+	__u64 off = req_has_value(ireq->type) ? reqhdr_key_offset : 5UL;
+
+	return ireq->buf.mem + off;
 }
 
 void *c_tcp_req_expose_payload(c_tcp_req req)
@@ -308,10 +308,10 @@ void *c_tcp_req_expose_payload(c_tcp_req req)
 		return NULL;
 	}
 
-	// do not allow the exposure of payload's buffer (write) for
+	// do not allow the exposure of payload's buffer for
 	// requests [REQ_GET, REQ_DEL, REQ_EXISTS, REQ_SCAN]
 
-	if (ireq->type <= REQ_SCAN) {
+	if (!req_has_value(ireq->type)) {
 		errno = ENODATA;
 		return NULL;
 	}
@@ -418,12 +418,14 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 
 	/** END OF ERROR HANDLING **/
 
-	__u64 total_size = __reqhdr_size + ireq->keysz;
+	__u64 total_size = ireq->keysz;
 
 	if (req_has_value(ireq->type))
-		total_size += ireq->paysz;
+		total_size += __reqhdr_size + ireq->paysz; // PUThdr
+	else
+		total_size += 5UL; // temporary, GEThdr
 
-	if (send(ch->sock, ireq->buf.mem, total_size, 0) < 0)
+	if (send(ch->sock, ireq->buf.mem, total_size, 0) <= 0)
 		return -(EXIT_FAILURE);
 
 	ch->flags2 &= ~(CLHF_SND_REQ);
@@ -463,12 +465,6 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	irep->retc = *((uint8_t *)(irep->buf.mem));
 	irep->size = be32toh(*((__u32 *)(irep->buf.mem + 1UL)));
 
-	if (irep->retc != TT_REQ_SUCC) {
-		errno = ECANCELED;
-		ch->flags2 |= CLHF_SND_REQ;
-		return -(EXIT_FAILURE);
-	}
-
 	if (c_tcp_rep_update(&irep, irep->retc, irep->size) < 0) {
 		log_error("c_tcp_rep_update() failed! (size: %u)\n", irep->size);
 		return -(EXIT_FAILURE);
@@ -482,4 +478,17 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	ch->flags2 |= CLHF_SND_REQ;
 
 	return EXIT_SUCCESS;
+}
+
+char *printable_req[OPSNO] = { "REQ_GET", "REQ_DEL", "REQ_EXISTS", "REQ_SCAN", "REQ_PUT", "REQ_UPDATE" };
+
+void c_tcp_print_req(c_tcp_req req)
+{
+	struct internal_tcp_req *ireq = req;
+
+	printf("[ \033[1;31m%s\033[0m ]\n", printable_req[ireq->type]);
+	printf("  > ireq->keysz = %u\n"
+	       "  > ireq->paysz = %u\n",
+	       ireq->keysz, ireq->paysz);
+	printf("  > key = '%s'\n", ireq->buf.mem + __reqhdr_size);
 }

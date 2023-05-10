@@ -9,12 +9,12 @@
 #define TT_VERSION 0x01000000 //0x000.000.00 [major, minor, patch]
 #define TT_MAX_LISTEN 512
 #define TT_REPHDR_SIZE 5UL
-#define REQHDR_SIZE 9UL
 
 #define __x86_PAGESIZE (1UL << 12)
-#define DEF_BUF_SIZE (64UL * __x86_PAGESIZE) // 256KB
+#define DEF_BUF_SIZE (2UL * __x86_PAGESIZE) // 8KiB
 
 #define TT_REQ_SUCC 0 /** TODO: remove, use 'retcode_t' insread */
+#define TT_REQ_FAIL 1
 
 #define req_in_get_family(req) (((req)->type) < REQ_SCAN)
 
@@ -53,9 +53,8 @@ typedef enum {
 
 typedef enum {
 
-	/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
-
 	/** GET-request family **/
+	/** [ 1B type | 4B key-size | key ] **/
 
 	REQ_GET,
 	REQ_DEL,
@@ -63,6 +62,7 @@ typedef enum {
 	REQ_SCAN,
 
 	/** PUT-request family **/
+	/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
 	REQ_PUT,
 	REQ_PUT_IFEX,
@@ -85,13 +85,13 @@ typedef enum {
 
 } rep_t;
 
-struct tcp_req_hdr_reference {
+struct tcp_req_hdr_reference { /** TODO: rethink() */
 	__u8 type;
 
 	__u32 key_size;
 	__u32 value_size;
 
-	char key_value[];
+	char kv[];
 
 #define __reqhdr_size (9U)
 
