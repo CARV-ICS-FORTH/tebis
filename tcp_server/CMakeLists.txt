@@ -6,7 +6,7 @@ set(tiresias_tcp_EXEC "tiresias-tcp")
 set(BDB_PATH "/user/lib64/libdb-5.3.so")
 
 add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
-target_link_libraries(${tcp_server_EXEC} log m pthread rt parallax)
+target_link_libraries(${tcp_server_EXEC} parallax pthread m rt)
 
 install(
   TARGETS ${tcp_server_EXEC}

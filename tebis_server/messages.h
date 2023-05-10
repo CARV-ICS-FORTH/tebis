@@ -176,7 +176,7 @@ struct s2s_msg_flush_cmd_req {
 	uint64_t uuid;
 	char region_key[MSG_MAX_REGION_KEY_SIZE];
 	uint32_t region_key_size;
-	enum log_category log_type;
+	enum kv_category log_type;
 };
 
 struct s2s_msg_flush_cmd_rep {

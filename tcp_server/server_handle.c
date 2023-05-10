@@ -24,6 +24,7 @@
 #include <endian.h>
 #include <errno.h>
 // #include <linux/io_uring.h>
+#include "../tebis_server/djb2.h"
 #include <linux/types.h>
 #include <log.h>
 #include <pthread.h>
@@ -92,7 +93,8 @@ struct server_options {
 /** server worker **/
 
 struct worker {
-	par_handle par_handle;
+	// par_handle par_handle;
+	struct server_handle *shandle;
 	pthread_t tid;
 
 	__s32 epfd;
@@ -104,14 +106,14 @@ struct worker {
 };
 
 /** server handle **/
-
+#define MAX_PARALLAX_DBS 16
 struct server_handle {
 	__u16 magic_init_num;
 	__u32 flags;
 	__s32 sock;
 	__s32 epfd;
 
-	par_handle par_handle;
+	par_handle par_handle[MAX_PARALLAX_DBS];
 
 	struct server_options *opts;
 	struct worker *workers;
@@ -193,7 +195,7 @@ static int $handle_new_connection(struct worker *this) __attribute__((nonnull));
  * @param req
  * @return int
  */
-static int $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull(1, 3)));
 
 /**
@@ -457,7 +459,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	if (epoll_ctl(shandle->epfd, EPOLL_CTL_ADD, shandle->sock, &epev) < 0)
 		goto cleanup;
 
-	/** initialize paralalx **/
+	/** initialize parallax **/
 
 	const char *error_message = par_format((char *)(sconf->dbpath), MAX_REGIONS);
 
@@ -471,7 +473,15 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 				      .db_name = "tcp_server_par.db",
 				      .options = par_get_default_options() };
 
-	shandle->par_handle = par_open(&db_options, &error_message);
+	char actual_db_name[128] = { 0 };
+	for (int i = 0; i < MAX_PARALLAX_DBS; i++) {
+		if (snprintf(actual_db_name, sizeof(actual_db_name), "tcp_server_par_%d", i) < 0) {
+			plog(PL_ERROR, "Failed to construct db name");
+			return -(EXIT_FAILURE);
+		}
+		db_options.db_name = actual_db_name;
+		shandle->par_handle[i] = par_open(&db_options, &error_message);
+	}
 
 	if (error_message) {
 		plog(PL_ERROR "%s", error_message);
@@ -491,6 +501,15 @@ cleanup:
 	free(*server_handle);
 
 	return -(EXIT_FAILURE);
+}
+
+par_handle server_handle_get_db(struct server_handle *shandle, uint32_t key_size, char *key)
+{
+	uint64_t hash_id = djb2_hash((unsigned char *)key, key_size);
+
+	par_handle par_db = shandle->par_handle[hash_id % MAX_PARALLAX_DBS];
+	// printf("Chose db %lu\n", hash_id % MAX_PARALLAX_DBS);
+	return par_db;
 }
 
 int server_handle_destroy(sHandle server_handle)
@@ -552,7 +571,8 @@ int server_spawn_threads(sHandle server_handle)
 		shandle->workers[index].core = index;
 		shandle->workers[index].sock = shandle->sock;
 		shandle->workers[index].epfd = shandle->epfd;
-		shandle->workers[index].par_handle = shandle->par_handle;
+		// shandle->workers[index].par_handle = shandle->par_handle;
+		shandle->workers[index].shandle = shandle;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
 		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
 		shandle->workers[index].pval.val_size = 0U;
@@ -582,7 +602,8 @@ int server_spawn_threads(sHandle server_handle)
 	shandle->workers[index].tid = pthread_self();
 	shandle->workers[index].sock = shandle->sock;
 	shandle->workers[index].epfd = shandle->epfd;
-	shandle->workers[index].par_handle = shandle->par_handle;
+	// shandle->workers[index].par_handle = shandle->par_handle;
+	shandle->workers[index].shandle = shandle;
 	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
 	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
 	shandle->workers[index].pval.val_size = 0U;
@@ -840,14 +861,14 @@ static void *$handle_events(void *arg)
 
 static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-	__u32 tmp;
-
+	// struct par_value pval;
+	par_handle par_db = server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
+	__u32 tmp = 0;
 	switch (req->type) {
 	case REQ_GET:
 
 		/** [ 1B type | 4B key-size | key ] **/
-
-		par_get_serialized(this->par_handle, req->kv.key.data - 4UL, &this->pval,
+		par_get_serialized(par_db, req->kv.key.data - 4UL, &this->pval,
 				   &par_error_message_tl); // '-5UL' temp solution
 
 		if (par_error_message_tl) {
@@ -872,7 +893,7 @@ static int $par_handle_req(struct worker *restrict this, int client_sock, struct
 
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
-		par_put_serialized(this->par_handle, req->kv.key.data - 8UL, &par_error_message_tl,
+		par_put_serialized(par_db, req->kv.key.data - 8UL, &par_error_message_tl,
 				   1); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
