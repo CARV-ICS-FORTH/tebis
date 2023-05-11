@@ -164,7 +164,7 @@ _Thread_local const char *par_error_message_tl;
 #define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = *((__u32 *)(buf + __reqhdr_valsz_offset))
 
 #define __offsetof_struct(x, f) (__u64)(&((typeof(x) *)(0UL))->f) // gnu11
-#define __offsetof_struct$(s, f) (__u64)(&((s *)(0UL))->f)
+#define __offsetof_struct1(s, f) (__u64)(&((s *)(0UL))->f)
 
 #define MAX_REGIONS 128
 
@@ -177,7 +177,7 @@ _Thread_local const char *par_error_message_tl;
  * @param worker
  * @return int
  */
-static int $client_version_check(int client_sock, struct worker *worker) __attribute__((nonnull(2)));
+static int client_version_check(int client_sock, struct worker *worker) __attribute__((nonnull(2)));
 
 /**
  * @brief
@@ -185,7 +185,7 @@ static int $client_version_check(int client_sock, struct worker *worker) __attri
  * @param this
  * @return int
  */
-static int $handle_new_connection(struct worker *this) __attribute__((nonnull));
+static int handle_new_connection(struct worker *this) __attribute__((nonnull));
 
 /**
  * @brief
@@ -195,7 +195,7 @@ static int $handle_new_connection(struct worker *this) __attribute__((nonnull));
  * @param req
  * @return int
  */
-static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull(1, 3)));
 
 /**
@@ -204,22 +204,22 @@ static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct t
  * @param arg
  * @return void*
  */
-static void *$handle_events(void *arg) __attribute__((nonnull));
+static void *handle_events(void *arg) __attribute__((nonnull));
 
-static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static int par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull));
 
 /**
  * @brief
  *
  */
-static void $parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req) __attribute__((nonnull));
+static void parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req) __attribute__((nonnull));
 
 /**
  * @brief
  *
  */
-static int $pin_thread_to_core(int core);
+static int pin_thread_to_core(int core);
 
 /**
  * @brief
@@ -342,10 +342,10 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 
 			if (is_v6) {
 				opts->inaddr.ss_family = AF_INET6;
-				off = __offsetof_struct$(struct sockaddr_in6, sin6_addr);
+				off = __offsetof_struct1(struct sockaddr_in6, sin6_addr);
 			} else {
 				opts->inaddr.ss_family = AF_INET;
-				off = __offsetof_struct$(struct sockaddr_in, sin_addr);
+				off = __offsetof_struct1(struct sockaddr_in, sin_addr);
 			}
 
 			if (!inet_pton(opts->inaddr.ss_family, argv[i], (char *)(&opts->inaddr) + off)) {
@@ -579,7 +579,7 @@ int server_spawn_threads(sHandle server_handle)
 		shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
 		shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
 
-		if (pthread_create(&shandle->workers[index].tid, NULL, $handle_events,
+		if (pthread_create(&shandle->workers[index].tid, NULL, handle_events,
 				   shandle->workers + index)) { // one of the server threads failed!
 			__u32 tmp;
 
@@ -610,14 +610,14 @@ int server_spawn_threads(sHandle server_handle)
 	shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
 	shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
 
-	$handle_events(shandle->workers + index);
+	handle_events(shandle->workers + index);
 
 	return EXIT_SUCCESS;
 }
 
 /***** private functions *****/
 
-static int $handle_new_connection(struct worker *this)
+static int handle_new_connection(struct worker *this)
 {
 	struct sockaddr_storage caddr;
 	struct epoll_event epev;
@@ -634,7 +634,7 @@ static int $handle_new_connection(struct worker *this)
 	epev.events = EPOLLIN | EPOLLONESHOT;
 
 	if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
-		perror("$handle_new_connection::epoll_ctl(ADD)");
+		perror("handle_new_connection::epoll_ctl(ADD)");
 		close(tmpfd);
 
 		return -(EXIT_FAILURE);
@@ -658,7 +658,7 @@ static int $handle_new_connection(struct worker *this)
 	return EXIT_SUCCESS;
 }
 
-static int $client_version_check(int client_sock, struct worker *worker)
+static int client_version_check(int client_sock, struct worker *worker)
 {
 	__u32 version = be32toh(*((__u32 *)(worker->buf.mem + 1UL)));
 
@@ -670,7 +670,7 @@ static int $client_version_check(int client_sock, struct worker *worker)
 	}
 
 	if (send(client_sock, &version, sizeof(version), 0) < 0) {
-		perror("$client_version_check::send()\n");
+		perror("client_version_check::send()\n");
 
 		errno = ECONNABORTED;
 		return -(EXIT_FAILURE);
@@ -679,14 +679,14 @@ static int $client_version_check(int client_sock, struct worker *worker)
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = client_sock };
 
 	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, client_sock, &epev) < 0) {
-		perror("$client_version_check::epoll_ctl(MOD)");
+		perror("client_version_check::epoll_ctl(MOD)");
 		exit(EXIT_FAILURE);
 	}
 
 	return EXIT_SUCCESS;
 }
 
-static void $parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req)
+static void parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req)
 {
 	// steps:
 	// 1. convert the header (in-buffer) from network-order to host-order*
@@ -711,7 +711,7 @@ static void $parse_rest_of_header(char *restrict buf, struct tcp_req *restrict r
 	}
 }
 
-static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
 	__s64 ret = recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0);
 
@@ -721,12 +721,12 @@ static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct t
 	reqbuf_hdr_read_type(req, this->buf.mem);
 
 	if (unlikely(req_is_new_connection(req)))
-		return $client_version_check(client_sock, this);
+		return client_version_check(client_sock, this);
 
 	if (unlikely(req_is_invalid(req)))
 		return TT_ERR_NOT_SUP;
 
-	$parse_rest_of_header(this->buf.mem, req);
+	parse_rest_of_header(this->buf.mem, req);
 
 	if (unlikely(!req->kv.key.size))
 		return TT_ERR_ZERO_KEY;
@@ -748,12 +748,12 @@ static tterr_e $req_recv(struct worker *restrict this, int client_sock, struct t
 	return TT_ERR_NONE;
 }
 
-static void *$handle_events(void *arg)
+static void *handle_events(void *arg)
 {
 	struct worker *this = arg;
 
-	if ($pin_thread_to_core(this->core) < 0) {
-		plog(PL_ERROR "$pin_thread_to_core(): %s", strerror(errno));
+	if (pin_thread_to_core(this->core) < 0) {
+		plog(PL_ERROR "pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -805,8 +805,8 @@ static void *$handle_events(void *arg)
 		if (client_sock == this->sock) {
 			plog(PL_INFO "new connection");
 
-			if ($handle_new_connection(this) < 0)
-				plog(PL_ERROR "$handle_new_connection() failed: %s\n", strerror(errno));
+			if (handle_new_connection(this) < 0)
+				plog(PL_ERROR "handle_new_connection() failed: %s\n", strerror(errno));
 
 			continue;
 		}
@@ -815,7 +815,7 @@ static void *$handle_events(void *arg)
 
 		/** request **/
 
-		ret = $req_recv(this, client_sock, &req);
+		ret = req_recv(this, client_sock, &req);
 
 		if (unlikely(ret == TT_ERR_CONN_DROP)) {
 			plog(PL_INFO "client terminated connection!\n");
@@ -823,15 +823,15 @@ static void *$handle_events(void *arg)
 		}
 
 		if (unlikely(ret == TT_ERR_GENERIC)) {
-			plog(PL_ERROR "$req_recv(): %s", strerror(errno));
+			plog(PL_ERROR "req_recv(): %s", strerror(errno));
 			goto client_error;
 		}
 
 		if (req.type == REQ_INIT_CONN)
 			continue;
 
-		if (unlikely($par_handle_req(this, client_sock, &req) < 0L)) {
-			plog(PL_ERROR "$par_handle_req(): %s", strerror(errno));
+		if (unlikely(par_handle_req(this, client_sock, &req) < 0L)) {
+			plog(PL_ERROR "par_handle_req(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -859,7 +859,7 @@ static void *$handle_events(void *arg)
 	__builtin_unreachable();
 }
 
-static int $par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static int par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
 	// struct par_value pval;
 	par_handle par_db = server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
@@ -923,7 +923,7 @@ static int $par_handle_req(struct worker *restrict this, int client_sock, struct
 	return EXIT_SUCCESS;
 }
 
-static int $pin_thread_to_core(int core)
+static int pin_thread_to_core(int core)
 {
 	cpu_set_t cpuset;
 

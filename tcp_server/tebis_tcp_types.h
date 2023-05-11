@@ -106,9 +106,9 @@ struct tcp_rep_hdr_reference {
 
 } __attribute__((packed));
 
-#define __reqhdr_type_offset (__offsetof_struct$(struct tcp_req_hdr_reference, type))
-#define __reqhdr_keysz_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_size))
-#define __reqhdr_valsz_offset (__offsetof_struct$(struct tcp_req_hdr_reference, value_size))
+#define __reqhdr_type_offset (__offsetof_struct1(struct tcp_req_hdr_reference, type))
+#define __reqhdr_keysz_offset (__offsetof_struct1(struct tcp_req_hdr_reference, key_size))
+#define __reqhdr_valsz_offset (__offsetof_struct1(struct tcp_req_hdr_reference, value_size))
 // #define __reqhdr_key_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_value))
 // #define __reqhdr_val_offset (__offsetof_struct$(struct tcp_req_hdr_reference, key_size))
 
