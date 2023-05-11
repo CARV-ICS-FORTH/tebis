@@ -137,34 +137,17 @@ struct server_handle *g_sh; // CTRL-C
 _Thread_local const char *par_error_message_tl;
 
 #define reset_errno() errno = 0
+#define __offsetof_struct1(s, f) (__u64)(&((s *)(0UL))->f)
 
 #define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
-#define req_has_value(req) (req->type > REQ_SCAN)
 
 #define infinite_loop_start() for (;;) {
 #define infinite_loop_end() }
 #define event_loop_start(index, limit) for (int index = 0; index < limit; ++index) {
 #define event_loop_end() }
-// #define likely(expr) expr //__builtin_expect((expr), 1L)
-// #define unlikely(expr) expr //__builtin_expect((expr), 0L)
 
-#define repbuf_hdr_write_retcode(rep, retc) *((__u8 *)(rep->val.val_buffer)) = (__u8)(retc) // return code
-#define repbuf_hdr_write_total_size(rep, tsize) \
-	*((__u32 *)(rep->val.val_buffer + 9UL)) = htobe32((__u32)(tsize)) // total size
-
-#define reqbuf_net_to_host(buf)                                                                                 \
-	do {                                                                                                    \
-		*((__u32 *)(buf + __reqhdr_keysz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_keysz_offset))); \
-		*((__u32 *)(buf + __reqhdr_valsz_offset)) = be32toh(*((__u32 *)(buf + __reqhdr_valsz_offset))); \
-	} while (0)
-
-#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf + __reqhdr_type_offset))
-#define reqbuf_hdr_read_key_size(req, buf) req->kv.key.size = *((__u32 *)(buf + __reqhdr_keysz_offset))
-#define reqbuf_hdr_read_payload_size(req, buf) req->kv.value.size = *((__u32 *)(buf + __reqhdr_valsz_offset))
-
-#define __offsetof_struct(x, f) (__u64)(&((typeof(x) *)(0UL))->f) // gnu11
-#define __offsetof_struct1(s, f) (__u64)(&((s *)(0UL))->f)
+#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf))
 
 #define MAX_REGIONS 128
 
@@ -177,7 +160,7 @@ _Thread_local const char *par_error_message_tl;
  * @param worker
  * @return int
  */
-static int client_version_check(int client_sock, struct worker *worker) __attribute__((nonnull(2)));
+static int __client_version_check(int client_sock, struct worker *worker) __attribute__((nonnull(2)));
 
 /**
  * @brief
@@ -185,7 +168,7 @@ static int client_version_check(int client_sock, struct worker *worker) __attrib
  * @param this
  * @return int
  */
-static int handle_new_connection(struct worker *this) __attribute__((nonnull));
+static int __handle_new_connection(struct worker *this) __attribute__((nonnull));
 
 /**
  * @brief
@@ -195,7 +178,7 @@ static int handle_new_connection(struct worker *this) __attribute__((nonnull));
  * @param req
  * @return int
  */
-static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull(1, 3)));
 
 /**
@@ -204,22 +187,33 @@ static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tc
  * @param arg
  * @return void*
  */
-static void *handle_events(void *arg) __attribute__((nonnull));
+static void *__handle_events(void *arg) __attribute__((nonnull));
 
-static int par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static int __par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 	__attribute__((nonnull));
 
 /**
  * @brief
  *
  */
-static void parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req) __attribute__((nonnull));
+static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req) __attribute__((nonnull));
 
 /**
  * @brief
  *
  */
-static int pin_thread_to_core(int core);
+static int __pin_thread_to_core(int core);
+
+/**
+ * @brief
+ *
+ * @param server_handle
+ * @param key_size
+ * @param key
+ * @return par_handle
+ */
+static par_handle __server_handle_get_db(sHandle restrict server_handle, uint32_t key_size, char *restrict key)
+	__attribute__((nonnull));
 
 /**
  * @brief
@@ -503,15 +497,6 @@ cleanup:
 	return -(EXIT_FAILURE);
 }
 
-par_handle server_handle_get_db(struct server_handle *shandle, uint32_t key_size, char *key)
-{
-	uint64_t hash_id = djb2_hash((unsigned char *)key, key_size);
-
-	par_handle par_db = shandle->par_handle[hash_id % MAX_PARALLAX_DBS];
-	// printf("Chose db %lu\n", hash_id % MAX_PARALLAX_DBS);
-	return par_db;
-}
-
 int server_handle_destroy(sHandle server_handle)
 {
 	struct server_handle *shandle = server_handle;
@@ -537,8 +522,7 @@ int server_handle_destroy(sHandle server_handle)
 		return -(EXIT_FAILURE);
 	}
 
-	// free(shandle->opts); bug! out-of-bounds access!
-	// free(server_handle); bug! same!
+	free(server_handle);
 
 	return EXIT_SUCCESS;
 }
@@ -561,7 +545,7 @@ int server_spawn_threads(sHandle server_handle)
 
 	__u32 threads = shandle->opts->threadno;
 
-	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * (DEF_BUF_SIZE + KV_MAX_SIZE), PROT_READ | PROT_WRITE,
+	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
 						MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
 		return -(EXIT_FAILURE);
 
@@ -574,12 +558,13 @@ int server_spawn_threads(sHandle server_handle)
 		// shandle->workers[index].par_handle = shandle->par_handle;
 		shandle->workers[index].shandle = shandle;
 		shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
-		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
+		shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 		shandle->workers[index].pval.val_size = 0U;
 		shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
-		shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
+		shandle->workers[index].pval.val_buffer =
+			shandle->workers[index].buf.mem + TT_REPHDR_SIZE; // [!] one shared buffer per thread!
 
-		if (pthread_create(&shandle->workers[index].tid, NULL, handle_events,
+		if (pthread_create(&shandle->workers[index].tid, NULL, __handle_events,
 				   shandle->workers + index)) { // one of the server threads failed!
 			__u32 tmp;
 
@@ -605,19 +590,19 @@ int server_spawn_threads(sHandle server_handle)
 	// shandle->workers[index].par_handle = shandle->par_handle;
 	shandle->workers[index].shandle = shandle;
 	shandle->workers[index].buf.bytes = DEF_BUF_SIZE;
-	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * (DEF_BUF_SIZE + KV_MAX_SIZE));
+	shandle->workers[index].buf.mem = shandle->workers[0].buf.mem + (index * DEF_BUF_SIZE);
 	shandle->workers[index].pval.val_size = 0U;
 	shandle->workers[index].pval.val_buffer_size = KV_MAX_SIZE;
-	shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + DEF_BUF_SIZE;
+	shandle->workers[index].pval.val_buffer = shandle->workers[index].buf.mem + TT_REPHDR_SIZE;
 
-	handle_events(shandle->workers + index);
+	__handle_events(shandle->workers + index);
 
 	return EXIT_SUCCESS;
 }
 
 /***** private functions *****/
 
-static int handle_new_connection(struct worker *this)
+static int __handle_new_connection(struct worker *this)
 {
 	struct sockaddr_storage caddr;
 	struct epoll_event epev;
@@ -634,7 +619,7 @@ static int handle_new_connection(struct worker *this)
 	epev.events = EPOLLIN | EPOLLONESHOT;
 
 	if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
-		perror("handle_new_connection::epoll_ctl(ADD)");
+		perror("__handle_new_connection::epoll_ctl(ADD)");
 		close(tmpfd);
 
 		return -(EXIT_FAILURE);
@@ -658,7 +643,7 @@ static int handle_new_connection(struct worker *this)
 	return EXIT_SUCCESS;
 }
 
-static int client_version_check(int client_sock, struct worker *worker)
+static int __client_version_check(int client_sock, struct worker *worker)
 {
 	__u32 version = be32toh(*((__u32 *)(worker->buf.mem + 1UL)));
 
@@ -670,7 +655,7 @@ static int client_version_check(int client_sock, struct worker *worker)
 	}
 
 	if (send(client_sock, &version, sizeof(version), 0) < 0) {
-		perror("client_version_check::send()\n");
+		perror("__client_version_check::send()\n");
 
 		errno = ECONNABORTED;
 		return -(EXIT_FAILURE);
@@ -679,14 +664,14 @@ static int client_version_check(int client_sock, struct worker *worker)
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLONESHOT, .data.fd = client_sock };
 
 	if (epoll_ctl(worker->epfd, EPOLL_CTL_MOD, client_sock, &epev) < 0) {
-		perror("client_version_check::epoll_ctl(MOD)");
+		perror("__client_version_check::epoll_ctl(MOD)");
 		exit(EXIT_FAILURE);
 	}
 
 	return EXIT_SUCCESS;
 }
 
-static void parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req)
+static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict req)
 {
 	// steps:
 	// 1. convert the header (in-buffer) from network-order to host-order*
@@ -711,7 +696,7 @@ static void parse_rest_of_header(char *restrict buf, struct tcp_req *restrict re
 	}
 }
 
-static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
 	__s64 ret = recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0);
 
@@ -721,12 +706,12 @@ static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tc
 	reqbuf_hdr_read_type(req, this->buf.mem);
 
 	if (unlikely(req_is_new_connection(req)))
-		return client_version_check(client_sock, this);
+		return __client_version_check(client_sock, this);
 
 	if (unlikely(req_is_invalid(req)))
 		return TT_ERR_NOT_SUP;
 
-	parse_rest_of_header(this->buf.mem, req);
+	__parse_rest_of_header(this->buf.mem, req);
 
 	if (unlikely(!req->kv.key.size))
 		return TT_ERR_ZERO_KEY;
@@ -748,12 +733,12 @@ static tterr_e req_recv(struct worker *restrict this, int client_sock, struct tc
 	return TT_ERR_NONE;
 }
 
-static void *handle_events(void *arg)
+static void *__handle_events(void *arg)
 {
 	struct worker *this = arg;
 
-	if (pin_thread_to_core(this->core) < 0) {
-		plog(PL_ERROR "pin_thread_to_core(): %s", strerror(errno));
+	if (__pin_thread_to_core(this->core) < 0) {
+		plog(PL_ERROR "__pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
@@ -805,8 +790,8 @@ static void *handle_events(void *arg)
 		if (client_sock == this->sock) {
 			plog(PL_INFO "new connection");
 
-			if (handle_new_connection(this) < 0)
-				plog(PL_ERROR "handle_new_connection() failed: %s\n", strerror(errno));
+			if (__handle_new_connection(this) < 0)
+				plog(PL_ERROR "__handle_new_connection() failed: %s\n", strerror(errno));
 
 			continue;
 		}
@@ -815,7 +800,7 @@ static void *handle_events(void *arg)
 
 		/** request **/
 
-		ret = req_recv(this, client_sock, &req);
+		ret = __req_recv(this, client_sock, &req);
 
 		if (unlikely(ret == TT_ERR_CONN_DROP)) {
 			plog(PL_INFO "client terminated connection!\n");
@@ -823,15 +808,15 @@ static void *handle_events(void *arg)
 		}
 
 		if (unlikely(ret == TT_ERR_GENERIC)) {
-			plog(PL_ERROR "req_recv(): %s", strerror(errno));
+			plog(PL_ERROR "__req_recv(): %s", strerror(errno));
 			goto client_error;
 		}
 
 		if (req.type == REQ_INIT_CONN)
 			continue;
 
-		if (unlikely(par_handle_req(this, client_sock, &req) < 0L)) {
-			plog(PL_ERROR "par_handle_req(): %s", strerror(errno));
+		if (unlikely(__par_handle_req(this, client_sock, &req) < 0L)) {
+			plog(PL_ERROR "__par_handle_req(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -859,15 +844,26 @@ static void *handle_events(void *arg)
 	__builtin_unreachable();
 }
 
-static int par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+static par_handle __server_handle_get_db(sHandle restrict server_handle, uint32_t key_size, char *restrict key)
 {
-	// struct par_value pval;
-	par_handle par_db = server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
+	struct server_handle *shandle = server_handle;
+	uint64_t hash_id = djb2_hash((unsigned char *)key, key_size);
+
+	par_handle par_db = shandle->par_handle[hash_id % MAX_PARALLAX_DBS];
+	// printf("Chose db %lu\n", hash_id % MAX_PARALLAX_DBS);
+	return par_db;
+}
+
+static int __par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
+{
+	par_handle par_db = __server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
 	__u32 tmp = 0;
+
 	switch (req->type) {
 	case REQ_GET:
 
 		/** [ 1B type | 4B key-size | key ] **/
+
 		par_get_serialized(par_db, req->kv.key.data - 4UL, &this->pval,
 				   &par_error_message_tl); // '-5UL' temp solution
 
@@ -884,7 +880,7 @@ static int par_handle_req(struct worker *restrict this, int client_sock, struct 
 			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(this->pval.val_size);
 
 			tmp = this->pval.val_size;
-			memcpy(this->buf.mem + TT_REPHDR_SIZE, this->pval.val_buffer, tmp);
+			// memcpy(this->buf.mem + TT_REPHDR_SIZE, this->pval.val_buffer, tmp);
 		}
 
 		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + tmp, 0);
@@ -923,7 +919,7 @@ static int par_handle_req(struct worker *restrict this, int client_sock, struct 
 	return EXIT_SUCCESS;
 }
 
-static int pin_thread_to_core(int core)
+static int __pin_thread_to_core(int core)
 {
 	cpu_set_t cpuset;
 
@@ -937,7 +933,7 @@ static int pin_thread_to_core(int core)
 
 void server_sig_handler_SIGINT(int signum)
 {
-	printf("received \033[1;31mSIGINT (%d)\033[0m --- printing thread-stats\n", signum);
+	printf("received \033[1;31mSIGINT (%d)\033[0m\n", signum);
 
 	server_handle_destroy(g_sh);
 	printf("\n");
