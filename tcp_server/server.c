@@ -1,5 +1,6 @@
 #include "plog.h"
 #include "server_handle.h"
+#include <log.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -17,6 +18,16 @@
 
 int main(int argc, char **argv)
 {
+
+#ifdef DEBUG_BUILD_TYPE
+	log_set_level(LOG_DEBUG);
+#elif RELEASE_BUILD_TYPE
+	log_set_level(LOG_INFO);
+#else
+	log_fatal(
+		"Build must be in release or debug mode, if not please update the corresponding flags in /path/to/tebis/CMakeLists.txt");
+	_exit(EXIT_FAILURE);
+#endif
 	sConfig sconfig;
 	sHandle shandle;
 

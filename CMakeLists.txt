@@ -73,7 +73,6 @@ FetchContent_Declare(
   parallax
   GIT_REPOSITORY https://github.com/CARV-ICS-FORTH/parallax.git
   GIT_TAG teboparallax_synced)
-
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
 ExternalProject_Add(
