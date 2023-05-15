@@ -744,7 +744,7 @@ static void *__handle_events(void *arg)
 	}
 
 	struct tcp_req req = { .kv_splice_base.is_tombstone = false,
-			       .kv_splice_base.cat = 100,
+			       .kv_splice_base.kv_cat = 100,
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
 
 	int events;
@@ -891,7 +891,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
 		par_put_serialized(par_db, req->kv.key.data - 8UL, &par_error_message_tl,
-				   1); // '-8UL' temp solution
+				   1, 0); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
