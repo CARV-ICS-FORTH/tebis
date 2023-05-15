@@ -19,7 +19,7 @@
 extern "C" {
 #endif /* ifdef __cplusplus */
 #define CONF_CACHE_LINE 64
-#define UTILS_QUEUE_CAPACITY 128
+#define UTILS_QUEUE_CAPACITY 1024
 #define UTILS_QUEUE_MPMC
 /**
  * Internal structure of queue.
