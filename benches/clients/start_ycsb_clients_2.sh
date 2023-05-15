@@ -30,7 +30,7 @@ BARRIER=$WORKING_DIR/barrier.sh
 
 
 host=$(hostname)
-zk_host=sith6.cluster.ics.forth.gr
+zk_host=sith1.cluster.ics.forth.gr
 workload_folder=( load_a run_a run_b run_c run_d )
 # 2 NODES
 #insertstart=( 8000000 10000000 12000000 14000000 )
@@ -41,10 +41,10 @@ insertstart=( 50000000 62500000 75000000 87500000 ) # 100M 2 clients
 
 for i in $(seq ${#execution_plans[@]}); do
   sleep 6
-  jemalloc.sh $TEBIS_HOME/remote_build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host:2181 -w $workload_type &
-  jemalloc.sh $TEBIS_HOME/remote_build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[2]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-2 -zookeeper $zk_host:2181 -w $workload_type &
-  jemalloc.sh $TEBIS_HOME/remote_build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[3]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-3 -zookeeper $zk_host:2181 -w $workload_type &
-  jemalloc.sh $TEBIS_HOME/remote_build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[4]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-4 -zookeeper $zk_host:2181 -w $workload_type
+  jemalloc.sh $TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[1]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-1 -zookeeper $zk_host:2181 -w $workload_type &
+  jemalloc.sh $TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[2]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-2 -zookeeper $zk_host:2181 -w $workload_type &
+  jemalloc.sh $TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[3]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-3 -zookeeper $zk_host:2181 -w $workload_type &
+  jemalloc.sh $TEBIS_HOME/build/YCSB-CXX/ycsb-async-tebis -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -insertStart ${insertstart[4]} -threads 2 -dbnum 1 -o $WORKING_DIR/RESULTS_$host-4 -zookeeper $zk_host:2181 -w $workload_type
 	# Wait for all active YCSB clients to finish
   wait
 	$BARRIER 2 2
