@@ -604,14 +604,15 @@ int server_spawn_threads(sHandle server_handle)
 
 static int __handle_new_connection(struct worker *this)
 {
-	struct sockaddr_storage caddr;
-	struct epoll_event epev;
+	struct sockaddr_storage caddr = { 0 };
+	struct epoll_event epev = {0};
 
-	socklen_t socklen;
-	int tmpfd;
+	socklen_t socklen =  { 0 };
+	int tmpfd = 0;
 
 	if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) < 0) {
 		plog(PL_ERROR "%s", strerror(errno));
+		perror("Error is ");
 		return -(EXIT_FAILURE);
 	}
 
