@@ -15,6 +15,7 @@ namespace ycsbc
 
 class tcpDB : public YCSBDB {
     public:
+	std::string custom_workload;
 	tcpDB(int num, utils::Properties &props);
 
 	~tcpDB();
