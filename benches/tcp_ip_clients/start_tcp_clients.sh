@@ -43,7 +43,7 @@ for i in $(seq ${#execution_plans[@]}); do
 		#ssh to server and start the statistics
 		ssh ${tebis_hosts[$j]} nohup $WORKING_DIR/start_statistics.sh $WORKING_DIR/STATS-${tebis_hosts[$j]}/${workload_folder[$i]}
 	done
-	jemalloc.sh $TEBIS_HOME/build/YCSB-CXX/ycsb-tcp -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -ip 192.168.2.123 -port 8080 -threads 128 -o $WORKING_DIR/RESULTS_$host -w $workload_type 
+	jemalloc.sh $TEBIS_HOME/remote_build/YCSB-CXX/ycsb-tcp -e $WORKING_DIR/ycsb_execution_plans/${execution_plans[$i]} -ip 192.168.2.123 -port 8080 -threads 128 -o $WORKING_DIR/RESULTS_$host -w $workload_type 
 	# Wait for all active YCSB clients to finish
   wait
 	for tebis_host in ${tebis_hosts[@]}; do
