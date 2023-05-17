@@ -1,8 +1,8 @@
 #include "plog.h"
 #include "server_handle.h"
-#include <log.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <log.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +19,6 @@ uint32_t level0_size = 0;
 uint32_t GF = 0;
 int main(int argc, char **argv)
 {
-
 #ifdef DEBUG_BUILD_TYPE
 	log_set_level(LOG_DEBUG);
 #elif RELEASE_BUILD_TYPE

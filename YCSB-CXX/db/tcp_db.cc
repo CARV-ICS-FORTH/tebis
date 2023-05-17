@@ -1,9 +1,9 @@
 #include "tcp_db.hpp"
-#include "workload_gen.h"
 #include "db_factory.h"
-#include <iostream>
+#include "workload_gen.h"
 #include <cstring>
 #include <future>
+#include <iostream>
 #include <stdlib.h>
 
 extern "C" {
@@ -55,8 +55,8 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 
 	printf("\033[1;31mthreads = %d\033[0m\n", this->threads);
 
-	if (!(this->chandle =
-		       (void**)malloc(this->threads * (sizeof(*this->chandle) + sizeof(*this->req) + sizeof(*this->rep))))) {
+	if (!(this->chandle = (void **)malloc(this->threads *
+					      (sizeof(*this->chandle) + sizeof(*this->req) + sizeof(*this->rep))))) {
 		log_error("calloc() failed: %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
@@ -72,12 +72,11 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 	std::cout << "Workload Type: " << custom_workload << std::endl;
 	uint32_t ip_size = strlen(props.GetProperty("serverip", DEFAULT_HOST).c_str()) + 1;
 	uint32_t port_size = strlen(props.GetProperty("serverport", DEFAULT_PORT).c_str()) + 1;
-	char* ip = (char*)calloc(1, ip_size);
-	char* port = (char*)calloc(1, port_size);
+	char *ip = (char *)calloc(1, ip_size);
+	char *port = (char *)calloc(1, port_size);
 	memcpy(ip, props.GetProperty("serverip", DEFAULT_HOST).c_str(), ip_size);
 	memcpy(port, props.GetProperty("serverport", DEFAULT_PORT).c_str(), port_size);
 	for (int i = 0; i < this->threads; ++i) {
-
 		if (chandle_init(this->chandle + i, ip, port) < 0) {
 			perror("chandle_init()");
 			exit(EXIT_FAILURE);
@@ -220,32 +219,32 @@ int tcpDB::Update(int id, const std::string &table, const std::string &key, std:
 
 int tcpDB::Insert(int id, const std::string &table, const std::string &key, std::vector<KVPair> &values) /* OK */
 {
-		static std::string value3(1200, 'a');
-		static std::string value2(120, 'a');
-		static std::string value(10, 'a');
-		int y = kv_count++ % 10;
+	static std::string value3(1200, 'a');
+	static std::string value2(120, 'a');
+	static std::string value(10, 'a');
+	int y = kv_count++ % 10;
 
-		const char *value_buf = NULL;
-		uint32_t value_size = 0;
+	const char *value_buf = NULL;
+	uint32_t value_size = 0;
 
-		switch (choose_wl(custom_workload, y)) {
-		case 0:
-			value_size = value.size();
-			value_buf = value.c_str();
-			break;
-		case 1:
-			value_size = value2.size();
-			value_buf = value2.c_str();
-			break;
-		case 2:
-			value_size = value3.size();
-			value_buf = value3.c_str();
-			break;
-		default:
-			assert(0);
-			std::cout << "Got Unknown value" << std::endl;
-			exit(EXIT_FAILURE);
-		}
+	switch (choose_wl(custom_workload, y)) {
+	case 0:
+		value_size = value.size();
+		value_buf = value.c_str();
+		break;
+	case 1:
+		value_size = value2.size();
+		value_buf = value2.c_str();
+		break;
+	case 2:
+		value_size = value3.size();
+		value_buf = value3.c_str();
+		break;
+	default:
+		assert(0);
+		std::cout << "Got Unknown value" << std::endl;
+		exit(EXIT_FAILURE);
+	}
 	// printf("\033[1;31mID = %d\033[0m\n", id);
 	c_tcp_req_factory(&this->req[id], REQ_PUT, key.size(), value_size);
 

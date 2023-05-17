@@ -10,14 +10,14 @@
  */
 
 #define _GNU_SOURCE
-#include "parallax/structures.h"
-#include <assert.h>
+#include "server_handle.h"
 #include "btree/btree.h"
 #include "btree/gc.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
+#include "parallax/structures.h"
 #include "plog.h"
-#include "server_handle.h"
+#include <assert.h>
 
 #include <arpa/inet.h>
 
@@ -368,8 +368,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 			GF = strtoul(argv[i], NULL, 10);
 			++opt_sum;
 			opts->paddr = argv[i];
-		}
-		else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 		help:
 			fprintf(stdout, HELP_STRING);
 			free(opts);
@@ -480,7 +479,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 		plog(PL_ERROR "%s", error_message);
 		return -(EXIT_FAILURE);
 	}
-	disable_gc(); 
+	disable_gc();
 	par_db_options db_options = { .volume_name = (char *)(sconf->dbpath), // fuck clang_format!
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = "tcp_server_par.db",
@@ -626,9 +625,9 @@ int server_spawn_threads(sHandle server_handle)
 static int __handle_new_connection(struct worker *this)
 {
 	struct sockaddr_storage caddr = { 0 };
-	struct epoll_event epev = {0};
+	struct epoll_event epev = { 0 };
 
-	socklen_t socklen =  { 0 };
+	socklen_t socklen = { 0 };
 	int tmpfd = 0;
 
 	if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) < 0) {
@@ -764,10 +763,9 @@ static void *__handle_events(void *arg)
 		exit(EXIT_FAILURE);
 	}
 
-	uint32_t key_size = *(uint32_t*)(&this->buf.mem[1]);
-	uint32_t value_size = *(uint32_t*)(&this->buf.mem[5]);
-	struct tcp_req req = {
-			       .kv_splice_base.kv_cat = calculate_KV_category(key_size, value_size, insertOp),
+	uint32_t key_size = *(uint32_t *)(&this->buf.mem[1]);
+	uint32_t value_size = *(uint32_t *)(&this->buf.mem[5]);
+	struct tcp_req req = { .kv_splice_base.kv_cat = calculate_KV_category(key_size, value_size, insertOp),
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
 
 	int events;
@@ -912,15 +910,15 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 	case REQ_PUT:
 
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
-		;char* serialized_buf = req->kv.key.data - 8UL;
-		uint32_t key_size = *(uint32_t*)&serialized_buf[0];
-		uint32_t value_size = *(uint32_t*)&serialized_buf[4];
-		struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size,value_size,
-									      insertOp),
-					      .kv_type = KV_FORMAT,
-					      .kv_splice = (struct kv_splice*)serialized_buf };
-		par_put_serialized(par_db, (char*)&splice_base, &par_error_message_tl,
-				   true, false); // '-8UL' temp solution
+		;
+		char *serialized_buf = req->kv.key.data - 8UL;
+		uint32_t key_size = *(uint32_t *)&serialized_buf[0];
+		uint32_t value_size = *(uint32_t *)&serialized_buf[4];
+		struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
+						      .kv_type = KV_FORMAT,
+						      .kv_splice = (struct kv_splice *)serialized_buf };
+		par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
+				   false); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
