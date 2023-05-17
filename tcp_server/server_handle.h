@@ -11,6 +11,8 @@ typedef void *sConfig;
 typedef void *s_tcp_req;
 typedef void *s_tcp_rep;
 
+extern uint32_t level0_size;
+extern uint32_t GF;
 /**
  * @brief Initializes an sConfig Object according to the parameters passed to the program (argv). The
  * parameters @a argc and @a argv must be passed exactly as are, from the @b main()'s parameters,

@@ -1,7 +1,6 @@
 #include "plog.h"
 #include "server_handle.h"
 #include <log.h>
-
 #include <arpa/inet.h>
 #include <errno.h>
 #include <stdio.h>
@@ -16,6 +15,8 @@
 #define SITH5_IP_56G "192.168.2.125"
 #define SITH6_IP_56G "192.168.2.126"
 
+uint32_t level0_size = 0;
+uint32_t GF = 0;
 int main(int argc, char **argv)
 {
 

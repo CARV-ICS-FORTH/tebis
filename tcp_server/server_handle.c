@@ -10,10 +10,10 @@
  */
 
 #define _GNU_SOURCE
-
+#include "parallax/structures.h"
 #include <assert.h>
-
 #include "btree/btree.h"
+#include "btree/gc.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "plog.h"
@@ -65,7 +65,7 @@
 	" -f, --file <path>           specify the target (file of db) where parallax will run\n\n" \
 	" -h, --help     display this help and exit\n"                                             \
 	" -v, --version  display version information and exit\n"
-#define NECESSARY_OPTIONS 4
+#define NECESSARY_OPTIONS 6
 
 #define VERSION_STRING "tcp-server 0.1\n"
 
@@ -106,7 +106,7 @@ struct worker {
 };
 
 /** server handle **/
-#define MAX_PARALLAX_DBS 16
+#define MAX_PARALLAX_DBS 32
 struct server_handle {
 	__u16 magic_init_num;
 	__u32 flags;
@@ -349,7 +349,27 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 
 			++opt_sum;
 			opts->paddr = argv[i];
-		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+		} else if (!strcmp(argv[i], "-L0") || !strcmp(argv[i], "--L0_size")) {
+			if (!argv[++i]) {
+				fprintf(stderr, ERROR_STRING " tcp-server: no address provided!\n");
+				free(opts);
+				exit(EXIT_FAILURE);
+			}
+			level0_size = strtoul(argv[i], NULL, 10);
+			level0_size = MB(level0_size);
+			++opt_sum;
+			opts->paddr = argv[i];
+		} else if (!strcmp(argv[i], "-GF") || !strcmp(argv[i], "--GF")) {
+			if (!argv[++i]) {
+				fprintf(stderr, ERROR_STRING " tcp-server: no address provided!\n");
+				free(opts);
+				exit(EXIT_FAILURE);
+			}
+			GF = strtoul(argv[i], NULL, 10);
+			++opt_sum;
+			opts->paddr = argv[i];
+		}
+		else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 		help:
 			fprintf(stdout, HELP_STRING);
 			free(opts);
@@ -460,12 +480,14 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 		plog(PL_ERROR "%s", error_message);
 		return -(EXIT_FAILURE);
 	}
-
+	disable_gc(); 
 	par_db_options db_options = { .volume_name = (char *)(sconf->dbpath), // fuck clang_format!
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = "tcp_server_par.db",
 				      .options = par_get_default_options() };
-
+	db_options.options[LEVEL0_SIZE].value = level0_size;
+	db_options.options[GROWTH_FACTOR].value = GF;
+	log_info("Initializing tebis DBs with L0 %u and GF %u", level0_size, GF);
 	char actual_db_name[128] = { 0 };
 	for (int i = 0; i < MAX_PARALLAX_DBS; i++) {
 		if (snprintf(actual_db_name, sizeof(actual_db_name), "tcp_server_par_%d", i) < 0) {
@@ -742,8 +764,10 @@ static void *__handle_events(void *arg)
 		exit(EXIT_FAILURE);
 	}
 
+	uint32_t key_size = *(uint32_t*)(&this->buf.mem[1]);
+	uint32_t value_size = *(uint32_t*)(&this->buf.mem[5]);
 	struct tcp_req req = {
-			       .kv_splice_base.cat = 100,
+			       .kv_splice_base.kv_cat = calculate_KV_category(key_size, value_size, insertOp),
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
 
 	int events;
@@ -888,9 +912,15 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 	case REQ_PUT:
 
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
-
-		par_put_serialized(par_db, req->kv.key.data - 8UL, &par_error_message_tl,
-				   1); // '-8UL' temp solution
+		;char* serialized_buf = req->kv.key.data - 8UL;
+		uint32_t key_size = *(uint32_t*)&serialized_buf[0];
+		uint32_t value_size = *(uint32_t*)&serialized_buf[4];
+		struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size,value_size,
+									      insertOp),
+					      .kv_type = KV_FORMAT,
+					      .kv_splice = (struct kv_splice*)serialized_buf };
+		par_put_serialized(par_db, (char*)&splice_base, &par_error_message_tl,
+				   true, false); // '-8UL' temp solution
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
