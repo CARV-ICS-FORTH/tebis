@@ -1,7 +1,7 @@
 #ifndef TEBIS_TCP_TYPES_H
 #define TEBIS_TCP_TYPES_H
 
-#include <linux/types.h>
+//#include <linux/types.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -86,10 +86,10 @@ typedef enum {
 } rep_t;
 
 struct tcp_req_hdr_reference {
-	__u8 type;
+	uint8_t type;
 
-	__u32 key_size;
-	__u32 value_size;
+	uint32_t key_size;
+	uint32_t value_size;
 
 	char kv[];
 
@@ -98,9 +98,9 @@ struct tcp_req_hdr_reference {
 } __attribute__((packed));
 
 struct tcp_rep_hdr_reference {
-	__u8 return_code;
-	__u32 count;
-	__u32 total_size;
+	uint8_t return_code;
+	uint32_t count;
+	uint32_t total_size;
 
 	char values[]; // gnu11
 

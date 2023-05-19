@@ -3,8 +3,43 @@
 
 set(tcp_server_EXEC "tcp-server")
 
-add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
-target_link_libraries(${tcp_server_EXEC} parallax pthread m rt)
+# target_link_libraries(${tcp_server_EXEC} log m pthread rt parallax)
+if(NOT SGX_BUILD)
+  add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
+  target_link_libraries(${tcp_server_EXEC} pthread parallax m rt)
+else()
+  add_library(tcp_lib server.c plog.c server_handle.c)
+  target_link_libraries(tcp_lib pthread parallax rt openenclave::oe_includes)
+  add_executable(${tcp_server_EXEC} enc.c)
+  find_package(OpenEnclave CONFIG REQUIRED)
+  target_link_libraries(
+    ${tcp_server_EXEC}
+    openenclave::oeenclave
+    openenclave::ertdeventry # For production link against ertmeshentry
+    tcp_lib
+    openenclave::oehostfs
+    # pthread
+    parallax
+    log
+    yaml
+    libbloom
+    # m rt
+    openenclave::oe_includes)
+
+  # Generate key
+  add_custom_command(
+    OUTPUT private.pem public.pem
+    COMMAND openssl genrsa -out private.pem -3 3072
+    COMMAND openssl rsa -in private.pem -pubout -out public.pem)
+
+  add_custom_command(
+    OUTPUT enclave.signed
+    DEPENDS ${tcp_server_EXEC} enclave.conf private.pem
+    COMMAND openenclave::oesign sign -e $<TARGET_FILE:${tcp_server_EXEC}> -c
+            ${CMAKE_CURRENT_SOURCE_DIR}/enclave.conf -k private.pem)
+
+  add_custom_target(sign_tcp_server ALL DEPENDS enclave.signed)
+endif()
 
 install(
   TARGETS ${tcp_server_EXEC}

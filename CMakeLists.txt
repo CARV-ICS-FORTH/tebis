@@ -6,6 +6,8 @@ include(FetchContent)
 include(ExternalProject)
 include(cmake_utils/PreventInSouceBuilds.cmake.in)
 
+# if (SGX_BUILD) find_package(OpenEnclave CONFIG REQUIRED) endif()
+
 # Set a default build type if none was specified
 set(default_build_type "Release")
 if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
