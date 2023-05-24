@@ -10,6 +10,7 @@
  */
 
 #define _GNU_SOURCE
+#include <stdint.h>
 #include "server_handle.h"
 #include "btree/btree.h"
 #include "btree/kv_pairs.h"

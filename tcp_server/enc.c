@@ -1,0 +1,1 @@
+typedef int pedantic_complains_about_empty_translation_unit;
