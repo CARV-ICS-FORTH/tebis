@@ -10,7 +10,6 @@
  */
 
 #define _GNU_SOURCE
-#include <stdint.h>
 #include "server_handle.h"
 #include "btree/btree.h"
 #include "btree/kv_pairs.h"
@@ -205,7 +204,9 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
  * @brief
  *
  */
+#ifndef SGX
 static int __pin_thread_to_core(int core);
+#endif
 
 /**
  * @brief
@@ -516,7 +517,6 @@ cleanup:
 	close(shandle->sock);
 	close(shandle->epfd);
 	free(*server_handle);
-
 	return -(EXIT_FAILURE);
 }
 
@@ -627,10 +627,10 @@ int server_spawn_threads(sHandle server_handle)
 
 static int __handle_new_connection(struct worker *this)
 {
-	struct sockaddr_storage caddr = { 0 };
+	//struct sockaddr_storage caddr = { 0 };
 	struct epoll_event epev = { 0 };
 
-	socklen_t socklen = { 0 };
+	//socklen_t socklen = { 0 };
 	int tmpfd = 0;
 
 	if (fcntl(this->sock, F_SETFL, O_NONBLOCK) == -1) {
@@ -643,7 +643,7 @@ static int __handle_new_connection(struct worker *this)
 		return -(EXIT_FAILURE);
 	}
 
-	if ((tmpfd = accept(this->sock, (struct sockaddr *)(&caddr), &socklen)) < 0) {
+	if ((tmpfd = accept(this->sock, NULL, NULL)) < 0) {
 		plog(PL_ERROR "%s", strerror(errno));
 		perror("Error is ");
 		return -(EXIT_FAILURE);
@@ -770,14 +770,14 @@ static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct 
 static void *__handle_events(void *arg)
 {
 	struct worker *this = arg;
-
+#ifndef SGX
 	if (__pin_thread_to_core(this->core) < 0) {
 		plog(PL_ERROR "__pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+#endif
 
-	struct tcp_req req = { .kv_splice_base.kv_cat = 100,
-			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
+	struct tcp_req req = { 0 };
 
 	int events;
 	int client_sock;
@@ -958,6 +958,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 	return EXIT_SUCCESS;
 }
 
+#ifndef SGX
 static int __pin_thread_to_core(int core)
 {
 	cpu_set_t cpuset;
@@ -967,6 +968,7 @@ static int __pin_thread_to_core(int core)
 
 	return sched_setaffinity(0, sizeof(cpuset), &cpuset);
 }
+#endif
 
 /***** server signal handlers *****/
 

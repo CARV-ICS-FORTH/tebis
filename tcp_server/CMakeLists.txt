@@ -8,6 +8,7 @@ if(NOT SGX_BUILD)
   add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
   target_link_libraries(${tcp_server_EXEC} pthread parallax m rt)
 else()
+  add_compile_definitions(SGX)
   add_library(tcp_lib server.c plog.c server_handle.c)
   target_link_libraries(tcp_lib pthread parallax rt openenclave::oe_includes)
   add_executable(${tcp_server_EXEC} enc.c)
@@ -18,7 +19,7 @@ else()
     openenclave::ertdeventry # For production link against ertmeshentry
     tcp_lib
     openenclave::oehostfs
-    # pthread
+    openenclave::oehostsock
     parallax
     log
     yaml
