@@ -19,6 +19,18 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#ifdef SGX
+#include <openenclave/host.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
+#endif
+
+//I will need the common.h here as well
+
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
 
@@ -61,6 +73,9 @@ struct client_handle {
 	// __u64 x = &((struct client_handle *)(0)->destroy)
 
 	int sock;
+#ifdef SGX
+	SSL *ssl;
+#endif
 };
 
 /*****************************************************************************/
@@ -92,6 +107,49 @@ static int server_version_check(int ssock)
 	return EXIT_SUCCESS;
 }
 
+#ifdef SGX
+X509 *cert = NULL;
+SSL_CTX *ctx = NULL;
+
+void SSL_done(SSL *ssl, X509 *cert, SSL_CTX *ctx)
+{
+	if (ssl)
+		SSL_free(ssl);
+	if (cert)
+		X509_free(cert);
+	if (ctx)
+		SSL_CTX_free(ctx);
+}
+
+int verify_callback(int preverify_ok, X509_STORE_CTX *ctx);
+
+void ssl_init(void)
+{
+	OpenSSL_add_all_algorithms();
+	ERR_load_BIO_strings();
+	ERR_load_crypto_strings();
+	SSL_load_error_strings();
+
+	if (SSL_library_init() < 0) {
+		log_error("SSL library init error");
+		SSL_done(NULL, cert, ctx);
+	}
+
+	if ((ctx = SSL_CTX_new(SSLv23_client_method())) == NULL) {
+		printf("TLS client: unable to create a new SSL context\n");
+		SSL_done(NULL, cert, ctx);
+	}
+
+	// choose TLSv1.2 by excluding SSLv2, SSLv3 ,TLS 1.0 and TLS 1.1
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_1);
+	// specify the verify_callback for custom verification
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, &verify_callback);
+}
+#endif
+
 int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, const char *restrict port)
 {
 	if (!chandle || !addr || !port) {
@@ -105,11 +163,19 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	}
 
 	/** END OF ERROR HANDLING **/
-
 	struct client_handle *ch = *chandle;
 
 	ch->flags1 = 0U;
 	ch->flags2 = CLHF_SND_REQ;
+
+#ifdef SGX
+	ssl_init();
+	if ((ch->ssl = SSL_new(ctx)) == NULL) {
+		printf("Unable to create a new SSL connection state object\n");
+		SSL_done(ch->ssl, cert, ctx);
+		return -(EXIT_FAILURE);
+	}
+#endif
 
 	int retc;
 
@@ -125,11 +191,18 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 	if ((retc = getaddrinfo(addr, port, &hints, &res))) {
 		gai_strerror(retc);
+#ifdef SGX
+		SSL_done(ch->ssl, cert, ctx);
+#endif
 		return -(EXIT_FAILURE);
 	}
 
-	if (!res)
+	if (!res) {
+#ifdef SGX
+		SSL_done(ch->ssl, cert, ctx);
+#endif
 		return -(EXIT_FAILURE);
+	}
 
 	// char debug[INET6_ADDRSTRLEN];
 
@@ -149,10 +222,21 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 
 			ch->flags1 = MAGIC_INIT_NUM;
 			freeaddrinfo(res);
-
+#ifdef SGX
+			SSL_set_fd(ch->ssl, ch->sock);
+			int error;
+			if ((error = SSL_connect(ch->ssl)) != 1) {
+				log_error("Could not establish SSL session");
+				SSL_done(ch->ssl, cert, ctx);
+				return -(EXIT_FAILURE);
+			}
+			printf("TLS client: successfully established TLS channel:%s\n", SSL_get_version(ch->ssl));
+#endif
 			return EXIT_SUCCESS;
 		}
-
+#ifdef SGX
+		SSL_done(ch->ssl, cert, ctx);
+#endif
 		close(ch->sock);
 	}
 
@@ -183,8 +267,10 @@ int chandle_destroy(cHandle chandle)
 	shutdown(ch->sock, SHUT_WR); // sends FIN
 	recv(ch->sock, &discardbuf, sizeof(discardbuf), 0); // zero will be returned
 	close(ch->sock);
+#ifdef SGX
+	SSL_done(ch->ssl, cert, ctx);
+#endif
 	free(chandle);
-
 	return EXIT_SUCCESS;
 }
 
@@ -424,9 +510,20 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 		total_size += __reqhdr_size + ireq->paysz; // PUThdr
 	else
 		total_size += 5UL; // temporary, GEThdr
-
+#ifndef SGX
 	if (send(ch->sock, ireq->buf.mem, total_size, 0) <= 0)
 		return -(EXIT_FAILURE);
+#else
+	int bytes_written = 0;
+	while ((bytes_written = SSL_write(ch->ssl, ireq->buf.mem, (size_t)total_size)) <= 0) {
+		int error = SSL_get_error(ch->ssl, bytes_written);
+		if (error == SSL_ERROR_WANT_WRITE || error == SSL_ERROR_WANT_READ)
+			continue;
+		printf("TLS client failed! SSL_write returned %d\n", error);
+		SSL_done(ch->ssl, cert, ctx);
+		return -(EXIT_FAILURE);
+	}
+#endif
 
 	ch->flags2 &= ~(CLHF_SND_REQ);
 
@@ -456,11 +553,22 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 	/** END OF ERROR HANDLING **/
 
 	int64_t bytes_read;
-
+#ifndef SGX
 	if ((bytes_read = read(ch->sock, irep->buf.mem, TT_REPHDR_SIZE)) < 0) {
 		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}
+#else
+	while ((bytes_read = SSL_read(ch->ssl, irep->buf.mem, TT_REPHDR_SIZE)) <= 0) {
+		int error = SSL_get_error(ch->ssl, bytes_read);
+		if (error == SSL_ERROR_WANT_READ || SSL_ERROR_WANT_WRITE)
+			continue;
+		printf("TLS client failed! SSL_read returned error=%d\n", error);
+		log_error("SSL_read() returned: %ld", bytes_read);
+		SSL_done(ch->ssl, cert, ctx);
+		return -(EXIT_FAILURE);
+	}
+#endif
 
 	irep->retc = *((uint8_t *)(irep->buf.mem));
 	irep->size = be32toh(*((__u32 *)(irep->buf.mem + 1UL)));
@@ -470,10 +578,22 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 		return -(EXIT_FAILURE);
 	}
 
+#ifndef SGX
 	if ((bytes_read = read(ch->sock, irep->buf.mem, irep->size)) < 0) {
 		log_error("read() returned: %ld", bytes_read);
 		return -(EXIT_FAILURE);
 	}
+#else
+	while ((bytes_read = SSL_read(ch->ssl, irep->buf.mem, irep->size)) <= 0) {
+		int error = SSL_get_error(ch->ssl, bytes_read);
+		if (error == SSL_ERROR_WANT_READ || SSL_ERROR_WANT_WRITE)
+			continue;
+		printf("TLS client failed! SSL_read returned error=%d\n", error);
+		log_error("SSL_read() returned: %ld", bytes_read);
+		SSL_done(ch->ssl, cert, ctx);
+		return -(EXIT_FAILURE);
+	}
+#endif
 
 	ch->flags2 |= CLHF_SND_REQ;
 
