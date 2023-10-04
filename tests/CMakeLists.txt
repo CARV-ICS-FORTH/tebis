@@ -37,6 +37,25 @@ add_executable(
          ../tebis_server/master/mregion.c)
 target_link_libraries(kadmos log ${Zookeeper_LIBRARY})
 
+add_executable(test_async_api test_async_api.c)
+target_link_libraries(
+  test_async_api
+  tebis_client
+  tebis_rdma
+  ${Zookeeper_LIBRARY}
+  ${cjson_LIBRARY}
+  pthread
+  numa
+  ibverbs
+  rdmacm
+  rt
+  m)
+set_target_properties(
+  test_async_api
+  PROPERTIES LINK_FLAGS
+             "-Wl,-no-as-needed -pthread -lm -lnuma -lrdmacm -libverbs -lrt"
+             COMPILE_DEFINITIONS "tebis_DISTRIBUTED")
+
 # Targets with dependencies to Zookeeper should be added in this if block
 # if(Zookeeper_LIBRARY) add_executable(test_krc_api test_krc_api.c)
 # target_link_libraries( test_krc_api kreon_client kreon_rdma kreonr log

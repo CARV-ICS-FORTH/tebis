@@ -78,7 +78,7 @@ else()
   FetchContent_Declare(
     parallax
     GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-    GIT_TAG teboparallax_synced)
+    GIT_TAG extra_hdf5_functionality)
 
 endif(USE_FORKED_PARALLAX)
 unset(USE_FORKED_PARALLAX CACHE)
