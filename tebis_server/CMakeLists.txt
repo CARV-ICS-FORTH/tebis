@@ -18,6 +18,8 @@ target_link_libraries(tebis_client ${Zookeeper_LIBRARY})
 
 add_executable(
   tebis_server
+  request_factory.c
+  multi_get.c
   server.c
   region_desc.c
   build_index/build_index.c

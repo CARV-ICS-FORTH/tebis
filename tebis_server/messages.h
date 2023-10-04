@@ -61,6 +61,7 @@ enum message_type {
 	/*test messages*/
 	TEST_REPLY,
 	TEST_REPLY_FETCH_PAYLOAD,
+	MESSAGES_NUMBER
 	/*pseudo-messages*/
 	//RECOVER_LOG_CONTEXT
 };

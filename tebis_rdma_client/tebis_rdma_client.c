@@ -556,8 +556,8 @@ uint8_t krc_exists(uint32_t key_size, void *key)
 {
 	(void)key_size;
 	(void)key;
-	log_fatal("krc_exists needs rewriting");
-	_exit(EXIT_FAILURE);
+	log_debug("krc_exists needs rewriting");
+	return true;
 #if 0
 	msg_header *req_header = NULL;
 	msg_header *rep_header = NULL;
@@ -1069,9 +1069,9 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	return KRC_SUCCESS;
 }
 
-krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context)
+krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *value, callback on_reply, void *context)
 {
-	return krc_internal_aput(key_size, key, val_size, value, t, context, 0);
+	return krc_internal_aput(key_size, key, val_size, value, on_reply, context, 0);
 }
 
 krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t, void *context)
@@ -1141,6 +1141,8 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		//you should check ret code
 		break;
 	}
+	case MULTI_GET_REPLY:
+		break;
 	case GET_REPLY: {
 		struct msg_data_get_reply msg_rep = get_reply_get_msg_data(req->reply);
 		if (!msg_rep.key_found) {
@@ -1219,7 +1221,32 @@ static void *krc_reply_checker(void *args)
 	return NULL;
 }
 
-krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context)
+krc_ret_code krc_amget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback on_reply, void *context,
+		       uint32_t max_entries)
+{
+	uint32_t reply_size = calculate_get_reply_msg_size(*buf_size);
+	uint32_t request_size = calculate_get_request_msg_size(key_size);
+	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
+	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
+	/*get the rdma communication buffers*/
+	struct msg_header *req_header = NULL;
+	struct msg_header *rep_header = NULL;
+	_krc_get_rpc_pair(conn, &req_header, MULTI_GET_REQUEST, request_size, &rep_header, MULTI_GET_REPLY, reply_size);
+	struct msg_multi_get_req *request =
+		(struct msg_multi_get_req *)&(((char *)req_header)[sizeof(struct msg_header)]);
+
+	request->fetch_keys_only = false;
+	request->max_num_entries = max_entries;
+	request->seek_mode = PAR_GREATER_OR_EQUAL;
+	request->seek_key_size = key_size;
+	memcpy(request->seek_key, key, key_size);
+
+	fill_request_msg(conn, req_header, rep_header);
+	krc_send_async_request(conn, req_header, rep_header, on_reply, context, buf_size, buf);
+	return KRC_SUCCESS;
+}
+
+krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback on_reply, void *context)
 {
 #if CREATE_TRACE_FILE
 	globals_append_trace_file(key_size, key, 0, NULL, TEB_GET);
@@ -1237,7 +1264,7 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	create_get_request_msg(key_size, key, *buf_size, (char *)req_header + sizeof(struct msg_header));
 
 	fill_request_msg(conn, req_header, rep_header);
-	krc_send_async_request(conn, req_header, rep_header, t, context, buf_size, buf);
+	krc_send_async_request(conn, req_header, rep_header, on_reply, context, buf_size, buf);
 	return KRC_SUCCESS;
 }
 

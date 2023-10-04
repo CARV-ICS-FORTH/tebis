@@ -81,4 +81,6 @@ krc_ret_code krc_aput(uint32_t key_size, void *key, uint32_t val_size, void *val
 krc_ret_code krc_aput_if_exists(uint32_t key_size, void *key, uint32_t val_size, void *value, callback t,
 				void *context);
 krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context);
+krc_ret_code krc_amget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback t, void *context,
+		       uint32_t max_entries);
 #endif
