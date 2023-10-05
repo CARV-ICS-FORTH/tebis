@@ -286,5 +286,7 @@ struct s2s_msg_compact_L0_reply {
 };
 
 int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *buf);
+void msg_fill_reply_header(msg_header *reply_msg, msg_header *request_msg, uint32_t payload_size, uint16_t msg_type);
+void msg_set_receive_field(msg_header *msg, uint8_t value);
 
 #endif // TEBIS_MESSAGES_H

@@ -1,73 +1,96 @@
 #include "conf.h"
 #include "messages.h"
+#include "parallax/parallax.h"
+#include "parallax/structures.h"
+#include "region_desc.h"
+#include "region_server.h"
 #include "request.h"
 #include "work_task.h"
 #include <assert.h>
 #include <log.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#define MGET_GET_REPLY_MSG(X)                                                        \
+	(msg_header *)((uint64_t)X->conn->rdma_memory_regions->local_memory_buffer + \
+		       (uint64_t)X->msg->offset_reply_in_recv_buffer)
+
 struct multi_get {
 	struct request req;
-	struct msg_multi_get_req *net_req;
+	const struct msg_multi_get_req *mget_msg;
 };
 
-static void mget_fill_reply_header(msg_header *reply_msg, struct work_task *task, uint32_t payload_size,
-				   uint16_t msg_type)
+static enum work_task_status mget_process(const struct request *request, struct work_task *task)
 {
-	uint32_t reply_size = sizeof(struct msg_header) + payload_size + TU_TAIL_SIZE;
-	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
+	if (request->type != MULTI_GET_REQUEST) {
+		log_fatal("Wrong request type Cannot handle!");
+		_exit(EXIT_FAILURE);
+	}
+	struct multi_get *mget = (struct multi_get *)request;
 
-	reply_msg->padding_and_tail_size = 0;
-	reply_msg->payload_length = payload_size;
-	if (reply_msg->payload_length != 0)
-		reply_msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
+	//Find the region object
+	struct region_desc *region = regs_get_region_desc(mget->req.region_server, (char *)mget->mget_msg->seek_key,
+							  mget->mget_msg->seek_key_size);
 
-	reply_msg->offset_reply_in_recv_buffer = UINT32_MAX;
-	reply_msg->reply_length_in_recv_buffer = UINT32_MAX;
-	reply_msg->offset_in_send_and_target_recv_buffers = task->msg->offset_reply_in_recv_buffer;
-	reply_msg->triggering_msg_offset_in_send_buffer = task->msg->triggering_msg_offset_in_send_buffer;
-	reply_msg->session_id = task->msg->session_id;
-	reply_msg->msg_type = msg_type;
-	reply_msg->op_status = 0;
-	reply_msg->receive = TU_RDMA_REGULAR_MSG;
-}
+	if (region == NULL) {
+		log_fatal("Region not found for key %s", mget->mget_msg->seek_key);
+		_exit(EXIT_FAILURE);
+	}
 
-static void mget_set_receive_field(struct msg_header *msg, uint8_t value)
-{
-	msg->receive = value;
+	task->reply_msg = MGET_GET_REPLY_MSG(task);
+	struct msg_multi_get_rep *mget_reply =
+		(struct msg_multi_get_rep *)&((char *)task->reply_msg)[sizeof(msg_header)];
 
-	if (!msg->payload_length)
-		return;
+	//Parallax start
+	if (!region_desc_enter_parallax(region, task)) {
+		// later...
+		return TASK_START;
+	}
 
-	struct msg_header *last_msg_header =
-		(struct msg_header *)((char *)msg + msg->payload_length + msg->padding_and_tail_size);
-	last_msg_header->receive = value;
-}
+	uint32_t max_KVs = mget->mget_msg->max_num_entries;
+	uint32_t num_KVs = 0;
+	uint32_t available_bytes = mget->req.net_request->reply_length_in_recv_buffer - sizeof(*mget_reply);
+	uint32_t response_size = 0;
+	char *KV_buffer = &((char *)mget_reply)[sizeof(*mget_reply)];
 
-static enum work_task_status mget_process(const struct regs_server_desc *region_server_desc, struct work_task *task)
-{
-	(void)region_server_desc;
-	(void)task;
-	log_info("Do nothing hestika!");
+	const char *error = NULL;
+	struct par_key seek_key = { .size = mget->mget_msg->seek_key_size, .data = mget->mget_msg->seek_key };
+	par_scanner scanner = par_init_scanner(region_desc_get_db(region), &seek_key, PAR_GREATER_OR_EQUAL, &error);
+	log_info("Searching for up to max_KVS: %u", max_KVs);
+	while (par_is_valid(scanner) && num_KVs < max_KVs) {
+		struct par_key key = par_get_key(scanner);
+		struct par_value value = par_get_value(scanner);
+		uint32_t size = key.size + value.val_size + (2 * sizeof(uint32_t));
+		if (size > available_bytes - response_size)
+			break;
+		memcpy(&KV_buffer[response_size], &key.size, sizeof(key.size));
+		response_size += sizeof(key.size);
+		memcpy(&KV_buffer[response_size], key.data, key.size);
+		response_size += key.size;
+		memcpy(&KV_buffer[response_size], &value.val_size, sizeof(value.val_size));
+		response_size += sizeof(value.val_size);
+		memcpy(&KV_buffer[response_size], value.val_buffer, value.val_size);
+		response_size += value.val_size;
+		++num_KVs;
+		// log_info("Added response_size = %u available_bytes: %u", response_size, available_bytes);
 
-	task->reply_msg = (void *)((uint64_t)task->conn->rdma_memory_regions->local_memory_buffer +
-				   (uint64_t)task->msg->offset_reply_in_recv_buffer);
-	mget_fill_reply_header(task->reply_msg, task, 64, MULTI_GET_REPLY);
-	struct msg_multi_get_rep *reply =
-		(struct msg_multi_get_rep *)&(((char *)task->reply_msg)[sizeof(struct msg_header)]);
+		par_get_next(scanner);
+	}
+	par_close_scanner(scanner);
+	region_desc_leave_parallax(region);
 
-	reply->num_entries = 1;
-	reply->curr_entry = 0;
-	reply->end_of_region = 0;
-	reply->buffer_overflow = 0;
-	reply->pos = 0;
-	reply->pos = 0;
-	reply->capacity = 0;
-	mget_set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
+	//Parallax end
+	log_info("Retrieved %u keys total response size: %u", num_KVs, response_size);
+	msg_fill_reply_header(task->reply_msg, task->msg, response_size, MULTI_GET_REPLY);
+
+	mget_reply->num_entries = num_KVs;
+	mget_reply->curr_entry = 0;
+	mget_reply->end_of_region = 0;
+	msg_set_receive_field(task->reply_msg, TU_RDMA_REGULAR_MSG);
 	return TASK_COMPLETE;
 }
 
-static void multi_get_destructor(struct request *request)
+static void mget_destructor(struct request *request)
 {
 	if (request->type != MULTI_GET_REQUEST) {
 		log_fatal("Not a multi get request");
@@ -77,17 +100,23 @@ static void multi_get_destructor(struct request *request)
 	free(m_get);
 }
 
-struct request *multi_get_constructor(msg_header *msg)
+struct request *mget_constructor(const struct regs_server_desc *region_server, msg_header *msg)
 {
-	struct multi_get *m_get = calloc(1UL, sizeof(*m_get));
 	if (msg->msg_type != MULTI_GET_REQUEST) {
 		log_debug("This is not a multi get request");
 		return NULL;
 	}
-	m_get->req.type = msg->msg_type;
-	m_get->req.execute = mget_process;
-	m_get->req.destruct = multi_get_destructor;
 
-	m_get->net_req = (struct msg_multi_get_req *)&(((char *)msg)[sizeof(*msg)]);
-	return &m_get->req;
+	struct multi_get *mget = calloc(1UL, sizeof(*mget));
+
+	mget->req.region_server = region_server;
+	mget->req.net_request = msg;
+	mget->req.type = msg->msg_type;
+	mget->req.execute = mget_process;
+	mget->req.destruct = mget_destructor;
+
+	mget->mget_msg = (struct msg_multi_get_req *)&(((char *)msg)[sizeof(*msg)]);
+	assert(mget->mget_msg);
+
+	return (struct request *)mget;
 }

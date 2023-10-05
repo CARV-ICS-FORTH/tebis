@@ -37,8 +37,9 @@ bool factory_register(request_factory_t factory, enum message_type msg_type, req
 	return true;
 }
 
-struct request *factory_create_req(request_factory_t factory, msg_header *msg)
+struct request *factory_create_req(request_factory_t factory, const struct regs_server_desc *region_server,
+				   msg_header *msg)
 {
 	FACTORY_CHECK_MSG_TYPE(msg->msg_type)
-	return factory->constructors[msg->msg_type] ? factory->constructors[msg->msg_type](msg) : NULL;
+	return factory->constructors[msg->msg_type] ? factory->constructors[msg->msg_type](region_server, msg) : NULL;
 }

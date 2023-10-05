@@ -848,23 +848,23 @@ execute_task *const task_dispatcher[NUMBER_OF_TASKS] = { regs_execute_replica_in
  * For each message type Tebis process it via a specific data path.
  * We treat all tasks related to network  as paths that may fail, and we can resume later.
  */
-static void handle_task(struct regs_server_desc const *mydesc, struct work_task *task)
+static void handle_task(struct regs_server_desc const *region_server, struct work_task *task)
 {
 	/*handle multigets here until all is fixed*/
 	enum message_type type = task->msg->msg_type;
 
 	/*XXX TODO XXX in next versions all request will follow the factory pattern*/
 	if (task->msg->msg_type == MULTI_GET_REQUEST && NULL == task->request)
-		task->request = factory_create_req(factory_get_instance(), task->msg);
+		task->request = factory_create_req(factory_get_instance(), region_server, task->msg);
 
 	if (task->msg->msg_type == PUT_IF_EXISTS_REQUEST)
 		type = PUT_REQUEST;
 
 	/*XXX TODO XXX new*/
 	if (task->msg->msg_type == MULTI_GET_REQUEST && task->request)
-		task->kreon_operation_status = task->request->execute(mydesc, task);
+		task->kreon_operation_status = task->request->execute(task->request, task);
 	else
-		task_dispatcher[type](mydesc, task);
+		task_dispatcher[type](region_server, task);
 
 	/*XXX TODO XXX new*/
 	if (task->msg->msg_type == MULTI_GET_REQUEST && task->kreon_operation_status == TASK_COMPLETE)
@@ -888,7 +888,7 @@ static void sigint_handler(int signo)
 #define MAX_CORES_PER_NUMA 64
 int main(int argc, char *argv[])
 {
-	factory_register(factory_get_instance(), MULTI_GET_REQUEST, multi_get_constructor);
+	factory_register(factory_get_instance(), MULTI_GET_REQUEST, mget_constructor);
 #if CREATE_TRACE_FILE
 	globals_open_trace_file("tracefile.txt");
 #endif

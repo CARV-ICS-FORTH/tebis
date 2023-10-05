@@ -75,20 +75,40 @@ char *zku_op2String(int rc)
 
 int zku_key_cmp(int key_size_1, char *key_1, int key_size_2, char *key_2)
 {
-	bool key_1_is_infinity = false;
-	bool key_2_is_infinity = false;
+	bool key1_pos_infinity = false;
+	bool key1_neg_infinity = false;
+	bool key2_pos_infinity = false;
+	bool key2_neg_infinity = false;
 
 	if (key_size_1 == 3 && memcmp(key_1, "+oo", 3) == 0)
-		key_1_is_infinity = true;
+		key1_pos_infinity = true;
+
+	if (key_size_1 == 3 && memcmp(key_1, "-oo", 3) == 0)
+		key1_neg_infinity = true;
 
 	if (key_size_2 == 3 && memcmp(key_2, "+oo", 3) == 0)
-		key_2_is_infinity = true;
+		key2_pos_infinity = true;
 
-	if (key_1_is_infinity && !key_2_is_infinity)
+	if (key_size_2 == 3 && memcmp(key_2, "-oo", 3) == 0)
+		key2_neg_infinity = true;
+
+	if (key1_pos_infinity && key2_pos_infinity)
+		return 0;
+
+	if (key1_neg_infinity && key2_neg_infinity)
+		return 0;
+
+	if (key1_pos_infinity)
 		return 1;
 
-	if (!key_1_is_infinity && key_2_is_infinity)
+	if (key1_neg_infinity)
 		return -1;
+
+	if (key2_pos_infinity)
+		return -1;
+
+	if (key2_neg_infinity)
+		return 1;
 
 	int ret = memcmp(key_1, key_2, key_size_1 <= key_size_2 ? key_size_1 : key_size_2);
 

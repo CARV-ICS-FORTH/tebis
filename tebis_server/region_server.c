@@ -293,6 +293,7 @@ void mailbox_watcher(zhandle_t *zh, int type, int state, const char *path, void 
 static int regs_get_region_pos(struct regs_regions const *ds_regions, char *key, uint32_t key_size, bool *found)
 {
 	*found = false;
+
 	if (0 == ds_regions->num_ds_regions)
 		return -1;
 
@@ -320,6 +321,7 @@ static int regs_get_region_pos(struct regs_regions const *ds_regions, char *key,
 	}
 
 	int pos = ret_code_min > 0 ? --middle : middle;
+	log_info("pos = %d", pos);
 	return pos;
 }
 

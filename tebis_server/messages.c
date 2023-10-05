@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "messages.h"
+#include "../tebis_rdma/rdma.h"
 #include "conf.h"
 #include <assert.h>
 #include <string.h>
@@ -35,4 +36,36 @@ int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *bu
 	//log_info("entries %u",buf->num_entries);
 	//log_info("added key %u:%s and val size %u",key->size, key->key,val->size);
 	return TEBIS_SUCCESS;
+}
+
+void msg_fill_reply_header(msg_header *reply_msg, msg_header *request_msg, uint32_t payload_size, uint16_t msg_type)
+{
+	uint32_t reply_size = sizeof(struct msg_header) + payload_size + TU_TAIL_SIZE;
+	uint32_t padding = MESSAGE_SEGMENT_SIZE - (reply_size % MESSAGE_SEGMENT_SIZE);
+
+	reply_msg->padding_and_tail_size = 0;
+	reply_msg->payload_length = payload_size;
+	if (reply_msg->payload_length != 0)
+		reply_msg->padding_and_tail_size = padding + TU_TAIL_SIZE;
+
+	reply_msg->offset_reply_in_recv_buffer = UINT32_MAX;
+	reply_msg->reply_length_in_recv_buffer = UINT32_MAX;
+	reply_msg->offset_in_send_and_target_recv_buffers = request_msg->offset_reply_in_recv_buffer;
+	reply_msg->triggering_msg_offset_in_send_buffer = request_msg->triggering_msg_offset_in_send_buffer;
+	reply_msg->session_id = request_msg->session_id;
+	reply_msg->msg_type = msg_type;
+	reply_msg->op_status = 0;
+	reply_msg->receive = TU_RDMA_REGULAR_MSG;
+}
+
+void msg_set_receive_field(msg_header *msg, uint8_t value)
+{
+	msg->receive = value;
+
+	if (!msg->payload_length)
+		return;
+
+	struct msg_header *last_msg_header =
+		(struct msg_header *)((char *)msg + msg->payload_length + msg->padding_and_tail_size);
+	last_msg_header->receive = value;
 }

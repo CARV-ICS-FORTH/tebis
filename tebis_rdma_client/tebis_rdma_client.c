@@ -1224,6 +1224,7 @@ static void *krc_reply_checker(void *args)
 krc_ret_code krc_amget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback on_reply, void *context,
 		       uint32_t max_entries)
 {
+	log_debug("Reply buffer size = %u", *buf_size);
 	uint32_t reply_size = calculate_get_reply_msg_size(*buf_size);
 	uint32_t request_size = calculate_get_request_msg_size(key_size);
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);

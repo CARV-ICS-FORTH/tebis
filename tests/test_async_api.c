@@ -7,18 +7,18 @@
 
 #define BASE 100000UL
 #define KEY_PREFIX "@kakakis"
-#define NUM_KEYS 1000UL
+#define NUM_KEYS 65536UL
 #define KEY_SIZE 128UL
 #define VALUE_SIZE 128UL
 
-// static void put_callback(void *context)
-// {
-// 	static uint64_t num_keys = 0;
-// 	(void)context;
-// 	++num_keys;
-// 	log_info("Put inside done keys: %lu", ++num_keys);
-// 	free(context);
-// }
+static void put_callback(void *context)
+{
+	static uint64_t num_keys = 0;
+	(void)context;
+	++num_keys;
+	log_info("Put inside done keys: %lu", ++num_keys);
+	free(context);
+}
 
 static void mget_callback(void *context)
 {
@@ -57,30 +57,30 @@ int main(int argc, char *argv[])
 	log_info("Regions healthy!");
 
 	krc_start_async_thread();
-	// log_info("Starting population for %lu keys...", NUM_KEYS);
-
-	// for (uint64_t i = BASE; i < (BASE + NUM_KEYS); i++) {
-	// 	char *kv_buf = calloc(1UL, KEY_SIZE + VALUE_SIZE);
-	// 	char *key_buf = kv_buf;
-	// 	char *value_buf = &kv_buf[KEY_SIZE];
-	// 	memcpy(key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
-	// 	if (i % 100 == 0)
-	// 		log_info("inserted up to %lu th key", i);
-
-	// 	if (sprintf(&key_buf[strlen(KEY_PREFIX)], "%lu", i) < 0) {
-	// 		log_fatal("sprintf failed");
-	// 		_exit(EXIT_FAILURE);
-	// 	}
-	// 	size_t key_size = strlen(key_buf);
-	// 	size_t value_size = VALUE_SIZE;
-	// 	memset(value_buf, 0xDD, value_size);
-	// 	krc_aput(key_size, key_buf, value_size, value_buf, put_callback, kv_buf);
-	// }
-	// log_info("Population ended");
-	log_info("Testing multi gets");
+	log_info("Starting population for %lu keys...", NUM_KEYS);
 
 	for (uint64_t i = BASE; i < (BASE + NUM_KEYS); i++) {
 		char *kv_buf = calloc(1UL, KEY_SIZE + VALUE_SIZE);
+		char *key_buf = kv_buf;
+		char *value_buf = &kv_buf[KEY_SIZE];
+		memcpy(key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
+		if (i % 100 == 0)
+			log_info("inserted up to %lu th key", i);
+
+		if (sprintf(&key_buf[strlen(KEY_PREFIX)], "%lu", i) < 0) {
+			log_fatal("sprintf failed");
+			_exit(EXIT_FAILURE);
+		}
+		size_t key_size = strlen(key_buf);
+		size_t value_size = VALUE_SIZE;
+		memset(value_buf, 0xDD, value_size);
+		krc_aput(key_size, key_buf, value_size, value_buf, put_callback, kv_buf);
+	}
+	log_info("Population ended");
+	log_info("Testing multi gets");
+
+	for (uint64_t i = BASE; i < (BASE + NUM_KEYS); i++) {
+		char *kv_buf = calloc(1UL, KEY_SIZE + (10 * VALUE_SIZE));
 		char *key_buf = kv_buf;
 		char *value_buf = &kv_buf[KEY_SIZE];
 		memcpy(key_buf, KEY_PREFIX, strlen(KEY_PREFIX));
@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
 			_exit(EXIT_FAILURE);
 		}
 		size_t key_size = strlen(key_buf);
-		uint32_t value_buf_size = VALUE_SIZE;
+		uint32_t value_buf_size = 10 * VALUE_SIZE;
 		krc_amget(key_size, key_buf, &value_buf_size, value_buf, mget_callback, kv_buf, 10);
 	}
 	log_info("************ ALL TESTS SUCCESSFULL! ************");
