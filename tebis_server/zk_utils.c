@@ -73,7 +73,7 @@ char *zku_op2String(int rc)
 	}
 }
 
-int zku_key_cmp(int key_size_1, char *key_1, int key_size_2, char *key_2)
+int zku_key_cmp(int key_size_1, const char *key_1, int key_size_2, const char *key_2)
 {
 	bool key1_pos_infinity = false;
 	bool key1_neg_infinity = false;
