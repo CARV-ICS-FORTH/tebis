@@ -289,4 +289,6 @@ int msg_push_to_multiget_buf(msg_key *key, msg_value *val, msg_multi_get_rep *bu
 void msg_fill_reply_header(msg_header *reply_msg, msg_header *request_msg, uint32_t payload_size, uint16_t msg_type);
 void msg_set_receive_field(msg_header *msg, uint8_t value);
 
+uint32_t msg_calc_mget_req_payload(int32_t key_size);
+uint32_t msg_calc_mget_reply_payload(uint32_t buf_size);
 #endif // TEBIS_MESSAGES_H
