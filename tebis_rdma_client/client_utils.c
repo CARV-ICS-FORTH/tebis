@@ -268,7 +268,7 @@ uint8_t cu_init(char *zookeeper_host)
 	return 1;
 }
 
-struct cu_region_desc *cu_get_region(char *key, uint32_t key_size)
+struct cu_region_desc *cu_get_region(const char *key, uint32_t key_size)
 {
 	struct cu_regions *cli_regions = &client_regions;
 	struct cu_region_desc *region = NULL;
