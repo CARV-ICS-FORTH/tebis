@@ -123,6 +123,7 @@ static void send_no_op_operation(connection_rdma *conn)
 
 	struct msg_header *no_op_request = client_allocate_rdma_message(conn, no_op_payload_length, NO_OP);
 	volatile struct msg_header *no_op_reply = client_allocate_rdma_message(conn, 0, NO_OP_ACK);
+	// log_info("Remaining bytes in no op = %u", no_op_payload_length);
 
 	no_op_request->receive = TU_RDMA_REGULAR_MSG;
 	no_op_request->triggering_msg_offset_in_send_buffer = real_address_to_triggering_msg_offt(conn, no_op_request);
@@ -169,8 +170,8 @@ static void send_no_op_operation(connection_rdma *conn)
  * @param rep_msg_type the type of the reply (e.g. PUT_REPLY)
  * @param rep_size, the size of the reply
  * */
-static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
-			      int rep_msg_type, int rep_size)
+static void krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_msg_type, int req_size, msg_header **rep,
+			     int rep_msg_type, int rep_size)
 {
 	pthread_mutex_lock(&conn->buffer_lock);
 	pthread_mutex_lock(&conn->allocation_lock);
@@ -184,6 +185,7 @@ static void _krc_get_rpc_pair(connection_rdma *conn, msg_header **req, int req_m
 	}
 
 	*rep = client_allocate_rdma_message(conn, rep_size, rep_msg_type);
+	assert(*rep);
 	pthread_mutex_unlock(&conn->allocation_lock);
 	pthread_mutex_unlock(&conn->buffer_lock);
 }
@@ -606,8 +608,8 @@ krc_ret_code krc_delete(uint32_t key_size, void *key)
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	connection_rdma *conn = cu_get_conn_for_region(r_desc, (uint64_t)key);
 
-	_krc_get_rpc_pair(conn, &req_header, DELETE_REQUEST, sizeof(msg_delete_req) + key_size, &rep_header,
-			  DELETE_REPLY, sizeof(msg_delete_rep));
+	krc_get_rpc_pair(conn, &req_header, DELETE_REQUEST, sizeof(msg_delete_req) + key_size, &rep_header,
+			 DELETE_REPLY, sizeof(msg_delete_rep));
 	/*the request part*/
 	//	msg_header *req_header = allocate_rdma_message(conn, sizeof(msg_delete_req) + key_size, DELETE_REQUEST);
 
@@ -1052,7 +1054,7 @@ static krc_ret_code krc_internal_aput(uint32_t key_size, void *key, uint32_t val
 	enum message_type req_type = (is_update_if_exists) ? PUT_IF_EXISTS_REQUEST : PUT_REQUEST;
 	uint32_t req_size = calculate_put_request_msg_size(key_size, val_size);
 	//log_debug("key_size val_size is <%u,%u>, total put_msg size is %u", key_size, val_size, req_size);
-	_krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
+	krc_get_rpc_pair(conn, &req_header, req_type, req_size, &rep_header, PUT_REPLY, sizeof(msg_put_rep));
 
 	/*fill in the key payload part the data, caution we are 100% sure that it fits :-)*/
 	struct msg_data_put_request put_data = {
@@ -1115,7 +1117,7 @@ static uint8_t krc_has_reply_arrived(struct krc_async_req *req)
 	}
 	size_t elapsed_sec = now.tv_sec - req->start_time.tv_sec;
 	if (elapsed_sec > 1000000L && teb_send_heartbeat(req->conn->rdma_cm_id) != TEBIS_SUCCESS) {
-		log_fatal("Kreon dataserver has failed!");
+		log_fatal("Region server has failed!");
 		_exit(EXIT_FAILURE);
 	}
 	return false;
@@ -1143,7 +1145,7 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 	}
 	case MULTI_GET_REPLY:
 		break;
-	case GET_REPLY: {
+	case GET_REPLY:;
 		struct msg_data_get_reply msg_rep = get_reply_get_msg_data(req->reply);
 		if (!msg_rep.key_found) {
 			log_fatal("Key not found!");
@@ -1157,7 +1159,6 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		memcpy(req->buf, msg_rep.value, msg_rep.value_size);
 		*req->buf_size = msg_rep.value_size;
 		break;
-	}
 	default:
 		log_debug("unhandled msg type is %d", req->reply->msg_type);
 		log_fatal("Unhandled reply type");
@@ -1168,6 +1169,7 @@ static void reply_checker_handle_reply(struct krc_async_req *req)
 		//log_info("Calling callback for req");
 		req->callback(req->context);
 	}
+
 	zero_rendezvous_locations(req->reply);
 	pthread_mutex_lock(&req->conn->allocation_lock);
 	client_free_rpc_pair(req->conn, req->reply);
@@ -1221,28 +1223,29 @@ static void *krc_reply_checker(void *args)
 	return NULL;
 }
 
-krc_ret_code krc_amget(uint32_t key_size, char *key, uint32_t *buf_size, char *buf, callback on_reply, void *context,
-		       uint32_t max_entries)
+krc_ret_code krc_amget(uint32_t key_size, const char *key, uint32_t *buf_size, char *buf, callback on_reply,
+		       void *context, uint32_t max_entries)
 {
-	log_debug("Reply buffer size = %u", *buf_size);
-	uint32_t reply_size = calculate_get_reply_msg_size(*buf_size);
-	uint32_t request_size = calculate_get_request_msg_size(key_size);
+	uint32_t request_size = msg_calc_mget_req_payload(key_size);
+	uint32_t reply_size = msg_calc_mget_reply_payload(*buf_size);
+
 	struct cu_region_desc *r_desc = cu_get_region(key, key_size);
 	struct connection_rdma *conn = cu_get_conn_for_region(r_desc, djb2_hash((unsigned char *)key, key_size));
 	/*get the rdma communication buffers*/
-	struct msg_header *req_header = NULL;
-	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, MULTI_GET_REQUEST, request_size, &rep_header, MULTI_GET_REPLY, reply_size);
-	struct msg_multi_get_req *request =
+	msg_header *req_header = NULL;
+	msg_header *rep_header = NULL;
+	krc_get_rpc_pair(conn, &req_header, MULTI_GET_REQUEST, request_size, &rep_header, MULTI_GET_REPLY, reply_size);
+	struct msg_multi_get_req *mget_req =
 		(struct msg_multi_get_req *)&(((char *)req_header)[sizeof(struct msg_header)]);
 
-	request->fetch_keys_only = false;
-	request->max_num_entries = max_entries;
-	request->seek_mode = PAR_GREATER_OR_EQUAL;
-	request->seek_key_size = key_size;
-	memcpy(request->seek_key, key, key_size);
+	mget_req->fetch_keys_only = false;
+	mget_req->max_num_entries = max_entries;
+	mget_req->seek_mode = PAR_GREATER_OR_EQUAL;
+	mget_req->seek_key_size = key_size;
 
+	memcpy(mget_req->seek_key, key, key_size);
 	fill_request_msg(conn, req_header, rep_header);
+	rep_header->receive = 0;
 	krc_send_async_request(conn, req_header, rep_header, on_reply, context, buf_size, buf);
 	return KRC_SUCCESS;
 }
@@ -1260,7 +1263,7 @@ krc_ret_code krc_aget(uint32_t key_size, char *key, uint32_t *buf_size, char *bu
 	/*get the rdma communication buffers*/
 	struct msg_header *req_header = NULL;
 	struct msg_header *rep_header = NULL;
-	_krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY, reply_size);
+	krc_get_rpc_pair(conn, &req_header, GET_REQUEST, request_size, &rep_header, GET_REPLY, reply_size);
 
 	create_get_request_msg(key_size, key, *buf_size, (char *)req_header + sizeof(struct msg_header));
 
