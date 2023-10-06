@@ -293,25 +293,22 @@ class tebisAsyncClientDB : public YCSBDB {
 	int Scan(int id /*ignore*/, const std::string &table /*ignore*/, const std::string &key, int record_count,
 		 const std::vector<std::string> *fields /*ignore*/, std::vector<KVPair> &result)
 	{
-		log_fatal("Sorry still unsupported");
-		exit(EXIT_FAILURE);
-#if 0
-		size_t s_key_size = 0;
-		char *s_key = NULL;
-		size_t s_value_size = 0;
-		char *s_value = NULL;
-		krc_scannerp sc = krc_scan_init(32, (16 * 1024));
+		struct get_cnxt *mget_cnxt = (struct get_cnxt *)malloc(sizeof(struct get_cnxt));
+		mget_cnxt->counter = &reply_counter;
+		mget_cnxt->buf_size = 30 * 1024; //30 KB
+		mget_cnxt->buf = (char *)malloc(mget_cnxt->buf_size);
 
-		krc_scan_set_start(sc, key.length(), (void *)key.c_str(), KRC_GREATER_OR_EQUAL);
-		int i = 0;
+		int region_id = djb2_hash((unsigned char *)key.c_str(), key.length()) % regions_total;
+		std::string prefix_key = std::string(region_prefixes_map[region_id]) + key;
+		op_callback_function callback = get_callback;
 
-		while (i < record_count && krc_scan_get_next(sc, &s_key, &s_key_size, &s_value, &s_value_size)) {
-			KVPair k = std::make_pair(std::string(s_key, s_key_size), std::string(s_value, s_value_size));
-			result.push_back(k);
-			++i;
+		uint32_t *value_buf_size = &mget_cnxt->buf_size;
+		enum krc_ret_code code = krc_amget(prefix_key.length(), prefix_key.c_str(), value_buf_size,
+						   mget_cnxt->buf, callback, mget_cnxt, record_count);
+		if (code != KRC_SUCCESS) {
+			log_fatal("problem with key %s", key.c_str());
+			_exit(EXIT_FAILURE);
 		}
-		krc_scan_close(sc);
-#endif
 		return 0;
 	}
 
