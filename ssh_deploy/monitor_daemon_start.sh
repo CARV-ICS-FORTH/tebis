@@ -15,5 +15,5 @@ FILE_SUFFIX="$3"
 
 # Start the NVMe queue depth monitoring script in the background
 ./monitor_nvme_queue_depth.sh "$NVME_DEVICE" "$PATH_TO_SAVE_DIRECTORY" &
-
-echo "The monitor_nvme_queue_depth.sh script is now running in the background."
+# Start the CPU monitoring script in the background
+./monitor_cpu.sh "$PATH_TO_SAVE_DIRECTORY" &

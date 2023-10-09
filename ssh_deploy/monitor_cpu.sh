@@ -1,18 +1,17 @@
 #!/bin/bash
 
-if [ "$#" -ne 2 ]; then
-	echo "Usage: $0 <file_dir> <port>"
+if [ "$#" -ne 1 ]; then
+	echo "Usage: $0 <file_dir>"
 	exit 1
 fi
 
 file_dir="$1"
-port="$2"
 
 # Get the hostname
 hostname=$(hostname)
 
 # Generate the output filename
-output_filename="cpu_${hostname}:${port}.txt"
+output_filename="cpu_${hostname}.txt"
 output_path="${file_dir}/${output_filename}"
 
 # Start mpstat in the background and save its output to the generated filename
