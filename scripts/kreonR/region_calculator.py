@@ -73,14 +73,14 @@ def main():
 
     assignments = assign_servers(hosts, n_replicas, n_regions)
 
-    with open("regions_and_replicas.txt", "w") as out_file:
+    with open("regions", "w") as out_file:
         for region_id, start, end, replicas in assignments:
             replicas_str = ' '.join(replicas)
             line = f"{region_id} {start} {end} {replicas_str}"
             print(line)  # Print to screen
             out_file.write(line + "\n")  # Write to file
 
-    print("Regions and replicas have also been written to 'regions_and_replicas.txt'.")
+    print("Regions and replicas have also been written to 'regions'.")
 
 if __name__ == "__main__":
     main()
