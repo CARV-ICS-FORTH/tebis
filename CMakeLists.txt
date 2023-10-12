@@ -159,8 +159,11 @@ find_library(
   NAMES libzookeeper_mt.a libzookeeper_mt.so
   PATHS ${Zookeeper_LIB_PATHS})
 
-if(NOT Zookeeper_INCLUDE_DIR OR NOT Zookeeper_LIBRARY)
-  message(FATAL_ERROR "Could not find zookeeper build will fail!")
+if(NOT Zookeeper_LIBRARY)
+  message(FATAL_ERROR "Could not find zookeeper library! build will fail!")
+endif()
+if(NOT Zookeeper_INCLUDE_DIR)
+  message(FATAL_ERROR "Could not find zookeeper header files build will fail!")
 else()
   message("Zookeeper headers at ${Zookeeper_INCLUDE_DIR}")
   include_directories(${Zookeeper_INCLUDE_DIR})
