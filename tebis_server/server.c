@@ -878,9 +878,9 @@ sem_t exit_main = { 0 };
 static void sigint_handler(int signo)
 {
 	(void)signo;
-	/*pid_t tid = syscall(__NR_gettid);*/
-	printf("caught signal closing server, sorry gracefull shutdown not yet "
-	       "supported. Contact <gesalous,geostyl>@ics.forth.gr");
+	const char *msg = "caught signal closing server, sorry gracefull shutdown not yet "
+			  "supported. Contact <gesalous>@ics.forth.gr";
+	write(STDERR_FILENO, msg, strlen(msg));
 	stats_notify_stop_reporter_thread();
 	sem_post(&exit_main);
 }
