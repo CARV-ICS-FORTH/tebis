@@ -68,8 +68,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <uthash.h>
-#include <zookeeper/zookeeper.h>
-#include <zookeeper/zookeeper.jute.h>
+#include <zookeeper.h>
+#include <zookeeper.jute.h>
 // IWYU pragma: no_forward_declare region_desc
 uint64_t ds_hash_key;
 
@@ -376,6 +376,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 				      .options = par_get_default_options() };
 	db_options.options[LEVEL0_SIZE].value = KB(globals_get_l0_size());
 	db_options.options[GROWTH_FACTOR].value = globals_get_growth_factor();
+
 	if (server_role == BACKUP_DEAD || server_role == BACKUP_INFANT || server_role == BACKUP_NEWBIE ||
 	    server_role == BACKUP) {
 		// open DB as backup
@@ -385,7 +386,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 		db_options.options[REPLICA_SEND_INDEX].value = 0;
 	}
 
-	if (globals_get_send_index()) {
+	if (globals_get_send_index() && region_desc_get_num_backup(region_desc) > 0) {
 		db_options.options[NUMBER_OF_REPLICAS].value = region_desc_get_num_backup(region_desc);
 		db_options.options[ENABLE_COMPACTION_DOUBLE_BUFFERING].value = 1;
 		db_options.options[WCURSOR_SPIN_FOR_FLUSH_REPLIES].value = 1;
@@ -406,7 +407,7 @@ region_desc_t regs_open_region(struct regs_server_desc *region_server, mregion_t
 	}
 
 	regs_insert_region_desc(&region_server->ds_regions, region_desc);
-	if (globals_get_send_index())
+	if (globals_get_send_index() && region_desc_get_num_backup(region_desc) > 0)
 		send_index_init_callbacks(region_server, region_desc);
 	else
 		build_index_init_callbacks(region_server, region_desc);
