@@ -29,8 +29,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <uthash.h>
+#include <zookeeper.h>
 #include <zookeeper.jute.h>
-#include <zookeeper/zookeeper.h>
 
 static int cu_is_connected = 0;
 static zhandle_t *cu_zh = NULL;

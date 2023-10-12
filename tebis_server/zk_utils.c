@@ -17,7 +17,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 char *zk_error_code[] = { "ZOK", "ZNONODE", "UNKNOWN_CODE", "ZBADARGUMENTS", "ZNODEEXISTS" };
 char *zku_concat_strings(int num, ...)
 {

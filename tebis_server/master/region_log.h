@@ -15,7 +15,7 @@
 #define REGION_LOG_H
 #include "command.h"
 #include <stdbool.h>
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 
 typedef struct region_log *region_log_t;
 

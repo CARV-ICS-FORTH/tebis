@@ -13,7 +13,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
-#include <zookeeper/zookeeper.h>
+#include <zookeeper.h>
 struct compaction_request;
 
 typedef struct level_write_appender *level_write_appender_t;
