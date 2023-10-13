@@ -1,11 +1,9 @@
 #!/bin/bash -x
 # Ensure we have the correct number of arguments
 if [ "$#" -lt 6 ] || [ "$#" -gt 8 ]; then
-    echo "Usage: $0 client_id zookeeper_host execution_plan output_folder barrier_folder insert_start [--skip-load / --skip-scan]"
-    exit 1
+	echo "Usage: $0 client_id zookeeper_host execution_plan output_folder barrier_folder insert_start [--skip-load / --skip-scan]"
+	exit 1
 fi
-
-
 
 echo "SKIP_LOAD is $SKIP_LOAD"
 echo "SKIP_SCAN is $SKIP_SCAN"
@@ -20,12 +18,12 @@ base_insert_start="$6"
 SKIP_LOAD=0
 SKIP_SCAN=0
 if [ "$#" -ge 7 ] && [ "$7" == "--skip-load" ]; then
-    SKIP_LOAD=1
-    shift
+	SKIP_LOAD=1
+	shift
 fi
 if [ "$#" -ge 7 ] && [ "$7" == "--skip-scan" ]; then
-    SKIP_SCAN=1
-    shift
+	SKIP_SCAN=1
+	shift
 fi
 
 execute_ycsb_processes() {
@@ -64,15 +62,12 @@ if [ $SKIP_LOAD -eq 0 ]; then
 fi
 
 if [ $SKIP_SCAN -eq 0 ]; then
-    # Start the background processes again with the main execution plan
-    execute_ycsb_processes "$execution_plan"
+	# Start the background processes again with the main execution plan
+	execute_ycsb_processes "$execution_plan"
 
-    # Write to the barrier file to indicate this client has finished the main phase
-    echo "Client $client_id main phase finished" >"$barrier_folder/client_$client_id"
+	# Write to the barrier file to indicate this client has finished the main phase
+	echo "Client $client_id main phase finished" >"$barrier_folder/client_$client_id"
 fi
-
 
 # Write to the barrier file to indicate this client has finished the main phase
 echo "Client $client_id main phase finished" >"$barrier_folder/client_$client_id"
-
-
