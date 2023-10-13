@@ -296,7 +296,7 @@ class tebisAsyncClientDB : public YCSBDB {
 		struct get_cnxt *mget_cnxt = (struct get_cnxt *)malloc(sizeof(struct get_cnxt));
 		mget_cnxt->counter = &reply_counter;
 		mget_cnxt->buf_size = 30 * 1024; //30 KB
-		mget_cnxt->buf = (char *)malloc(mget_cnxt->buf_size);
+		mget_cnxt->buf = (char *)calloc(1UL, mget_cnxt->buf_size);
 
 		int region_id = djb2_hash((unsigned char *)key.c_str(), key.length()) % regions_total;
 		std::string prefix_key = std::string(region_prefixes_map[region_id]) + key;

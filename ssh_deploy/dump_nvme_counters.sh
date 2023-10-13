@@ -29,7 +29,7 @@ if [ ! -f "$INFLIGHT_PATH" ]; then
 fi
 
 # Extract values from stats file
-read -r reads _ _ sectors_read writes _ _ sectors_written _ <"$STATS_PATH"
+read -r reads writes sectors_read sectors_written < <(awk '{ print $1, $5, $3, $7 }' "$STATS_PATH")
 
 # Convert sectors to bytes (assuming 512 bytes per sector)
 bytes_read=$((sectors_read * 512))
