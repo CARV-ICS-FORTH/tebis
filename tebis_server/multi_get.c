@@ -47,14 +47,15 @@ static enum work_task_status mget_process(const struct request *request, struct 
 	uint32_t available_bytes = mget->req.net_request->reply_length_in_recv_buffer -
 				   (sizeof(msg_header) + sizeof(*mget_reply) + MESSAGE_SEGMENT_SIZE);
 	uint32_t response_size = 0;
-	char *KV_buffer = &((char *)mget_reply)[sizeof(*mget_reply)];
 
 	//Parallax start
+	task->kreon_operation_status = TASK_MULTIGET;
 	if (!region_desc_enter_parallax(region, task)) {
 		// later...
-		return TASK_START;
+		return TASK_MULTIGET;
 	}
 
+	char *KV_buffer = &((char *)mget_reply)[sizeof(*mget_reply)];
 	const char *error = NULL;
 	struct par_key seek_key = { .size = mget->mget_msg->seek_key_size, .data = mget->mget_msg->seek_key };
 	par_scanner scanner = par_init_scanner(region_desc_get_db(region), &seek_key, PAR_GREATER_OR_EQUAL, &error);
@@ -85,7 +86,6 @@ static enum work_task_status mget_process(const struct request *request, struct 
 	// log_info("Retrieved %u KV pairs of %u requested total response size: %u", num_KVs, max_KVs, response_size);
 	msg_fill_reply_header(task->reply_msg, (struct msg_header *)mget->req.net_request,
 			      sizeof(msg_multi_get_rep) + response_size, MULTI_GET_REPLY);
-
 	mget_reply->num_entries = num_KVs;
 	mget_reply->curr_entry = 0;
 	mget_reply->end_of_region = 0;
