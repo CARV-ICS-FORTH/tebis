@@ -3,16 +3,19 @@
 
 set(tcp_server_EXEC "tcp-server")
 
-# target_link_libraries(${tcp_server_EXEC} log m pthread rt parallax)
 if(NOT SGX_BUILD)
   add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
   target_link_libraries(${tcp_server_EXEC} pthread parallax m rt)
 else()
-  add_compile_definitions(SGX)
-  add_library(tcp_lib server.c plog.c server_handle.c)
-  target_link_libraries(tcp_lib pthread parallax rt openenclave::oe_includes)
-  add_executable(${tcp_server_EXEC} enc.c)
   find_package(OpenEnclave CONFIG REQUIRED)
+  add_compile_definitions(SGX)
+  add_library(
+    tcp_lib server.c plog.c server_handle.c ../common/common_ssl/utility.c
+            ../common/common_ssl/mbedtls_utility.c)
+  target_link_libraries(tcp_lib openenclave::oecryptombedtls pthread parallax
+                        rt openenclave::oe_includes)
+  add_executable(${tcp_server_EXEC} enc.c)
+  target_compile_definitions(${tcp_server_EXEC} PUBLIC OE_API_VERSION=2)
   target_link_libraries(
     ${tcp_server_EXEC}
     openenclave::oeenclave
@@ -20,12 +23,12 @@ else()
     tcp_lib
     openenclave::oehostfs
     openenclave::oehostsock
+    openenclave::oehostresolver
+    openenclave::oehostepoll
     parallax
     log
     yaml
-    libbloom
-    # m rt
-    openenclave::oe_includes)
+    libbloom)
 
   # Generate key
   add_custom_command(

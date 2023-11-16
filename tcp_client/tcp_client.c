@@ -1,4 +1,5 @@
-/** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling (log) */
+/** TODO: replace every 'epoll_wait()' with 'epoll_pwait()' >>> signal handling
+ * (log) */
 
 #define _GNU_SOURCE 1
 
@@ -20,6 +21,7 @@
 #include <sys/types.h>
 
 #ifdef SGX
+#include "../common/common_ssl/common.h"
 #include <openenclave/host.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -28,8 +30,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 #endif
-
-//I will need the common.h here as well
 
 #define TT_MAP_PROT (PROT_READ | PROT_WRITE)
 #define TT_MAP_FLAGS (MAP_ANON | MAP_PRIVATE)
@@ -75,24 +75,37 @@ struct client_handle {
 	int sock;
 #ifdef SGX
 	SSL *ssl;
+	X509 *cert;
+	SSL_CTX *ctx;
 #endif
 };
 
 /*****************************************************************************/
 
-static int server_version_check(int ssock)
+static int server_version_check(struct client_handle *ch)
 {
 	__u8 tbuf[5];
 
 	*tbuf = REQ_INIT_CONN;
 	*((__u32 *)(tbuf + 1UL)) = htobe32(TT_VERSION);
 
-	if (send(ssock, tbuf, 5UL, 0) < 0) {
+#ifndef SGX
+	if (send(ch->sock, tbuf, 5UL, 0) < 0) {
 		log_error("send()");
 		return -(EXIT_FAILURE);
 	}
+#else
+	if (SSL_write(ch->ssl, tbuf, 5UL) < 0) {
+		log_error("SSL_write()");
+		return -(EXIT_FAILURE);
+	}
+#endif
 
-	int64_t ret = recv(ssock, tbuf, 4UL, 0);
+#ifndef SGX
+	int64_t ret = recv(ch->sock, tbuf, 4UL, 0);
+#else
+	int64_t ret = SSL_read(ch->ssl, tbuf, 4UL);
+#endif
 
 	if (ret < 0) {
 		log_error("recv()");
@@ -103,7 +116,6 @@ static int server_version_check(int ssock)
 	}
 
 	printf("TEBIS_SERVER_VERSION: 0x%x\n", *((__u32 *)(tbuf)));
-
 	return EXIT_SUCCESS;
 }
 
@@ -147,6 +159,30 @@ void ssl_init(void)
 	SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_1);
 	// specify the verify_callback for custom verification
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, &verify_callback);
+=======
+void ssl_init(struct client_handle *chandle)
+{
+	static int flag = 0;
+	bool init = __sync_bool_compare_and_swap(&flag, 0, 1);
+	if (init) {
+		OpenSSL_add_all_algorithms();
+		ERR_load_BIO_strings();
+		ERR_load_crypto_strings();
+		SSL_load_error_strings();
+	}
+
+	if ((chandle->ctx = SSL_CTX_new(SSLv23_client_method())) == NULL) {
+		log_error("TLS client: unable to create a new SSL context");
+		SSL_done(NULL, chandle->cert, chandle->ctx);
+	}
+
+	// choose TLSv1.2 by excluding SSLv2, SSLv3 ,TLS 1.0 and TLS 1.1
+	SSL_CTX_set_options(chandle->ctx, SSL_OP_NO_SSLv2);
+	SSL_CTX_set_options(chandle->ctx, SSL_OP_NO_SSLv3);
+	SSL_CTX_set_options(chandle->ctx, SSL_OP_NO_TLSv1);
+	SSL_CTX_set_options(chandle->ctx, SSL_OP_NO_TLSv1_1);
+	SSL_CTX_set_verify(chandle->ctx, SSL_VERIFY_NONE, NULL);
+>>>>>>> 23f1689 ([feat] SSL sockets)
 }
 #endif
 
@@ -169,10 +205,10 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	ch->flags2 = CLHF_SND_REQ;
 
 #ifdef SGX
-	ssl_init();
-	if ((ch->ssl = SSL_new(ctx)) == NULL) {
-		printf("Unable to create a new SSL connection state object\n");
-		SSL_done(ch->ssl, cert, ctx);
+	ssl_init(ch);
+	if ((ch->ssl = SSL_new(ch->ctx)) == NULL) {
+		log_error("SSL_new()");
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 		return -(EXIT_FAILURE);
 	}
 #endif
@@ -192,19 +228,17 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	if ((retc = getaddrinfo(addr, port, &hints, &res))) {
 		gai_strerror(retc);
 #ifdef SGX
-		SSL_done(ch->ssl, cert, ctx);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 #endif
 		return -(EXIT_FAILURE);
 	}
 
 	if (!res) {
 #ifdef SGX
-		SSL_done(ch->ssl, cert, ctx);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 #endif
 		return -(EXIT_FAILURE);
 	}
-
-	// char debug[INET6_ADDRSTRLEN];
 
 	for (rp = res; rp; rp = rp->ai_next) {
 		if ((ch->sock = socket(rp->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) {
@@ -212,30 +246,30 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 			continue;
 		}
 
-		// printf("rp->ai_addr = %s\n", inet_ntop(rp->ai_family, &rp->ai_addr, debug, INET6_ADDRSTRLEN));
-
 		if (!connect(ch->sock, rp->ai_addr, rp->ai_addrlen)) {
-			if (server_version_check(ch->sock) < 0) {
-				close(ch->sock);
-				continue;
-			}
-
 			ch->flags1 = MAGIC_INIT_NUM;
 			freeaddrinfo(res);
 #ifdef SGX
 			SSL_set_fd(ch->ssl, ch->sock);
 			int error;
 			if ((error = SSL_connect(ch->ssl)) != 1) {
-				log_error("Could not establish SSL session");
-				SSL_done(ch->ssl, cert, ctx);
+				log_error("SSL_connect");
+				SSL_get_error(ch->ssl, error);
+				SSL_done(ch->ssl, ch->cert, ch->ctx);
 				return -(EXIT_FAILURE);
 			}
-			printf("TLS client: successfully established TLS channel:%s\n", SSL_get_version(ch->ssl));
 #endif
+			if (server_version_check(ch) < 0) {
+#ifdef SGX
+				SSL_done(ch->ssl, ch->cert, ch->ctx);
+#endif
+				close(ch->sock);
+				continue;
+			}
 			return EXIT_SUCCESS;
 		}
 #ifdef SGX
-		SSL_done(ch->ssl, cert, ctx);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 #endif
 		close(ch->sock);
 	}
@@ -268,7 +302,7 @@ int chandle_destroy(cHandle chandle)
 	recv(ch->sock, &discardbuf, sizeof(discardbuf), 0); // zero will be returned
 	close(ch->sock);
 #ifdef SGX
-	SSL_done(ch->ssl, cert, ctx);
+	SSL_done(ch->ssl, ch->cert, ch->ctx);
 #endif
 	free(chandle);
 	return EXIT_SUCCESS;
@@ -431,9 +465,11 @@ c_tcp_rep c_tcp_rep_new(size_t size)
 	return irep;
 }
 
-static int c_tcp_rep_update(struct internal_tcp_rep **irep, int retc, size_t size) // internal-use-only
+static int c_tcp_rep_update(struct internal_tcp_rep **irep, int retc,
+			    size_t size) // internal-use-only
 {
-	/** TODO: irep->buf.mem is unecessary. irep->buf.mem is always equal to irep + sizeof(*irep) */
+	/** TODO: irep->buf.mem is unecessary. irep->buf.mem is always equal to irep +
+   * sizeof(*irep) */
 
 	struct internal_tcp_rep *_irep = *irep;
 
@@ -496,11 +532,12 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 		return -(EXIT_FAILURE);
 	}
 
-	/* if (!(ch->flags2 & CLHF_SND_REQ)) // client waits for a 'reply' (not a 'request')
-	{
-		errno = EPERM;
-		return -(EXIT_FAILURE);
-	} */
+	/* if (!(ch->flags2 & CLHF_SND_REQ)) // client waits for a 'reply' (not a
+  'request')
+  {
+          errno = EPERM;
+          return -(EXIT_FAILURE);
+  } */
 
 	/** END OF ERROR HANDLING **/
 
@@ -519,8 +556,8 @@ int c_tcp_send_req(cHandle chandle, c_tcp_req req)
 		int error = SSL_get_error(ch->ssl, bytes_written);
 		if (error == SSL_ERROR_WANT_WRITE || error == SSL_ERROR_WANT_READ)
 			continue;
-		printf("TLS client failed! SSL_write returned %d\n", error);
-		SSL_done(ch->ssl, cert, ctx);
+		log_error("TLS client failed! SSL_write returned %d\n", error);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 		return -(EXIT_FAILURE);
 	}
 #endif
@@ -561,11 +598,10 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 #else
 	while ((bytes_read = SSL_read(ch->ssl, irep->buf.mem, TT_REPHDR_SIZE)) <= 0) {
 		int error = SSL_get_error(ch->ssl, bytes_read);
-		if (error == SSL_ERROR_WANT_READ || SSL_ERROR_WANT_WRITE)
+		if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
 			continue;
-		printf("TLS client failed! SSL_read returned error=%d\n", error);
-		log_error("SSL_read() returned: %ld", bytes_read);
-		SSL_done(ch->ssl, cert, ctx);
+		log_error("TLS client failed! SSL_read returned error=%d\n", error);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 		return -(EXIT_FAILURE);
 	}
 #endif
@@ -584,13 +620,12 @@ int c_tcp_recv_rep(cHandle restrict chandle, c_tcp_rep *rep)
 		return -(EXIT_FAILURE);
 	}
 #else
-	while ((bytes_read = SSL_read(ch->ssl, irep->buf.mem, irep->size)) <= 0) {
+	while (irep->size != 0 && (bytes_read = SSL_read(ch->ssl, irep->buf.mem, irep->size)) <= 0) {
 		int error = SSL_get_error(ch->ssl, bytes_read);
-		if (error == SSL_ERROR_WANT_READ || SSL_ERROR_WANT_WRITE)
+		if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE)
 			continue;
-		printf("TLS client failed! SSL_read returned error=%d\n", error);
-		log_error("SSL_read() returned: %ld", bytes_read);
-		SSL_done(ch->ssl, cert, ctx);
+		log_error("TLS client failed! SSL_read returned error=%d\n", error);
+		SSL_done(ch->ssl, ch->cert, ch->ctx);
 		return -(EXIT_FAILURE);
 	}
 #endif
