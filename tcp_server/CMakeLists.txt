@@ -1,7 +1,12 @@
-# File: tcp_server/CMakeLists.txt Author: Orestis Chiotakis
-# <orchiot@ics.forth.gr>
-
 set(tcp_server_EXEC "tcp-server")
+
+if(ENC_KEYS)
+  add_compile_definitions(ENC_KEYS)
+endif()
+
+if(ENC_VALUES)
+  add_compile_definitions(ENC_VALUES)
+endif()
 
 if(NOT SGX_BUILD)
   add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
@@ -25,6 +30,7 @@ else()
     openenclave::oehostsock
     openenclave::oehostresolver
     openenclave::oehostepoll
+    openenclave::oeseal_gcmaes
     parallax
     log
     yaml

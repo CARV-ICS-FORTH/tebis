@@ -542,9 +542,6 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	shandle->workers = (struct worker *)((char *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
-	if (pthread_rwlock_init(&shandle->lock, NULL) != 0) {
-		return -(EXIT_FAILURE);
-	}
 
 #ifdef SGX
 	/* Load host resolver and socket interface modules explicitly */
@@ -583,7 +580,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 		goto cleanup;
 	}
 #else
-	typeof(sconf->inaddr.ss_family) fam = sconf->inaddr.ss_family;
+	sa_family_t fam = sconf->inaddr.ss_family;
 
 	if ((shandle->sock = socket(fam, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) < 0)
 		goto cleanup;
@@ -1162,7 +1159,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 #endif
 	par_handle par_db = __server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
 	uint32_t tmp = 0;
-	struct conn_info *conn_info;
+	// struct conn_info *conn_info;
 
 	switch (req->type) {
 	case REQ_GET:
