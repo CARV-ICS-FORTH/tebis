@@ -77,7 +77,7 @@ the commands:
 
 	mkdir build
 	cd build
-	cmake ..
+	cmake .. -DTEBIS_FORMAT=ON
 	make
 
 On Centos/RHEL 7, replace the `cmake` command with the `cmake3` command supplied
