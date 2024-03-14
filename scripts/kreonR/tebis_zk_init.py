@@ -95,7 +95,7 @@ def main():
     with open(hosts_file, "r") as hosts:
         hosts_file_lines = hosts.readlines()
         hosts_file_lines = list(
-            filter(lambda x: not x.startswith("#"), hosts_file_lines)
+            filter(lambda x: not x.startswith("#") and x.strip(), hosts_file_lines)
         )
         leader = hosts_file_lines[0].split()[0]
         for line in hosts_file_lines:
@@ -135,7 +135,7 @@ def main():
     with open(regions_file, "r") as regions:
         regions_file_lines = regions.readlines()
         regions_file_lines = list(
-            filter(lambda x: not x.startswith("#"), regions_file_lines)
+            filter(lambda x: not x.startswith("#") and x.strip(), regions_file_lines)
         )
         for line in regions_file_lines:
             cols = line.split()

@@ -130,4 +130,5 @@ struct connection_rdma *regs_get_data_conn(struct regs_server_desc const *region
 					   char *IP_address);
 struct connection_rdma *regs_get_compaction_conn(struct regs_server_desc *region_server, char *hostname,
 						 char *IP_address);
+region_desc_t regs_get_region_desc(struct regs_server_desc const *region_server, char *key, uint32_t key_size);
 #endif

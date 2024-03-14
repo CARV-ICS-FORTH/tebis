@@ -81,8 +81,10 @@ void set_receive_field(struct msg_header *msg, uint8_t value)
 
 uint8_t get_receive_field(volatile struct msg_header *msg)
 {
+	char *buf = (char *)msg;
+	assert(msg->payload_length < 40000);
 	struct msg_header *last_msg_header =
-		(struct msg_header *)((char *)msg + msg->payload_length + msg->padding_and_tail_size);
+		(struct msg_header *)&buf[msg->payload_length + msg->padding_and_tail_size];
 	return last_msg_header->receive;
 }
 

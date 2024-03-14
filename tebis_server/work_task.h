@@ -73,6 +73,7 @@ struct work_task {
 	int error_code;
 	//int suspended;
 	int seg_id_to_flush;
+	struct request *request; /*pointer to the abstract object request*/
 	uint64_t rescheduling_counter;
 	enum work_task_type task_type;
 	enum work_task_status kreon_operation_status;
