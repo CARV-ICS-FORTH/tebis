@@ -19,8 +19,8 @@ option(
 
 option(DISABLE_ALL_WARNINGS "Disable all warnings to parse iwyu output." OFF)
 
-# TODO: remove this and find a clean solution for it
-option(USE_FORKED_PARALLAX "Use open sourced Parallax from github" OFF)
+# TODO: remove this and find a clean solution for it option(USE_FORKED_PARALLAX
+# "Use open sourced Parallax from github" OFF)
 
 if(RUN_IWYU STREQUAL "ON")
   file(COPY ${CMAKE_SOURCE_DIR}/scripts/CI/check-iwyu-output.py
@@ -69,19 +69,10 @@ FetchContent_Declare(
   GIT_TAG main
   GIT_PROGRESS TRUE)
 
-if(USE_FORKED_PARALLAX)
-  FetchContent_Declare(
-    parallax
-    GIT_REPOSITORY git@github.com:CARV-ICS-FORTH/parallax.git
-    GIT_TAG teboparallax_synced)
-else()
-  FetchContent_Declare(
-    parallax
-    GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
-    GIT_TAG extra_hdf5_functionality)
-
-endif(USE_FORKED_PARALLAX)
-unset(USE_FORKED_PARALLAX CACHE)
+FetchContent_Declare(
+  parallax
+  GIT_REPOSITORY git@github.com:CARV-ICS-FORTH/parallax.git
+  GIT_TAG teboparallax_synced)
 
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
