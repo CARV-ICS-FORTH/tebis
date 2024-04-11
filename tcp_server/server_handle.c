@@ -1236,7 +1236,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 		HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
 		pthread_rwlock_unlock(&this->shandle->lock);
 		while ((ret = mbedtls_ssl_write(conn_info->ssl_session, (const unsigned char *)this->buf.mem,
-						TT_REPHDR_SIZE) <= 0)) {
+						TT_REPHDR_SIZE)) <= 0) {
 			if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
 				continue;
 			return -1;
