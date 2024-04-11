@@ -205,6 +205,9 @@ int chandle_init(cHandle restrict *restrict chandle, const char *restrict addr, 
 	ch->flags2 = CLHF_SND_REQ;
 
 #ifdef SGX
+  ch->ssl = NULL;
+  ch->ctx = NULL;
+  ch->cert = NULL;
 	ssl_init(ch);
 	if ((ch->ssl = SSL_new(ch->ctx)) == NULL) {
 		log_error("SSL_new()");
