@@ -4,9 +4,10 @@
 #include "mbedtls_utility.h"
 #include "testcerts.h"
 #include <mbedtls/ctr_drbg.h>
-#include <openenclave/attestation/attester.h>
-#include <openenclave/attestation/sgx/evidence.h>
-#include <openenclave/attestation/sgx/report.h>
+#include <stdio.h>
+//#include <openenclave/attestation/attester.h>
+//#include <openenclave/attestation/sgx/evidence.h>
+//#include <openenclave/attestation/sgx/report.h>
 
 // SGX Remote Attestation UUID.
 // static oe_uuid_t _uuid_sgx_ecdsa = {OE_FORMAT_UUID_SGX_ECDSA};
@@ -23,13 +24,12 @@ const char mbedtls_test_cas_pem[] = TEST_CA_CRT_RSA_SHA256_PEM;
 const size_t mbedtls_test_cas_pem_len = sizeof(mbedtls_test_cas_pem);
 
 // Consider to move this function into a shared directory
-oe_result_t generate_certificate_and_pkey(mbedtls_x509_crt *certificate, mbedtls_pk_context *private_key)
+int generate_certificate_and_pkey(mbedtls_x509_crt *certificate, mbedtls_pk_context *private_key)
 {
-	oe_result_t result = OE_FAILURE;
-	uint8_t *private_key_buffer = NULL;
-	size_t private_key_buffer_size = 0;
-	uint8_t *public_key_buffer = NULL;
-	size_t public_key_buffer_size = 0;
+	//uint8_t *private_key_buffer = NULL;
+	//size_t private_key_buffer_size = 0;
+	//uint8_t *public_key_buffer = NULL;
+	//size_t public_key_buffer_size = 0;
 	// uint8_t* optional_parameters = NULL;
 	// size_t optional_parameters_size = 0;
 	int ret = 0;
@@ -115,11 +115,10 @@ oe_result_t generate_certificate_and_pkey(mbedtls_x509_crt *certificate, mbedtls
 	//     result = OE_FAILURE;
 	//     goto exit;
 	// }
-	result = OE_OK;
 exit:
 	// oe_attester_shutdown();
-	oe_free_key(private_key_buffer, private_key_buffer_size, NULL, 0);
-	oe_free_key(public_key_buffer, public_key_buffer_size, NULL, 0);
+	//oe_free_key(private_key_buffer, private_key_buffer_size, NULL, 0);
+	//oe_free_key(public_key_buffer, public_key_buffer_size, NULL, 0);
 	// oe_free_attestation_certificate(output_certificate);
-	return result;
+	return ret;
 }

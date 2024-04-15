@@ -42,7 +42,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 
-#ifdef SGX
+#ifdef SSL
 #include "../common/common_ssl/mbedtls_utility.h"
 #include <mbedtls/certs.h>
 #include <mbedtls/ctr_drbg.h>
@@ -55,7 +55,9 @@
 #include <mbedtls/rsa.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509.h>
+#ifdef SGX
 #include <openenclave/enclave.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
@@ -130,7 +132,7 @@ struct worker {
 	struct par_value pval;
 };
 
-#ifdef SGX
+#ifdef SSL
 struct conn_info {
 	int32_t fd;
 	mbedtls_ssl_context *ssl_session;
@@ -151,7 +153,7 @@ struct server_handle {
 
 	struct server_options *opts;
 	struct worker *workers;
-#ifdef SGX
+#ifdef SSL
 	mbedtls_net_context listen_fd;
 	struct conn_info *conn_ht;
 	pthread_rwlock_t lock;
@@ -190,7 +192,7 @@ _Thread_local const char *par_error_message_tl;
 #define MAX_REGIONS 128
 
 /***** private functions (decl) *****/
-#ifdef SGX
+#ifdef SSL
 static void my_debug(void *ctx, int level, const char *file, int line, const char *str)
 {
 	((void)level);
@@ -248,7 +250,7 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
  * @brief
  *
  */
-#ifndef SGX
+#ifndef SSL
 static int __pin_thread_to_core(int core);
 #endif
 
@@ -471,16 +473,15 @@ int server_print_config(sHandle server_handle)
 	return EXIT_SUCCESS;
 }
 
-#ifdef SGX
+#ifdef SSL
 int configure_server_ssl(mbedtls_ssl_config *conf, mbedtls_ctr_drbg_context *ctr_drbg, mbedtls_x509_crt *server_cert,
 			 mbedtls_pk_context *pkey)
 {
 	int ret = 1;
-	oe_result_t result = OE_FAILURE;
 
-	result = generate_certificate_and_pkey(server_cert, pkey);
-	if (result != OE_OK) {
-		plog(PL_ERROR "generate_certificate_and_pkey failed with %s\n", oe_result_str(result));
+	ret = generate_certificate_and_pkey(server_cert, pkey);
+	if (ret != 0) {
+		plog(PL_ERROR "generate_certificate_and_pkey failed with %d\n", ret);
 		goto exit;
 	}
 
@@ -508,7 +509,7 @@ exit:
 }
 #endif
 
-#ifdef SGX
+#ifdef SSL
 mbedtls_entropy_context entropy;
 mbedtls_ctr_drbg_context ctr_drbg;
 mbedtls_ssl_config conf;
@@ -542,13 +543,18 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	shandle->workers = (struct worker *)((char *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
+#ifdef SSL
+	if (pthread_rwlock_init(&shandle->lock, NULL) != 0) {
+		return -(EXIT_FAILURE);
+	}
 
-#ifdef SGX
 	/* Load host resolver and socket interface modules explicitly */
+#ifdef SGX
 	if (load_oe_modules() != OE_OK) {
 		plog(PL_ERROR "loading required Open Enclave modules failed\n");
 		goto cleanup;
 	}
+#endif
 
 	shandle->conn_ht = NULL;
 	// init mbedtls objects
@@ -561,7 +567,9 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	mbedtls_pk_init(&pkey);
 	mbedtls_entropy_init(&entropy);
 	mbedtls_ctr_drbg_init(&ctr_drbg);
+#ifdef SGX
 	oe_verifier_initialize();
+#endif
 
 	if ((ret = mbedtls_net_bind(&shandle->listen_fd, sconf->paddr, port_str, MBEDTLS_NET_PROTO_TCP)) != 0) {
 		plog(PL_ERROR "mbedtls_net_bind returned %d\n", ret);
@@ -643,14 +651,16 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	return EXIT_SUCCESS;
 
 cleanup:
-#ifdef SGX
+#ifdef SSL
 	mbedtls_net_free(&shandle->listen_fd);
 	mbedtls_x509_crt_free(&server_cert);
 	mbedtls_pk_free(&pkey);
 	mbedtls_ssl_config_free(&conf);
 	mbedtls_ctr_drbg_free(&ctr_drbg);
 	mbedtls_entropy_free(&entropy);
+#ifdef SGX
 	oe_verifier_shutdown();
+#endif
 #endif
 	close(shandle->sock);
 	close(shandle->epfd);
@@ -670,14 +680,16 @@ int server_handle_destroy(sHandle server_handle)
 	/** END OF ERROR HANDLING **/
 
 	// signal all threads to cancel
-#ifdef SGX
+#ifdef SSL
 	mbedtls_net_free(&shandle->listen_fd);
 	mbedtls_x509_crt_free(&server_cert);
 	mbedtls_pk_free(&pkey);
 	mbedtls_ssl_config_free(&conf);
 	mbedtls_ctr_drbg_free(&ctr_drbg);
 	mbedtls_entropy_free(&entropy);
+#ifdef SGX
 	oe_verifier_shutdown();
+#endif
 #endif
 
 	close(shandle->sock);
@@ -789,7 +801,7 @@ static int __handle_new_connection(struct worker *this)
 		perror("fcntl cloexec failure");
 		return -(EXIT_FAILURE);
 	}
-#ifdef SGX
+#ifdef SSL
 	int ret;
 	mbedtls_ssl_context *ssl_session = malloc(sizeof(mbedtls_ssl_context));
 	if (ssl_session == NULL) {
@@ -855,7 +867,7 @@ static int __handle_new_connection(struct worker *this)
 	if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
 		perror("__handle_new_connection::epoll_ctl(ADD)");
 		close(tmpfd);
-#ifdef SGX
+#ifdef SSL
 		free(ssl_session);
 		free(client_fd);
 #endif
@@ -872,7 +884,7 @@ static int __handle_new_connection(struct worker *this)
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, tmpfd, NULL);
 		close(this->sock);
 		close(tmpfd);
-#ifdef SGX
+#ifdef SSL
 		free(ssl_session);
 		free(client_fd);
 #endif
@@ -891,10 +903,10 @@ static int __client_version_check(int client_sock, struct worker *worker)
 		errno = ECONNREFUSED;
 		return -(EXIT_FAILURE);
 	}
-#ifdef SGX
-	struct conn_info *conn_info;
+#ifdef SSL
 	if (pthread_rwlock_rdlock(&worker->shandle->lock) != 0)
 		exit(EXIT_FAILURE);
+	struct conn_info *conn_info;
 	HASH_FIND_INT(worker->shandle->conn_ht, &client_sock, conn_info);
 	pthread_rwlock_unlock(&worker->shandle->lock);
 	if (mbedtls_ssl_write(conn_info->ssl_session, (const unsigned char *)&version, sizeof(version)) < 0) {
@@ -944,7 +956,7 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
 
 static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-#ifdef SGX
+#ifdef SSL
 	struct conn_info *conn_info;
 	if (pthread_rwlock_rdlock(&this->shandle->lock) != 0)
 		exit(EXIT_FAILURE);
@@ -982,7 +994,7 @@ static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct 
 		(req->kv.key.size + req->kv.value.size + ((req->type == REQ_GET) ? 5UL : 9UL)) - ret;
 
 	while (bytes_left) {
-#ifdef SGX
+#ifdef SSL
 		while ((ret = mbedtls_ssl_read(conn_info->ssl_session, (unsigned char *)(this->buf.mem + off),
 					       bytes_left)) <= 0) {
 			if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
@@ -1007,7 +1019,7 @@ static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct 
 static void *__handle_events(void *arg)
 {
 	struct worker *this = arg;
-#ifndef SGX
+#ifndef SSL
 	if (__pin_thread_to_core(this->core) < 0) {
 		plog(PL_ERROR "__pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
@@ -1062,7 +1074,7 @@ static void *__handle_events(void *arg)
 
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
 		close(client_sock);
-#ifdef SGX
+#ifdef SSL
 		struct conn_info *conn_info;
 		if (pthread_rwlock_wrlock(&this->shandle->lock) != 0) {
 			continue;
@@ -1118,7 +1130,7 @@ static void *__handle_events(void *arg)
 	client_error:
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
 		close(client_sock);
-#ifdef SGX
+#ifdef SSL
 		struct conn_info *conn_info;
 		if (pthread_rwlock_wrlock(&this->shandle->lock) != 0) {
 			continue;
@@ -1154,12 +1166,12 @@ static par_handle __server_handle_get_db(sHandle restrict server_handle, uint32_
 
 static int __par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-#ifdef SGX
+#ifdef SSL
 	int ret;
+	struct conn_info *conn_info;
 #endif
 	par_handle par_db = __server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
 	uint32_t tmp = 0;
-	// struct conn_info *conn_info;
 
 	switch (req->type) {
 	case REQ_GET:
@@ -1185,7 +1197,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 			// memcpy(this->buf.mem + TT_REPHDR_SIZE, this->pval.val_buffer, tmp);
 		}
 
-#ifdef SGX
+#ifdef SSL
 		if (pthread_rwlock_rdlock(&this->shandle->lock) != 0) {
 			return -1;
 		}
@@ -1206,14 +1218,19 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 		;
-		char *serialized_buf = req->kv.key.data - 8UL;
-		uint32_t key_size = *(uint32_t *)&serialized_buf[0];
-		uint32_t value_size = *(uint32_t *)&serialized_buf[4];
-		struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
-						      .kv_type = KV_FORMAT,
-						      .kv_splice = (struct kv_splice *)serialized_buf };
-		par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
-				   false); // '-8UL' temp solution
+		//char *serialized_buf = req->kv.key.data - 8UL;
+		//uint32_t key_size = *(uint32_t *)&serialized_buf[0];
+		//uint32_t value_size = *(uint32_t *)&serialized_buf[4];
+		//struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
+		//				      .kv_type = KV_FORMAT,
+		//				      .kv_splice = (struct kv_splice *)serialized_buf };
+		//par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
+		//		   false); // '-8UL' temp solution
+		struct par_key_value KV_pair = { .k = { .size = req->kv.key.size, .data = req->kv.key.data },
+						 .v = { .val_buffer = req->kv.value.data,
+							.val_size = req->kv.value.size,
+							.val_buffer_size = req->kv.value.size } };
+		par_put(par_db, &KV_pair, &par_error_message_tl);
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
@@ -1229,7 +1246,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 		/* PUT-req does not return a value */
 
 		*((uint32_t *)(this->buf.mem + 1UL)) = 0U;
-#ifdef SGX
+#ifdef SSL
 		if (pthread_rwlock_rdlock(&this->shandle->lock) != 0) {
 			return -1;
 		}
@@ -1256,7 +1273,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 	return EXIT_SUCCESS;
 }
 
-#ifndef SGX
+#ifndef SSL
 static int __pin_thread_to_core(int core)
 {
 	cpu_set_t cpuset;

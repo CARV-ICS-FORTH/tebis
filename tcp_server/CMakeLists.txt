@@ -8,9 +8,12 @@ if(ENC_VALUES)
   add_compile_definitions(ENC_VALUES)
 endif()
 
+add_compile_definitions(SSL)
+
 if(NOT SGX_BUILD)
-  add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
-  target_link_libraries(${tcp_server_EXEC} pthread parallax m rt)
+  add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c
+                                    ../common/common_ssl/mbedtls_utility.c)
+  target_link_libraries(${tcp_server_EXEC} mbedtls pthread parallax rt)
 else()
   find_package(OpenEnclave CONFIG REQUIRED)
   add_compile_definitions(SGX)
