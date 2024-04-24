@@ -1,3 +1,8 @@
+// Copyright (c) Open Enclave SDK contributors.
+// Licensed under the MIT License.
+#ifdef SGX
+#include "utility.h"
+#endif
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
