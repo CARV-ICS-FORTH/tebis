@@ -1,2 +1,0 @@
-Start time: 08:08:42 PM
-0 sec 2454 operations 2454 ops/sec

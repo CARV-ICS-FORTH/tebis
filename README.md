@@ -83,6 +83,15 @@ the commands:
 On Centos/RHEL 7, replace the `cmake` command with the `cmake3` command supplied
 from the EPEL package of the same name.
 
+In the case of the standalone tcp-server you need to allocate a file for Parallax via the command
+`fallocate -l <size in GB>G <file name>`
+Then, you need to initialize it with the kv_format tool of Parallax
+`<BUILD_FOLDER>_deps/parallax-build/lib/kv_format.parallax --device <file name> --max_regions_num <number of regions>`
+Finally, execute
+`<BUILD_FOLDER>/tcp_server/tcp-server -t <threads num> -b <IP address> -p <port number> -f <file name> -L0 <L0 size in MB> -GF <growth factor>`
+
+
+
 ## Build Configuration Parameters
 
 The CMake scripts provided support two build configurations; "Release" and
