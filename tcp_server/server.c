@@ -33,7 +33,7 @@ int main(int argc, char **argv)
 
 	/** parse/set options **/
 
-	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) { // stupid clang
+	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {
 		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
 		exit(errno);
 	}

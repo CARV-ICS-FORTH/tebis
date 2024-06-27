@@ -63,6 +63,8 @@
 	" -b, --bind <if-address>     specify the interface that the server will bind to.\n"       \
 	" -p, --port <port>           specify the port that the server will be listening\n"        \
 	" -f, --file <path>           specify the target (file of db) where parallax will run\n\n" \
+	" -L0, --L0_size <size in MB>       size of L0 level in Parallax\n\n"                      \
+	" -GF, --GF <growth factor>   specify the growth factor between levels\n\n"                \
 	" -h, --help     display this help and exit\n"                                             \
 	" -v, --version  display version information and exit\n"
 #define NECESSARY_OPTIONS 6
@@ -106,7 +108,7 @@ struct worker {
 };
 
 /** server handle **/
-#define MAX_PARALLAX_DBS 32
+#define MAX_PARALLAX_DBS 1
 struct server_handle {
 	__u16 magic_init_num;
 	__u32 flags;
@@ -763,9 +765,7 @@ static void *__handle_events(void *arg)
 		exit(EXIT_FAILURE);
 	}
 
-	uint32_t key_size = *(uint32_t *)(&this->buf.mem[1]);
-	uint32_t value_size = *(uint32_t *)(&this->buf.mem[5]);
-	struct tcp_req req = { .kv_splice_base.kv_cat = calculate_KV_category(key_size, value_size, insertOp),
+	struct tcp_req req = { .kv_splice_base.kv_cat = 100,
 			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
 
 	int events;
