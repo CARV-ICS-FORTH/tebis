@@ -71,9 +71,8 @@ FetchContent_Declare(
 
 FetchContent_Declare(
   parallax
-  GIT_REPOSITORY git@github.com:CARV-ICS-FORTH/parallax.git
+  GIT_REPOSITORY https://github.com/CARV-ICS-FORTH/parallax.git
   GIT_TAG teboparallax_synced)
-
 # Using FetchContent_Declare results in build failed because both 'json-c' and
 # 'log' have a target called 'uninstall'
 ExternalProject_Add(
@@ -147,7 +146,7 @@ find_path(
 
 find_library(
   Zookeeper_LIBRARY
-  NAMES libzookeeper_mt.a libzookeeper_mt.so
+  NAMES libzookeeper_mt.a libzookeeper_mt.so libzookeeper_mt.so.2
   PATHS ${Zookeeper_LIB_PATHS})
 
 if(NOT Zookeeper_LIBRARY)
@@ -179,7 +178,7 @@ string(
   CMAKE_C_FLAGS
   " -Wstrict-prototypes -Wall -Werror -Wextra -pedantic -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
-string(APPEND CMAKE_CXX_FLAGS_RELEASE " -std=gnu++11 -Wall -fpic")
+string(APPEND CMAKE_CXX_FLAGS_RELEASE " -fno-omit-frame-pointer -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer -g")
 string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
@@ -189,6 +188,9 @@ set(CMAKE_LINKER_FLAGS
 
 add_subdirectory(tebis_rdma)
 add_subdirectory(tebis_server)
+add_subdirectory(tcp_client)
+add_subdirectory(tcp_server)
+# add_subdirectory(tcp_server_io_uring)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)

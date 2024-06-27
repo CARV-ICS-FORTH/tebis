@@ -1,0 +1,8 @@
+level0_size: 16
+gc_interval: 10
+growth_factor: 4
+medium_log_LRU_cache_size: 400
+level_medium_inplace: 4
+primary_mode: 1
+replica_mode: 0
+enable_bloom_filters: 1

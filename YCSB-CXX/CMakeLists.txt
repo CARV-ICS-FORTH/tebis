@@ -1,10 +1,17 @@
 # File: YCSB-CXX/CMakeLists.txt Author: Michalis Vardoulakis
 # <mvard@ics.forth.gr>
 
-include_directories(BEFORE core db ../tebis ../tebis_server)
+include_directories(BEFORE core db ../tebis ../tcp_client)
 
 if(Zookeeper_LIBRARY)
   # FIXME  fix the include directive paths in ycsb's subfolders
+
+  add_executable(ycsb-tcp db/tcp_db.cc db/db_factory_tcpdb.cc
+                          core/core_workload.cc driver/ycsbc.cc)
+
+  target_link_libraries(ycsb-tcp tcp-client log)
+
+  set_target_properties(ycsb-tcp PROPERTIES LINK_FLAGS "-pthread")
 
   add_executable(
     ycsb-blocking-tebis db/db_factory_blocking_tebis.cc core/core_workload.cc
@@ -19,6 +26,7 @@ if(Zookeeper_LIBRARY)
     libbloom
     ${Zookeeper_LIBRARY}
     ${cjson_LIBRARY})
+
   add_dependencies(ycsb-blocking-tebis cjson)
   set_target_properties(
     ycsb-blocking-tebis
@@ -29,7 +37,9 @@ if(Zookeeper_LIBRARY)
   add_executable(
     ycsb-async-tebis db/db_factory_async_tebis.cc core/core_workload.cc
                      driver/ycsbc.cc ../tebis_server/globals.c)
+
   add_dependencies(ycsb-async-tebis cjson)
+
   target_link_libraries(
     ycsb-async-tebis
     tebis_client
@@ -39,6 +49,7 @@ if(Zookeeper_LIBRARY)
     libbloom
     ${Zookeeper_LIBRARY}
     ${cjson_LIBRARY})
+
   set_target_properties(
     ycsb-async-tebis
     PROPERTIES LINK_FLAGS

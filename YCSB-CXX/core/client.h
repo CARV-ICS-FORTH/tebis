@@ -183,18 +183,18 @@ namespace ycsbc {
 	inline int Client::TransactionInsert() 
 	{
 		const std::string &table = workload_.NextTable();
-#ifdef NEW_GENERATORS
+		#ifdef NEW_GENERATORS
 		uint64_t keynum = workload_.transaction_insert_key_sequence_->nextValue();
 		const std::string &key = workload_.BuildKeyName(keynum); 
-#else
+		#else
 		const std::string &key = workload_.NextSequenceKey();
-#endif
+		#endif
 		std::vector<YCSBDB::KVPair> values;
 		workload_.BuildValues(values);
 		int ret = db_.Insert(id_, table, key, values);
-#ifdef NEW_GENERATORS
+		#ifdef NEW_GENERATORS
 		workload_.transaction_insert_key_sequence_->acknowledge(keynum);
-#endif
+		#endif
 		return ret;
 	} 
 

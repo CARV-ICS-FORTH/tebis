@@ -48,3 +48,7 @@ docs/xml/*
 .cache
 .ccls-cache
 remote_build/
+compile_commands.txt
+.vscode
+notes.txt
+__build/
