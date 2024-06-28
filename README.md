@@ -12,6 +12,8 @@ More details can be found in the Eurosys '22 paper [Tebis: Index Shipping for Ef
 - tebis_server contains all the server related code
 - tebis_rdma_client contains the client side code of Tebis
 - File  tebis_rdma_client/tebis_rdma_client.h  contains the public API of the client API
+- tcp_server contains the code for a standalone tcp_server over Parallax
+- tcp_client contains the code for the TCP client
 
 # Building Tebis
 **Note: It has been tested with gcc 10.1.0**
@@ -84,10 +86,16 @@ On Centos/RHEL 7, replace the `cmake` command with the `cmake3` command supplied
 from the EPEL package of the same name.
 
 In the case of the standalone tcp-server you need to allocate a file for Parallax via the command
+
+
 `fallocate -l <size in GB>G <file name>`
+
 Then, you need to initialize it with the kv_format tool of Parallax
+
 `<BUILD_FOLDER>_deps/parallax-build/lib/kv_format.parallax --device <file name> --max_regions_num <number of regions>`
+
 Finally, execute
+
 `<BUILD_FOLDER>/tcp_server/tcp-server -t <threads num> -b <IP address> -p <port number> -f <file name> -L0 <L0 size in MB> -GF <growth factor>`
 
 
@@ -99,7 +107,7 @@ The CMake scripts provided support two build configurations; "Release" and
 allow debugging. The build configuration can be defined as a parameter to the
 cmake call as follows:
 
-	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release"  -DUSE_FORKED_PARALLAX=ON
+	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release" 
 
 The default build configuration is "Debug".
 
@@ -137,7 +145,7 @@ To view the report you can run the above command, assuming you have a graphical
 environment or just copy the folder mentioned to a computer that does and open
 the index.html file in that folder.
 
-# Development in cluster
+<!-- Development in cluster
 
 For development in the cluster append the paths below in your PATH environment variable:
 
@@ -150,9 +158,9 @@ For development in the cluster append the paths below in your PATH environment v
 	export PATH=$PATH:/archive/users/gxanth/go/bin
 	export PATH=$PATH:$HOME/go/bin
 	export CC=gcc-9.1
-	export CXX=g++-9.1
+	export CXX=g++-9.1-->
 
-# Install shfmt
+<!--# Install shfmt
 
 To install shfmt run the command below in your shell:
 
@@ -171,13 +179,13 @@ After running cmake .. in the build directory run:
 	compdb -p build/ list > compile_commands.json
 	mv compile_commands.json build
 	cd tebis
-	ln -sf ../build/compile_commands.json
+	ln -sf ../build/compile_commands.json-->
 
 # Pre commit hooks using pre-commit
 
-Add the path below to your PATH environment variable:
+<!--Add the path below to your PATH environment variable:
 
-    	PATH=/archive/users/gxanth/git/bin:$PATH
+    	PATH=/archive/users/gxanth/git/bin:$PATH-->
 
 To install pre-commit:
 
