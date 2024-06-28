@@ -12,7 +12,6 @@
 #define _GNU_SOURCE
 #include "server_handle.h"
 #include "btree/btree.h"
-#include "btree/gc.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
@@ -481,7 +480,6 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 		plog(PL_ERROR "%s", error_message);
 		return -(EXIT_FAILURE);
 	}
-	disable_gc();
 	par_db_options db_options = { .volume_name = (char *)(sconf->dbpath), // fuck clang_format!
 				      .create_flag = PAR_CREATE_DB,
 				      .db_name = "tcp_server_par.db",

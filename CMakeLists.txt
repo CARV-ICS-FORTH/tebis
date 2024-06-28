@@ -178,7 +178,8 @@ string(
   CMAKE_C_FLAGS
   " -Wstrict-prototypes -Wall -Werror -Wextra -pedantic -std=gnu11 -fpic -gdwarf-4 -DTHREADED"
 )
-string(APPEND CMAKE_CXX_FLAGS_RELEASE " -fno-omit-frame-pointer -std=gnu++11 -Wall -fpic")
+string(APPEND CMAKE_CXX_FLAGS_RELEASE
+       " -fno-omit-frame-pointer -std=gnu++11 -Wall -fpic")
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fno-omit-frame-pointer -g")
 string(APPEND CMAKE_CXX_FLAGS " -gdwarf-4 -DTHREADED")
 
@@ -190,11 +191,10 @@ add_subdirectory(tebis_rdma)
 add_subdirectory(tebis_server)
 add_subdirectory(tcp_client)
 add_subdirectory(tcp_server)
-# add_subdirectory(tcp_server_io_uring)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
-file(COPY "benches" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+# file(COPY "benches" DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
 if(tebis_BUILD_CPACK
    AND Zookeeper_INCLUDE_DIR
