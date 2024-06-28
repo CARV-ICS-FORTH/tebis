@@ -1,6 +1,3 @@
-# File: tcp_client/CMakeLists.txt Author: Orestis Chiotakis
-# <orchiot@ics.forth.gr>
-
 set(tcp_client_LIB "tcp-client")
 
 add_library(${tcp_client_LIB} STATIC tcp_client.c tcp_client.h)
