@@ -808,7 +808,7 @@ static void *__handle_events(void *arg)
 		/** new connection **/
 
 		if (client_sock == this->sock) {
-			plog(PL_INFO "new connection");
+			plog(PL_INFO "new connection", NULL);
 
 			if (__handle_new_connection(this) < 0)
 				plog(PL_ERROR "__handle_new_connection() failed: %s\n", strerror(errno));
@@ -823,7 +823,7 @@ static void *__handle_events(void *arg)
 		ret = __req_recv(this, client_sock, &req);
 
 		if (unlikely(ret == TT_ERR_CONN_DROP)) {
-			plog(PL_INFO "client terminated connection!\n");
+			plog(PL_INFO "client terminated connection!\n", NULL);
 			goto client_error;
 		}
 
