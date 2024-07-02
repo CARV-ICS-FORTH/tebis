@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  tebis-base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: dstath/tebis_test_bench:tebis-base
+
+  tebis-zookeeper:
+    build:
+      context: .
+      dockerfile: Dockerfile.zookeeper
+    image: dstath/tebis_test_bench:tebis-zookeeper
+    depends_on:
+      - tebis-base
+    volumes:
+      - .:/usr/src/app
+
+  tebis-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: dstath/tebis_test_bench:tebis-app
+    depends_on:
+      - tebis-zookeeper
+    volumes:
+      - .:/usr/src/app

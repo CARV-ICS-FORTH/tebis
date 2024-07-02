@@ -1,0 +1,22 @@
+FROM dstath/tebis_test_bench:tebis-base
+
+ENV ZOOKEEPER_VERSION=3.5.10
+
+# Download and extract Zookeeper
+RUN wget http://archive.apache.org/dist/zookeeper/zookeeper-${ZOOKEEPER_VERSION}/apache-zookeeper-${ZOOKEEPER_VERSION}.tar.gz \
+    && tar -zxf apache-zookeeper-${ZOOKEEPER_VERSION}.tar.gz
+
+# Compile jute files
+RUN cd apache-zookeeper-${ZOOKEEPER_VERSION} \
+    && cd zookeeper-jute \
+    && mvn compile
+
+# Build and install the Zookeeper C client library using Autotools and CMake
+RUN cd apache-zookeeper-${ZOOKEEPER_VERSION}/zookeeper-client/zookeeper-client-c \
+    && autoreconf --install \
+    && ./configure --with-cyrus-sasl --with-openssl \
+    && export CFLAGS="-I/usr/include/openssl" \
+    && export LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lssl -lcrypto" \
+    && make \
+    && make install \
+    && ldconfig
