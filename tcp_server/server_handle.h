@@ -29,7 +29,7 @@ extern uint32_t GF;
  * @return int
  */
 extern int server_parse_argv_opts(sConfig __restrict__ *__restrict__ sConfig, int argc,
-				  char *__restrict__ *__restrict__ argv) __attribute_warn_unused_result__;
+				  char *__restrict__ *__restrict__ argv) __attribute__((warn_unused_result));
 
 /**
  * @brief
@@ -51,8 +51,8 @@ extern int server_print_config(sHandle shandle);
  * @param server_config
  * @return int
  */
-extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle,
-			      sConfig __restrict__ server_config) __attribute_warn_unused_result__;
+extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle, sConfig __restrict__ server_config)
+	__attribute__((warn_unused_result));
 
 /**
  * @brief Creates all server threads that will be listening to requests from clients. On success, 0 is
@@ -65,7 +65,7 @@ extern int server_handle_init(sHandle __restrict__ *__restrict__ server_handle,
  * @param server_handle
  * @return int
  */
-extern int server_spawn_threads(sHandle server_handle) __attribute_warn_unused_result__;
+extern int server_spawn_threads(sHandle server_handle) __attribute__((warn_unused_result));
 
 /**
  * @brief

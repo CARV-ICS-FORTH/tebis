@@ -8,6 +8,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef SGX
+#include <openenclave/enclave.h>
+#endif
+
 #define LOCALHOST "127.0.0.1"
 #define SITH2_IP_56G "192.168.2.122"
 #define SITH3_IP_56G
@@ -19,6 +23,10 @@ uint32_t level0_size = 0;
 uint32_t GF = 0;
 int main(int argc, char **argv)
 {
+#ifdef SGX
+	oe_load_module_host_socket_interface();
+#endif
+
 #ifdef DEBUG_BUILD_TYPE
 	log_set_level(LOG_DEBUG);
 #elif RELEASE_BUILD_TYPE

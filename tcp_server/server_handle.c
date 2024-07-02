@@ -16,7 +16,9 @@
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
 #include "plog.h"
+#include "tebis_tcp_errors.h"
 #include <assert.h>
+#include <stdint.h>
 
 #include <arpa/inet.h>
 
@@ -24,7 +26,7 @@
 #include <errno.h>
 // #include <linux/io_uring.h>
 #include "../tebis_server/djb2.h"
-#include <linux/types.h>
+// #include <linux/types.h>
 #include <log.h>
 #include <pthread.h>
 #include <sched.h>
@@ -33,12 +35,35 @@
 #include <stdlib.h>
 #include <string.h>
 // #include <threads.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 
+#ifdef SSL
+#include "../common/common_ssl/mbedtls_utility.h"
+#include <mbedtls/certs.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/debug.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/error.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/platform.h>
+#include <mbedtls/rsa.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509.h>
+#ifdef SGX
+#include <openenclave/enclave.h>
+#endif
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/socket.h>
+#include <uthash.h>
+#endif
 /*** defaults ***/
 
 #define MAGIC_INIT_NUM (0xCAFEu)
@@ -49,22 +74,22 @@
 #define PORT_MAX ((1L << 16) - 1L)
 
 /*** server options ***/
-
 #define DECIMAL_BASE 10
 
 #define USAGE_STRING                         \
 	"tcp-server: no options specified\n" \
 	"try 'tcp-server --help' for more information\n"
 
-#define HELP_STRING                                                                                \
-	"Usage:\n  tcp-server <-bptf>\nOptions:\n"                                                 \
-	" -t, --threads <thread-num>  specify number of server threads.\n"                         \
-	" -b, --bind <if-address>     specify the interface that the server will bind to.\n"       \
-	" -p, --port <port>           specify the port that the server will be listening\n"        \
-	" -f, --file <path>           specify the target (file of db) where parallax will run\n\n" \
-	" -L0, --L0_size <size in MB>       size of L0 level in Parallax\n\n"                      \
-	" -GF, --GF <growth factor>   specify the growth factor between levels\n\n"                \
-	" -h, --help     display this help and exit\n"                                             \
+#define HELP_STRING                                                                \
+	"Usage:\n  tcp-server <-bptf>\nOptions:\n"                                 \
+	" -t, --threads <thread-num>  specify number of server threads.\n"         \
+	" -b, --bind <if-address>     specify the interface that the server will " \
+	"bind to.\n"                                                               \
+	" -p, --port <port>           specify the port that the server will be "   \
+	"listening\n"                                                              \
+	" -f, --file <path>           specify the target (file of db) where "      \
+	"parallax will run\n\n"                                                    \
+	" -h, --help     display this help and exit\n"                             \
 	" -v, --version  display version information and exit\n"
 #define NECESSARY_OPTIONS 6
 
@@ -82,10 +107,11 @@
 /** server argv[] options **/
 
 struct server_options {
-	__u16 magic_init_num;
-	__u32 threadno;
+	uint16_t magic_init_num;
+	uint32_t threadno;
 
 	const char *paddr; // printable ip address
+	long port;
 	const char *dbpath;
 
 	struct sockaddr_storage inaddr; // ip address + port
@@ -98,26 +124,40 @@ struct worker {
 	struct server_handle *shandle;
 	pthread_t tid;
 
-	__s32 epfd;
-	__s32 sock;
-	__u64 core;
+	int32_t epfd;
+	int32_t sock;
+	uint64_t core;
 
 	struct buffer buf;
 	struct par_value pval;
 };
 
+#ifdef SSL
+struct conn_info {
+	int32_t fd;
+	mbedtls_ssl_context *ssl_session;
+	mbedtls_net_context *client_fd;
+	UT_hash_handle hh;
+};
+#endif
+
 /** server handle **/
 #define MAX_PARALLAX_DBS 1
 struct server_handle {
-	__u16 magic_init_num;
-	__u32 flags;
-	__s32 sock;
-	__s32 epfd;
+	uint16_t magic_init_num;
+	uint32_t flags;
+	int32_t sock;
+	int32_t epfd;
 
 	par_handle par_handle[MAX_PARALLAX_DBS];
 
 	struct server_options *opts;
 	struct worker *workers;
+#ifdef SSL
+	mbedtls_net_context listen_fd;
+	struct conn_info *conn_ht;
+	pthread_rwlock_t lock;
+#endif
 };
 
 /** server request/reply **/
@@ -137,9 +177,9 @@ struct server_handle *g_sh; // CTRL-C
 _Thread_local const char *par_error_message_tl;
 
 #define reset_errno() errno = 0
-#define __offsetof_struct1(s, f) (__u64)(&((s *)(0UL))->f)
+#define __offsetof_struct1(s, f) (uint64_t)(&((s *)(0UL))->f)
 
-#define req_is_invalid(req) ((__u32)(req->type) >= OPSNO)
+#define req_is_invalid(req) ((uint32_t)(req->type) >= OPSNO)
 #define req_is_new_connection(req) (req->type == REQ_INIT_CONN)
 
 #define infinite_loop_start() for (;;) {
@@ -147,12 +187,20 @@ _Thread_local const char *par_error_message_tl;
 #define event_loop_start(index, limit) for (int index = 0; index < limit; ++index) {
 #define event_loop_end() }
 
-#define reqbuf_hdr_read_type(req, buf) req->type = *((__u8 *)(buf))
+#define reqbuf_hdr_read_type(req, buf) req->type = *((uint8_t *)(buf))
 
 #define MAX_REGIONS 128
 
 /***** private functions (decl) *****/
+#ifdef SSL
+static void my_debug(void *ctx, int level, const char *file, int line, const char *str)
+{
+	((void)level);
 
+	mbedtls_fprintf((FILE *)ctx, "%s:%04d: %s", file, line, str);
+	fflush((FILE *)ctx);
+}
+#endif
 /**
  * @brief
  *
@@ -202,7 +250,9 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
  * @brief
  *
  */
+#ifndef SSL
 static int __pin_thread_to_core(int core);
+#endif
 
 /**
  * @brief
@@ -252,12 +302,14 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 		}
 
 		/*/
-		* Both 'struct sockaddr_in' (IPv4) and 'struct sockaddr_in6' (IPv6) have the first two of their struct
-		* fields identical. First comes the 'socket family' (2-Bytes) and then the 'port' (2-Bytes). As a
-		* result of this, when setting either the port or the family, there is no problem to typecast
-		* 'struct sockaddr_storage', which can store every address of every socket family in linux, to
-		* any of 'struct sockaddr_in' or 'struct sockaddr_in6'. [/usr/include/netinet/in.h]
-		/*/
+     * Both 'struct sockaddr_in' (IPv4) and 'struct sockaddr_in6' (IPv6) have
+     * the first two of their struct fields identical. First comes the 'socket
+     * family' (2-Bytes) and then the 'port' (2-Bytes). As a result of this,
+     * when setting either the port or the family, there is no problem to
+     * typecast 'struct sockaddr_storage', which can store every address of
+     * every socket family in linux, to any of 'struct sockaddr_in' or 'struct
+     * sockaddr_in6'. [/usr/include/netinet/in.h]
+     */
 
 		if (!strcmp(argv[i], "-t") || !strcmp(argv[i], "--threads")) {
 			reset_errno();
@@ -315,6 +367,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 
 			++opt_sum;
 			((struct sockaddr_in *)(&opts->inaddr))->sin_port = htons((unsigned short)(port));
+			opts->port = port;
 		} else if (!strcmp(argv[i], "-b") || !strcmp(argv[i], "--bind")) {
 			if (!argv[++i]) {
 				fprintf(stderr, ERROR_STRING " tcp-server: no address provided!\n");
@@ -332,7 +385,7 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 				}
 			}
 
-			off64_t off;
+			off_t off;
 
 			if (is_v6) {
 				opts->inaddr.ss_family = AF_INET6;
@@ -359,7 +412,6 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 			level0_size = strtoul(argv[i], NULL, 10);
 			level0_size = MB(level0_size);
 			++opt_sum;
-			opts->paddr = argv[i];
 		} else if (!strcmp(argv[i], "-GF") || !strcmp(argv[i], "--GF")) {
 			if (!argv[++i]) {
 				fprintf(stderr, ERROR_STRING " tcp-server: no address provided!\n");
@@ -368,7 +420,6 @@ int server_parse_argv_opts(sConfig restrict *restrict sconfig, int argc, char *r
 			}
 			GF = strtoul(argv[i], NULL, 10);
 			++opt_sum;
-			opts->paddr = argv[i];
 		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 		help:
 			fprintf(stdout, HELP_STRING);
@@ -422,6 +473,51 @@ int server_print_config(sHandle server_handle)
 	return EXIT_SUCCESS;
 }
 
+#ifdef SSL
+int configure_server_ssl(mbedtls_ssl_config *conf, mbedtls_ctr_drbg_context *ctr_drbg, mbedtls_x509_crt *server_cert,
+			 mbedtls_pk_context *pkey)
+{
+	int ret = 1;
+
+	ret = generate_certificate_and_pkey(server_cert, pkey);
+	if (ret != 0) {
+		plog(PL_ERROR "generate_certificate_and_pkey failed with %d\n", ret);
+		goto exit;
+	}
+
+	if ((ret = mbedtls_ssl_config_defaults(conf, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
+					       MBEDTLS_SSL_PRESET_DEFAULT)) != 0) {
+		plog(PL_ERROR "mbedtls_ssl_config_defaults returned %d\n", ret);
+		goto exit;
+	}
+
+	mbedtls_ssl_conf_rng(conf, mbedtls_ctr_drbg_random, ctr_drbg);
+	mbedtls_ssl_conf_dbg(conf, my_debug, stdout);
+
+	mbedtls_ssl_conf_authmode(conf, MBEDTLS_SSL_VERIFY_NONE);
+	mbedtls_ssl_conf_ca_chain(conf, server_cert->next, NULL);
+
+	if ((ret = mbedtls_ssl_conf_own_cert(conf, server_cert, pkey)) != 0) {
+		plog(PL_ERROR "mbedtls_ssl_conf_own_cert returned %d\n", ret);
+		goto exit;
+	}
+
+	ret = 0;
+exit:
+	fflush(stdout);
+	return ret;
+}
+#endif
+
+#ifdef SSL
+mbedtls_entropy_context entropy;
+mbedtls_ctr_drbg_context ctr_drbg;
+mbedtls_ssl_config conf;
+mbedtls_x509_crt server_cert;
+mbedtls_pk_context pkey;
+const char *pers = "tls_server";
+#endif
+
 int server_handle_init(sHandle restrict *restrict server_handle, sConfig restrict server_config)
 {
 	if (!server_handle || !server_config) {
@@ -447,8 +543,52 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	shandle->workers = (struct worker *)((char *)(shandle) + sizeof(struct server_handle));
 	shandle->sock = -1;
 	shandle->epfd = -1;
+#ifdef SSL
+	if (pthread_rwlock_init(&shandle->lock, NULL) != 0) {
+		return -(EXIT_FAILURE);
+	}
 
-	typeof(sconf->inaddr.ss_family) fam = sconf->inaddr.ss_family;
+	/* Load host resolver and socket interface modules explicitly */
+#ifdef SGX
+	if (load_oe_modules() != OE_OK) {
+		plog(PL_ERROR "loading required Open Enclave modules failed\n");
+		goto cleanup;
+	}
+#endif
+
+	shandle->conn_ht = NULL;
+	// init mbedtls objects
+	int ret = 0;
+	char port_str[10];
+	sprintf(port_str, "%ld", sconf->port);
+	mbedtls_net_init(&shandle->listen_fd);
+	mbedtls_ssl_config_init(&conf);
+	mbedtls_x509_crt_init(&server_cert);
+	mbedtls_pk_init(&pkey);
+	mbedtls_entropy_init(&entropy);
+	mbedtls_ctr_drbg_init(&ctr_drbg);
+#ifdef SGX
+	oe_verifier_initialize();
+#endif
+
+	if ((ret = mbedtls_net_bind(&shandle->listen_fd, sconf->paddr, port_str, MBEDTLS_NET_PROTO_TCP)) != 0) {
+		plog(PL_ERROR "mbedtls_net_bind returned %d\n", ret);
+		goto cleanup;
+	}
+	shandle->sock = shandle->listen_fd.fd;
+	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers,
+					 strlen(pers))) != 0) {
+		plog(PL_ERROR "mbedtls_ctr_drbg_seed returned %d\n", ret);
+		goto cleanup;
+	}
+	// Configure server SSL settings
+	ret = configure_server_ssl(&conf, &ctr_drbg, &server_cert, &pkey);
+	if (ret != 0) {
+		plog(PL_ERROR "configure_server_ssl returned %d\n", ret);
+		goto cleanup;
+	}
+#else
+	sa_family_t fam = sconf->inaddr.ss_family;
 
 	if ((shandle->sock = socket(fam, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) < 0)
 		goto cleanup;
@@ -463,17 +603,18 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 
 	if (listen(shandle->sock, TT_MAX_LISTEN) < 0)
 		goto cleanup;
-
+#endif
 	if ((shandle->epfd = epoll_create1(EPOLL_CLOEXEC)) < 0)
 		goto cleanup;
 
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT, .data.fd = shandle->sock };
 
-	if (epoll_ctl(shandle->epfd, EPOLL_CTL_ADD, shandle->sock, &epev) < 0)
+	if (epoll_ctl(shandle->epfd, EPOLL_CTL_ADD, shandle->sock, &epev) < 0) {
+		plog(PL_ERROR "epoll_ctl failed\n");
 		goto cleanup;
+	}
 
 	/** initialize parallax **/
-
 	const char *error_message = par_format((char *)(sconf->dbpath), MAX_REGIONS);
 
 	if (error_message) {
@@ -510,10 +651,20 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	return EXIT_SUCCESS;
 
 cleanup:
+#ifdef SSL
+	mbedtls_net_free(&shandle->listen_fd);
+	mbedtls_x509_crt_free(&server_cert);
+	mbedtls_pk_free(&pkey);
+	mbedtls_ssl_config_free(&conf);
+	mbedtls_ctr_drbg_free(&ctr_drbg);
+	mbedtls_entropy_free(&entropy);
+#ifdef SGX
+	oe_verifier_shutdown();
+#endif
+#endif
 	close(shandle->sock);
 	close(shandle->epfd);
 	free(*server_handle);
-
 	return -(EXIT_FAILURE);
 }
 
@@ -529,6 +680,17 @@ int server_handle_destroy(sHandle server_handle)
 	/** END OF ERROR HANDLING **/
 
 	// signal all threads to cancel
+#ifdef SSL
+	mbedtls_net_free(&shandle->listen_fd);
+	mbedtls_x509_crt_free(&server_cert);
+	mbedtls_pk_free(&pkey);
+	mbedtls_ssl_config_free(&conf);
+	mbedtls_ctr_drbg_free(&ctr_drbg);
+	mbedtls_entropy_free(&entropy);
+#ifdef SGX
+	oe_verifier_shutdown();
+#endif
+#endif
 
 	close(shandle->sock);
 	close(shandle->epfd);
@@ -563,13 +725,13 @@ int server_spawn_threads(sHandle server_handle)
 
 	/** END OF ERROR HANDLING **/
 
-	__u32 threads = shandle->opts->threadno;
+	uint32_t threads = shandle->opts->threadno;
 
 	if ((shandle->workers[0].buf.mem = mmap(NULL, threads * DEF_BUF_SIZE, PROT_READ | PROT_WRITE,
 						MAP_PRIVATE | MAP_ANONYMOUS, -1, 0UL)) == MAP_FAILED)
 		return -(EXIT_FAILURE);
 
-	__u32 index;
+	uint32_t index;
 
 	for (index = 0U, --threads; index < threads; ++index) {
 		shandle->workers[index].core = index;
@@ -586,7 +748,7 @@ int server_spawn_threads(sHandle server_handle)
 
 		if (pthread_create(&shandle->workers[index].tid, NULL, __handle_events,
 				   shandle->workers + index)) { // one of the server threads failed!
-			__u32 tmp;
+			uint32_t tmp;
 
 			/* kill all threads that have been created by now */
 			for (tmp = 0; tmp < index; ++tmp)
@@ -624,17 +786,80 @@ int server_spawn_threads(sHandle server_handle)
 
 static int __handle_new_connection(struct worker *this)
 {
-	struct sockaddr_storage caddr = { 0 };
+	// struct sockaddr_storage caddr = { 0 };
 	struct epoll_event epev = { 0 };
 
-	socklen_t socklen = { 0 };
+	// socklen_t socklen = { 0 };
 	int tmpfd = 0;
 
-	if ((tmpfd = accept4(this->sock, (struct sockaddr *)(&caddr), &socklen, SOCK_CLOEXEC | SOCK_NONBLOCK)) < 0) {
+	if (fcntl(this->sock, F_SETFL, O_NONBLOCK) == -1) {
+		perror("fcntl nonblock failure");
+		return -(EXIT_FAILURE);
+	}
+
+	if (fcntl(this->sock, F_SETFD, FD_CLOEXEC) == -1) {
+		perror("fcntl cloexec failure");
+		return -(EXIT_FAILURE);
+	}
+#ifdef SSL
+	int ret;
+	mbedtls_ssl_context *ssl_session = malloc(sizeof(mbedtls_ssl_context));
+	if (ssl_session == NULL) {
+		return -(EXIT_FAILURE);
+	}
+	mbedtls_ssl_init(ssl_session);
+	if ((ret = mbedtls_ssl_setup(ssl_session, &conf)) != 0) {
+		plog(PL_ERROR "mbedtls_ssl_setup returned %d\n", ret);
+		free(ssl_session);
+		return -(EXIT_FAILURE);
+	}
+	mbedtls_net_context *client_fd = malloc(sizeof(mbedtls_net_context));
+	if (client_fd == NULL) {
+		plog(PL_ERROR "malloc of mbedtls_net_context failed");
+		return -(EXIT_FAILURE);
+	}
+	if ((tmpfd = mbedtls_net_accept(&this->shandle->listen_fd, client_fd, NULL, 0, NULL)) < 0) {
+		plog(PL_ERROR "mbedtls_net_accept failed with %s", strerror(errno));
+		free(ssl_session);
+		free(client_fd);
+		return -(EXIT_FAILURE);
+	}
+	tmpfd = client_fd->fd;
+	mbedtls_net_set_nonblock(client_fd);
+	mbedtls_ssl_set_bio(ssl_session, client_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+	while ((ret = mbedtls_ssl_handshake(ssl_session)) != 0) {
+		if (ret == MBEDTLS_ERR_SSL_CONN_EOF) {
+			free(ssl_session);
+			free(client_fd);
+			return -(EXIT_FAILURE);
+		}
+		if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+			plog(PL_ERROR "mbedtls_ssl_handshake returned -0x%x\n", -ret);
+			free(ssl_session);
+			free(client_fd);
+			return -(EXIT_FAILURE);
+		}
+	}
+
+	/*Add (fd, ssl_session) pair to ht*/
+	struct conn_info *conn_info = malloc(sizeof(struct conn_info));
+	if (conn_info == NULL)
+		exit(EXIT_FAILURE);
+	conn_info->fd = client_fd->fd;
+	conn_info->ssl_session = ssl_session;
+	conn_info->client_fd = client_fd;
+	if (pthread_rwlock_wrlock(&this->shandle->lock) != 0)
+		exit(EXIT_FAILURE);
+	HASH_ADD_INT(this->shandle->conn_ht, fd, conn_info);
+	pthread_rwlock_unlock(&this->shandle->lock);
+
+#else
+	if ((tmpfd = accept(this->sock, NULL, NULL)) < 0) {
 		plog(PL_ERROR "%s", strerror(errno));
 		perror("Error is ");
 		return -(EXIT_FAILURE);
 	}
+#endif
 
 	epev.data.fd = tmpfd;
 	epev.events = EPOLLIN | EPOLLONESHOT;
@@ -642,13 +867,15 @@ static int __handle_new_connection(struct worker *this)
 	if (epoll_ctl(this->epfd, EPOLL_CTL_ADD, tmpfd, &epev) < 0) {
 		perror("__handle_new_connection::epoll_ctl(ADD)");
 		close(tmpfd);
-
+#ifdef SSL
+		free(ssl_session);
+		free(client_fd);
+#endif
 		return -(EXIT_FAILURE);
 	}
 
 	epev.events = EPOLLIN | EPOLLONESHOT;
 	epev.data.fd = this->sock;
-
 	/** rearm server socket **/
 
 	if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev) < 0) {
@@ -657,16 +884,18 @@ static int __handle_new_connection(struct worker *this)
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, tmpfd, NULL);
 		close(this->sock);
 		close(tmpfd);
-
+#ifdef SSL
+		free(ssl_session);
+		free(client_fd);
+#endif
 		exit(EXIT_FAILURE);
 	}
-
 	return EXIT_SUCCESS;
 }
 
 static int __client_version_check(int client_sock, struct worker *worker)
 {
-	__u32 version = be32toh(*((__u32 *)(worker->buf.mem + 1UL)));
+	uint32_t version = be32toh(*((uint32_t *)(worker->buf.mem + 1UL)));
 
 	/** TODO: send a respond to client that uses an outdated version */
 
@@ -674,8 +903,16 @@ static int __client_version_check(int client_sock, struct worker *worker)
 		errno = ECONNREFUSED;
 		return -(EXIT_FAILURE);
 	}
-
+#ifdef SSL
+	if (pthread_rwlock_rdlock(&worker->shandle->lock) != 0)
+		exit(EXIT_FAILURE);
+	struct conn_info *conn_info;
+	HASH_FIND_INT(worker->shandle->conn_ht, &client_sock, conn_info);
+	pthread_rwlock_unlock(&worker->shandle->lock);
+	if (mbedtls_ssl_write(conn_info->ssl_session, (const unsigned char *)&version, sizeof(version)) < 0) {
+#else
 	if (send(client_sock, &version, sizeof(version), 0) < 0) {
+#endif
 		perror("__client_version_check::send()\n");
 
 		errno = ECONNABORTED;
@@ -702,12 +939,12 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
 	/** GET: [ 1B type | 4B key-size | key ] **/
 	/** PUT: [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 
-	*((__u32 *)(buf + 1UL)) = be32toh(*((__u32 *)(buf + 1UL)));
-	req->kv.key.size = *((__u32 *)(buf + 1UL));
+	*((uint32_t *)(buf + 1UL)) = be32toh(*((uint32_t *)(buf + 1UL)));
+	req->kv.key.size = *((uint32_t *)(buf + 1UL));
 
 	if (req->type == REQ_PUT) {
-		*((__u32 *)(buf + 5UL)) = be32toh(*((__u32 *)(buf + 5UL)));
-		req->kv.value.size = *((__u32 *)(buf + 5UL));
+		*((uint32_t *)(buf + 5UL)) = be32toh(*((uint32_t *)(buf + 5UL)));
+		req->kv.value.size = *((uint32_t *)(buf + 5UL));
 		req->kv.key.data = buf + 9UL;
 		req->kv.value.data = (buf + 9UL) + req->kv.key.size;
 	} else /* REQ_GET */ {
@@ -719,7 +956,22 @@ static void __parse_rest_of_header(char *restrict buf, struct tcp_req *restrict 
 
 static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
-	__s64 ret = recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0);
+#ifdef SSL
+	struct conn_info *conn_info;
+	if (pthread_rwlock_rdlock(&this->shandle->lock) != 0)
+		exit(EXIT_FAILURE);
+	HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
+	pthread_rwlock_unlock(&this->shandle->lock);
+	int ret;
+	while ((ret = mbedtls_ssl_read(conn_info->ssl_session, (unsigned char *)this->buf.mem, DEF_BUF_SIZE)) <= 0) {
+		if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+			continue;
+		}
+		return TT_ERR_GENERIC;
+	}
+#else
+	int64_t ret = recv(client_sock, this->buf.mem, DEF_BUF_SIZE, 0);
+#endif
 
 	if (unlikely(ret < 0))
 		return TT_ERR_GENERIC;
@@ -737,12 +989,22 @@ static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct 
 	if (unlikely(!req->kv.key.size))
 		return TT_ERR_ZERO_KEY;
 
-	register __u64 off = ret;
-	register __s64 bytes_left =
+	register uint64_t off = ret;
+	register int64_t bytes_left =
 		(req->kv.key.size + req->kv.value.size + ((req->type == REQ_GET) ? 5UL : 9UL)) - ret;
 
 	while (bytes_left) {
+#ifdef SSL
+		while ((ret = mbedtls_ssl_read(conn_info->ssl_session, (unsigned char *)(this->buf.mem + off),
+					       bytes_left)) <= 0) {
+			if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+				continue;
+			}
+			return TT_ERR_GENERIC;
+		}
+#else
 		ret = recv(client_sock, this->buf.mem + off, bytes_left, 0);
+#endif
 
 		if (unlikely(ret < 0))
 			return TT_ERR_GENERIC;
@@ -757,14 +1019,22 @@ static tterr_e __req_recv(struct worker *restrict this, int client_sock, struct 
 static void *__handle_events(void *arg)
 {
 	struct worker *this = arg;
-
+#ifndef SSL
 	if (__pin_thread_to_core(this->core) < 0) {
 		plog(PL_ERROR "__pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
+#endif
 
-	struct tcp_req req = { .kv_splice_base.kv_cat = 100,
-			       .kv_splice_base.kv_splice = (void *)(this->buf.mem + 1UL) };
+	/*
+          uint32_t key_size = *(uint32_t *)(&this->buf.mem[1]);
+          uint32_t value_size = *(uint32_t *)(&this->buf.mem[5]);
+          struct tcp_req req = { .kv_splice_base.kv_cat =
+     calculate_KV_category(key_size, value_size, insertOp),
+                                 .kv_splice_base.kv_splice = (void
+     *)(this->buf.mem + 1UL) };
+  */
+	struct tcp_req req = { 0 };
 
 	int events;
 	int client_sock;
@@ -796,17 +1066,28 @@ static void *__handle_events(void *arg)
 
 		plog(PL_INFO "client (%d) wants to terminate the connection", client_sock);
 
-		// the server can send some more packets here. If so, client code needs some changes
+		// the server can send some more packets here. If so, client code needs some
+		// changes
 
 		shutdown(client_sock, SHUT_WR);
 		plog(PL_INFO "terminating connection with client(%d)", client_sock);
 
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
 		close(client_sock);
+#ifdef SSL
+		struct conn_info *conn_info;
+		if (pthread_rwlock_wrlock(&this->shandle->lock) != 0) {
+			continue;
+		}
+		HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
+		free(conn_info->ssl_session);
+		free(conn_info->client_fd);
+		HASH_DEL(this->shandle->conn_ht, conn_info);
+		pthread_rwlock_unlock(&this->shandle->lock);
+#endif
 	} else if (likely(event_bits & EPOLLIN)) /** read event **/
 	{
 		/** new connection **/
-
 		if (client_sock == this->sock) {
 			plog(PL_INFO "new connection", NULL);
 
@@ -819,7 +1100,6 @@ static void *__handle_events(void *arg)
 		/** end **/
 
 		/** request **/
-
 		ret = __req_recv(this, client_sock, &req);
 
 		if (unlikely(ret == TT_ERR_CONN_DROP)) {
@@ -850,7 +1130,17 @@ static void *__handle_events(void *arg)
 	client_error:
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
 		close(client_sock);
-
+#ifdef SSL
+		struct conn_info *conn_info;
+		if (pthread_rwlock_wrlock(&this->shandle->lock) != 0) {
+			continue;
+		}
+		HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
+		free(conn_info->ssl_session);
+		free(conn_info->client_fd);
+		HASH_DEL(this->shandle->conn_ht, conn_info);
+		pthread_rwlock_unlock(&this->shandle->lock);
+#endif
 	} else if (unlikely(event_bits & EPOLLERR)) /** error **/
 	{
 		plog(PL_ERROR "events[%d] = EPOLLER, fd = %d\n", evindex, client_sock);
@@ -876,8 +1166,12 @@ static par_handle __server_handle_get_db(sHandle restrict server_handle, uint32_
 
 static int __par_handle_req(struct worker *restrict this, int client_sock, struct tcp_req *restrict req)
 {
+#ifdef SSL
+	int ret;
+	struct conn_info *conn_info;
+#endif
 	par_handle par_db = __server_handle_get_db(this->shandle, req->kv.key.size, req->kv.key.data);
-	__u32 tmp = 0;
+	uint32_t tmp = 0;
 
 	switch (req->type) {
 	case REQ_GET:
@@ -891,53 +1185,87 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 			plog(PL_WARN "par_get_serialized(): %s", par_error_message_tl);
 
 			tmp = strlen(par_error_message_tl) + 1U;
-			*((__u8 *)(this->buf.mem)) = TT_REQ_FAIL;
-			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(tmp);
+			*((uint8_t *)(this->buf.mem)) = TT_REQ_FAIL;
+			*((uint32_t *)(this->buf.mem + 1UL)) = htobe32(tmp);
 
 			memcpy(this->buf.mem + TT_REPHDR_SIZE, par_error_message_tl, tmp);
 		} else {
-			*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
-			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(this->pval.val_size);
+			*((uint8_t *)(this->buf.mem)) = TT_REQ_SUCC;
+			*((uint32_t *)(this->buf.mem + 1UL)) = htobe32(this->pval.val_size);
 
 			tmp = this->pval.val_size;
 			// memcpy(this->buf.mem + TT_REPHDR_SIZE, this->pval.val_buffer, tmp);
 		}
 
+#ifdef SSL
+		if (pthread_rwlock_rdlock(&this->shandle->lock) != 0) {
+			return -1;
+		}
+		HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
+		pthread_rwlock_unlock(&this->shandle->lock);
+		while ((ret = mbedtls_ssl_write(conn_info->ssl_session, (const unsigned char *)this->buf.mem,
+						TT_REPHDR_SIZE + tmp)) <= 0) {
+			if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+				continue;
+			return -1;
+		}
+		return 0;
+#else
 		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + tmp, 0);
+#endif
 
 	case REQ_PUT:
 
 		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
 		;
-		char *serialized_buf = req->kv.key.data - 8UL;
-		uint32_t key_size = *(uint32_t *)&serialized_buf[0];
-		uint32_t value_size = *(uint32_t *)&serialized_buf[4];
-		struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
-						      .kv_type = KV_FORMAT,
-						      .kv_splice = (struct kv_splice *)serialized_buf };
-		par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
-				   false); // '-8UL' temp solution
+		//char *serialized_buf = req->kv.key.data - 8UL;
+		//uint32_t key_size = *(uint32_t *)&serialized_buf[0];
+		//uint32_t value_size = *(uint32_t *)&serialized_buf[4];
+		//struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
+		//				      .kv_type = KV_FORMAT,
+		//				      .kv_splice = (struct kv_splice *)serialized_buf };
+		//par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
+		//		   false); // '-8UL' temp solution
+		struct par_key_value KV_pair = { .k = { .size = req->kv.key.size, .data = req->kv.key.data },
+						 .v = { .val_buffer = req->kv.value.data,
+							.val_size = req->kv.value.size,
+							.val_buffer_size = req->kv.value.size } };
+		par_put(par_db, &KV_pair, &par_error_message_tl);
 
 		if (par_error_message_tl) {
 			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
 
 			tmp = strlen(par_error_message_tl);
-			*((__u8 *)(this->buf.mem)) = TT_REQ_FAIL;
-			*((__u32 *)(this->buf.mem + 1UL)) = htobe32(tmp);
+			*((uint8_t *)(this->buf.mem)) = TT_REQ_FAIL;
+			*((uint32_t *)(this->buf.mem + 1UL)) = htobe32(tmp);
 
 			memcpy(this->buf.mem + TT_REPHDR_SIZE, par_error_message_tl, tmp);
 		} else
-			*((__u8 *)(this->buf.mem)) = TT_REQ_SUCC;
+			*((uint8_t *)(this->buf.mem)) = TT_REQ_SUCC;
 
 		/* PUT-req does not return a value */
 
-		*((__u32 *)(this->buf.mem + 1UL)) = 0U;
-
+		*((uint32_t *)(this->buf.mem + 1UL)) = 0U;
+#ifdef SSL
+		if (pthread_rwlock_rdlock(&this->shandle->lock) != 0) {
+			return -1;
+		}
+		HASH_FIND_INT(this->shandle->conn_ht, &client_sock, conn_info);
+		pthread_rwlock_unlock(&this->shandle->lock);
+		while ((ret = mbedtls_ssl_write(conn_info->ssl_session, (const unsigned char *)this->buf.mem,
+						TT_REPHDR_SIZE)) <= 0) {
+			if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+				continue;
+			return -1;
+		}
+		return 0;
+#else
 		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE, 0);
+#endif
 
 	default:
 
-		// printf("req->type = %d\n", req->type);
+		printf("req->type = %d\n", req->type);
 		errno = ENOTSUP;
 		return -(EXIT_FAILURE);
 	}
@@ -945,6 +1273,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 	return EXIT_SUCCESS;
 }
 
+#ifndef SSL
 static int __pin_thread_to_core(int core)
 {
 	cpu_set_t cpuset;
@@ -954,6 +1283,7 @@ static int __pin_thread_to_core(int core)
 
 	return sched_setaffinity(0, sizeof(cpuset), &cpuset);
 }
+#endif
 
 /***** server signal handlers *****/
 
