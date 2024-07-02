@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+      - name: zookeeper
+        image: dstath/tebis_test_bench:zookeeper
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 2181
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: "/home/dimos/Tebis/zookeeper/data"
+        - name: zookeeper-datalog
+          mountPath: "/home/dimos/Tebis/zookeeper/datalog"
+      volumes:
+      - name: zookeeper-data
+        persistentVolumeClaim:
+          claimName: zookeeper-data-pvc
+      - name: zookeeper-datalog
+        persistentVolumeClaim:
+          claimName: zookeeper-datalog-pvc
