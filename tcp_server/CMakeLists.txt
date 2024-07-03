@@ -63,7 +63,7 @@ endif()
 
 if(NOT SGX_BUILD AND SSL)
   find_package(MbedTLS REQUIRED)
-  add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c
+  add_executable(${tcp_server_EXEC} server.c server_handle.c
                                     ../common/common_ssl/mbedtls_utility.c)
   target_link_libraries(
     ${tcp_server_EXEC}
@@ -76,9 +76,8 @@ if(NOT SGX_BUILD AND SSL)
 elseif(SGX_BUILD)
   find_package(OpenEnclave CONFIG REQUIRED)
   add_compile_definitions(SGX)
-  add_library(
-    tcp_lib server.c plog.c server_handle.c ../common/common_ssl/utility.c
-            ../common/common_ssl/mbedtls_utility.c)
+  add_library(tcp_lib server.c server_handle.c ../common/common_ssl/utility.c
+                      ../common/common_ssl/mbedtls_utility.c)
   target_link_libraries(tcp_lib openenclave::oecryptombedtls pthread parallax
                         rt openenclave::oe_includes)
   add_executable(${tcp_server_EXEC} enc.c)
@@ -112,7 +111,7 @@ elseif(SGX_BUILD)
 
   add_custom_target(sign_tcp_server ALL DEPENDS enclave.signed)
 else()
-  add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c)
+  add_executable(${tcp_server_EXEC} server.c server_handle.c)
   target_link_libraries(${tcp_server_EXEC} pthread parallax rt)
 endif()
 

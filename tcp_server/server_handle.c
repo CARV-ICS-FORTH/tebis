@@ -1,46 +1,28 @@
-/**
- * @file server_handle.c
- * @author Orestis Chiotakis (orchiot@ics.forth.gr)
- * @brief ...
- * @version 0.1
- * @date 2023-02-24
- *
- * @copyright Copyright (c) 2023
- *
- */
-
 #define _GNU_SOURCE
 #include "server_handle.h"
+#include "../tebis_server/djb2.h"
 #include "btree/btree.h"
 #include "btree/kv_pairs.h"
 #include "parallax/parallax.h"
 #include "parallax/structures.h"
-#include "plog.h"
 #include "tebis_tcp_errors.h"
-#include <assert.h>
-#include <stdint.h>
-
 #include <arpa/inet.h>
-
+#include <assert.h>
 #include <endian.h>
 #include <errno.h>
-// #include <linux/io_uring.h>
-#include "../tebis_server/djb2.h"
-// #include <linux/types.h>
+#include <fcntl.h>
 #include <log.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// #include <threads.h>
-#include <fcntl.h>
-#include <unistd.h>
-
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #ifdef SSL
 #include "../common/common_ssl/mbedtls_utility.h"
@@ -483,13 +465,13 @@ int configure_server_ssl(mbedtls_ssl_config *conf, mbedtls_ctr_drbg_context *ctr
 
 	ret = generate_certificate_and_pkey(server_cert, pkey);
 	if (ret != 0) {
-		plog(PL_ERROR "generate_certificate_and_pkey failed with %d\n", ret);
+		log_fatal("generate_certificate_and_pkey failed with %d\n", ret);
 		goto exit;
 	}
 
 	if ((ret = mbedtls_ssl_config_defaults(conf, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
 					       MBEDTLS_SSL_PRESET_DEFAULT)) != 0) {
-		plog(PL_ERROR "mbedtls_ssl_config_defaults returned %d\n", ret);
+		log_fatal("mbedtls_ssl_config_defaults returned %d\n", ret);
 		goto exit;
 	}
 
@@ -500,7 +482,7 @@ int configure_server_ssl(mbedtls_ssl_config *conf, mbedtls_ctr_drbg_context *ctr
 	mbedtls_ssl_conf_ca_chain(conf, server_cert->next, NULL);
 
 	if ((ret = mbedtls_ssl_conf_own_cert(conf, server_cert, pkey)) != 0) {
-		plog(PL_ERROR "mbedtls_ssl_conf_own_cert returned %d\n", ret);
+		log_fatal("mbedtls_ssl_conf_own_cert returned %d\n", ret);
 		goto exit;
 	}
 
@@ -553,7 +535,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	/* Load host resolver and socket interface modules explicitly */
 #ifdef SGX
 	if (load_oe_modules() != OE_OK) {
-		plog(PL_ERROR "loading required Open Enclave modules failed\n");
+		log_fatal("loading required Open Enclave modules failed\n");
 		goto cleanup;
 	}
 #endif
@@ -574,19 +556,19 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 #endif
 
 	if ((ret = mbedtls_net_bind(&shandle->listen_fd, sconf->paddr, port_str, MBEDTLS_NET_PROTO_TCP)) != 0) {
-		plog(PL_ERROR "mbedtls_net_bind returned %d\n", ret);
+		log_fatal("mbedtls_net_bind returned %d\n", ret);
 		goto cleanup;
 	}
 	shandle->sock = shandle->listen_fd.fd;
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers,
 					 strlen(pers))) != 0) {
-		plog(PL_ERROR "mbedtls_ctr_drbg_seed returned %d\n", ret);
+		log_fatal("mbedtls_ctr_drbg_seed returned %d\n", ret);
 		goto cleanup;
 	}
 	// Configure server SSL settings
 	ret = configure_server_ssl(&conf, &ctr_drbg, &server_cert, &pkey);
 	if (ret != 0) {
-		plog(PL_ERROR "configure_server_ssl returned %d\n", ret);
+		log_fatal("configure_server_ssl returned %d\n", ret);
 		goto cleanup;
 	}
 #else
@@ -612,7 +594,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	struct epoll_event epev = { .events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT, .data.fd = shandle->sock };
 
 	if (epoll_ctl(shandle->epfd, EPOLL_CTL_ADD, shandle->sock, &epev) < 0) {
-		plog(PL_ERROR "epoll_ctl failed\n");
+		log_fatal("epoll_ctl failed");
 		goto cleanup;
 	}
 
@@ -620,7 +602,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	const char *error_message = par_format((char *)(sconf->dbpath), MAX_REGIONS);
 
 	if (error_message) {
-		plog(PL_ERROR "%s", error_message);
+		log_fatal("%s", error_message);
 		return -(EXIT_FAILURE);
 	}
 	par_db_options db_options = { .volume_name = (char *)(sconf->dbpath), // fuck clang_format!
@@ -633,7 +615,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	char actual_db_name[128] = { 0 };
 	for (int i = 0; i < MAX_PARALLAX_DBS; i++) {
 		if (snprintf(actual_db_name, sizeof(actual_db_name), "tcp_server_par_%d", i) < 0) {
-			plog(PL_ERROR, "Failed to construct db name");
+			log_fatal("Failed to construct db name");
 			return -(EXIT_FAILURE);
 		}
 		db_options.db_name = actual_db_name;
@@ -641,7 +623,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 	}
 
 	if (error_message) {
-		plog(PL_ERROR "%s", error_message);
+		log_fatal("%s", error_message);
 		return -(EXIT_FAILURE);
 	}
 
@@ -702,7 +684,7 @@ int server_handle_destroy(sHandle server_handle)
 	const char *error_message = par_close(shandle->par_handle);
 
 	if (error_message) {
-		plog(PL_ERROR "%s", error_message);
+		log_fatal("%s", error_message);
 		return -(EXIT_FAILURE);
 	}
 
@@ -811,17 +793,17 @@ static int __handle_new_connection(struct worker *this)
 	}
 	mbedtls_ssl_init(ssl_session);
 	if ((ret = mbedtls_ssl_setup(ssl_session, &conf)) != 0) {
-		plog(PL_ERROR "mbedtls_ssl_setup returned %d\n", ret);
+		log_fatal("mbedtls_ssl_setup returned %d\n", ret);
 		free(ssl_session);
 		return -(EXIT_FAILURE);
 	}
 	mbedtls_net_context *client_fd = malloc(sizeof(mbedtls_net_context));
 	if (client_fd == NULL) {
-		plog(PL_ERROR "malloc of mbedtls_net_context failed");
+		log_fatal("malloc of mbedtls_net_context failed");
 		return -(EXIT_FAILURE);
 	}
 	if ((tmpfd = mbedtls_net_accept(&this->shandle->listen_fd, client_fd, NULL, 0, NULL)) < 0) {
-		plog(PL_ERROR "mbedtls_net_accept failed with %s", strerror(errno));
+		log_fatal("mbedtls_net_accept failed with %s", strerror(errno));
 		free(ssl_session);
 		free(client_fd);
 		return -(EXIT_FAILURE);
@@ -836,7 +818,7 @@ static int __handle_new_connection(struct worker *this)
 			return -(EXIT_FAILURE);
 		}
 		if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-			plog(PL_ERROR "mbedtls_ssl_handshake returned -0x%x\n", -ret);
+			log_fatal("mbedtls_ssl_handshake returned -0x%x\n", -ret);
 			free(ssl_session);
 			free(client_fd);
 			return -(EXIT_FAILURE);
@@ -857,7 +839,7 @@ static int __handle_new_connection(struct worker *this)
 
 #else
 	if ((tmpfd = accept(this->sock, NULL, NULL)) < 0) {
-		plog(PL_ERROR "%s", strerror(errno));
+		log_fatal("%s", strerror(errno));
 		perror("Error is ");
 		return -(EXIT_FAILURE);
 	}
@@ -881,7 +863,7 @@ static int __handle_new_connection(struct worker *this)
 	/** rearm server socket **/
 
 	if (epoll_ctl(this->epfd, EPOLL_CTL_MOD, this->sock, &epev) < 0) {
-		plog(PL_ERROR "epoll_ctl(): %s ---> terminating server!!!", strerror(errno));
+		log_fatal("epoll_ctl(): %s ---> terminating server!!!", strerror(errno));
 
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, tmpfd, NULL);
 		close(this->sock);
@@ -1023,7 +1005,7 @@ static void *__handle_events(void *arg)
 	struct worker *this = arg;
 #ifndef SSL
 	if (__pin_thread_to_core(this->core) < 0) {
-		plog(PL_ERROR "__pin_thread_to_core(): %s", strerror(errno));
+		log_fatal("__pin_thread_to_core(): %s", strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 #endif
@@ -1054,7 +1036,7 @@ static void *__handle_events(void *arg)
 	events = epoll_wait(this->epfd, epoll_events, EPOLL_MAX_EVENTS, -1);
 
 	if (unlikely(events < 0)) {
-		plog(PL_ERROR "epoll(): %s", strerror(errno));
+		log_fatal("epoll(): %s", strerror(errno));
 		continue;
 	}
 
@@ -1066,13 +1048,13 @@ static void *__handle_events(void *arg)
 	if (event_bits & EPOLLRDHUP) {
 		/** received FIN from client **/
 
-		plog(PL_INFO "client (%d) wants to terminate the connection", client_sock);
+		log_info("client (%d) wants to terminate the connection", client_sock);
 
 		// the server can send some more packets here. If so, client code needs some
 		// changes
 
 		shutdown(client_sock, SHUT_WR);
-		plog(PL_INFO "terminating connection with client(%d)", client_sock);
+		log_info("terminating connection with client(%d)", client_sock);
 
 		epoll_ctl(this->epfd, EPOLL_CTL_DEL, client_sock, NULL); // kernel 2.6+
 		close(client_sock);
@@ -1091,10 +1073,10 @@ static void *__handle_events(void *arg)
 	{
 		/** new connection **/
 		if (client_sock == this->sock) {
-			plog(PL_INFO "new connection", NULL);
+			log_info("new connection", NULL);
 
 			if (__handle_new_connection(this) < 0)
-				plog(PL_ERROR "__handle_new_connection() failed: %s\n", strerror(errno));
+				log_fatal("__handle_new_connection() failed: %s\n", strerror(errno));
 
 			continue;
 		}
@@ -1105,12 +1087,12 @@ static void *__handle_events(void *arg)
 		ret = __req_recv(this, client_sock, &req);
 
 		if (unlikely(ret == TT_ERR_CONN_DROP)) {
-			plog(PL_INFO "client terminated connection!\n", NULL);
+			log_info("client terminated connection!\n", NULL);
 			goto client_error;
 		}
 
 		if (unlikely(ret == TT_ERR_GENERIC)) {
-			plog(PL_ERROR "__req_recv(): %s", strerror(errno));
+			log_fatal("__req_recv(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -1118,7 +1100,7 @@ static void *__handle_events(void *arg)
 			continue;
 
 		if (unlikely(__par_handle_req(this, client_sock, &req) < 0L)) {
-			plog(PL_ERROR "__par_handle_req(): %s", strerror(errno));
+			log_fatal("__par_handle_req(): %s", strerror(errno));
 			goto client_error;
 		}
 
@@ -1145,7 +1127,7 @@ static void *__handle_events(void *arg)
 #endif
 	} else if (unlikely(event_bits & EPOLLERR)) /** error **/
 	{
-		plog(PL_ERROR "events[%d] = EPOLLER, fd = %d\n", evindex, client_sock);
+		log_fatal("events[%d] = EPOLLER, fd = %d\n", evindex, client_sock);
 		/** TODO: error handling */
 		continue;
 	}
@@ -1184,7 +1166,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 				   &par_error_message_tl); // '-5UL' temp solution
 
 		if (par_error_message_tl) {
-			plog(PL_WARN "par_get_serialized(): %s", par_error_message_tl);
+			log_warn("par_get_serialized(): %s", par_error_message_tl);
 
 			tmp = strlen(par_error_message_tl) + 1U;
 			*((uint8_t *)(this->buf.mem)) = TT_REQ_FAIL;
@@ -1216,18 +1198,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 		return send(client_sock, this->buf.mem, TT_REPHDR_SIZE + tmp, 0);
 #endif
 
-	case REQ_PUT:
-
-		/** [ 1B type | 4B key-size | 4B value-size | key | value ] **/
-		;
-		//char *serialized_buf = req->kv.key.data - 8UL;
-		//uint32_t key_size = *(uint32_t *)&serialized_buf[0];
-		//uint32_t value_size = *(uint32_t *)&serialized_buf[4];
-		//struct kv_splice_base splice_base = { .kv_cat = calculate_KV_category(key_size, value_size, insertOp),
-		//				      .kv_type = KV_FORMAT,
-		//				      .kv_splice = (struct kv_splice *)serialized_buf };
-		//par_put_serialized(par_db, (char *)&splice_base, &par_error_message_tl, true,
-		//		   false); // '-8UL' temp solution
+	case REQ_PUT:;
 		struct par_key_value KV_pair = { .k = { .size = req->kv.key.size, .data = req->kv.key.data },
 						 .v = { .val_buffer = req->kv.value.data,
 							.val_size = req->kv.value.size,
@@ -1235,7 +1206,7 @@ static int __par_handle_req(struct worker *restrict this, int client_sock, struc
 		par_put(par_db, &KV_pair, &par_error_message_tl);
 
 		if (par_error_message_tl) {
-			plog(PL_ERROR "par_put_serialized(): %s", par_error_message_tl);
+			log_fatal("par_put_serialized(): %s", par_error_message_tl);
 
 			tmp = strlen(par_error_message_tl);
 			*((uint8_t *)(this->buf.mem)) = TT_REQ_FAIL;
