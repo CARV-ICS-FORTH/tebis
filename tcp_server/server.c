@@ -12,12 +12,12 @@
 #include <openenclave/enclave.h>
 #endif
 
-#define LOCALHOST "127.0.0.1"
-#define SITH2_IP_56G "192.168.2.122"
-#define SITH3_IP_56G
-#define SITH4_IP_56G
-#define SITH5_IP_56G "192.168.2.125"
-#define SITH6_IP_56G "192.168.2.126"
+// #define LOCALHOST "127.0.0.1"
+// #define SITH2_IP_56G "192.168.2.122"
+// #define SITH3_IP_56G
+// #define SITH4_IP_56G
+// #define SITH5_IP_56G "192.168.2.125"
+// #define SITH6_IP_56G "192.168.2.126"
 
 uint32_t level0_size = 0;
 uint32_t GF = 0;

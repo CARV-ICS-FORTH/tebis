@@ -1,3 +1,52 @@
+cmake_minimum_required(VERSION 3.10)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+include(FetchContent)
+include(ExternalProject)
+include(cmake_utils/PreventInSouceBuilds.cmake.in)
+
+project(tcp_server LANGUAGES C)
+
+# Set a default build type if none was specified
+set(default_build_type "Release")
+if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+  set(default_build_type "Debug")
+endif()
+
+option(
+  RUN_IWYU
+  "Run include-what-you-use on the source files of the key-value store library."
+  OFF)
+
+option(DISABLE_ALL_WARNINGS "Disable all warnings to parse iwyu output." OFF)
+
+# TODO: remove this and find a clean solution for it option(USE_FORKED_PARALLAX
+# "Use open sourced Parallax from github" OFF)
+
+if(RUN_IWYU STREQUAL "ON")
+  file(COPY ${CMAKE_SOURCE_DIR}/scripts/CI/check-iwyu-output.py
+       DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+endif()
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(
+    STATUS
+      "Setting build type to '${default_build_type}' as none was specified.")
+  set(CMAKE_BUILD_TYPE
+      "${default_build_type}"
+      CACHE STRING "Choose the type of build." FORCE)
+  # Set the possible values of build type for cmake-gui
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+                                               "MinSizeRel" "RelWithDebInfo")
+endif()
+
+if(CMAKE_BUILD_TYPE MATCHES "Release")
+  add_definitions(-DRELEASE_BUILD_TYPE)
+else()
+  add_definitions(-DDEBUG_BUILD_TYPE)
+endif()
+
+add_definitions(-DBUILD_TYPE=${default_build_type})
 set(tcp_server_EXEC "tcp-server")
 
 if(ENC_KEYS)
@@ -13,13 +62,14 @@ if(SGX_BUILD OR SSL)
 endif()
 
 if(NOT SGX_BUILD AND SSL)
+  find_package(MbedTLS REQUIRED)
   add_executable(${tcp_server_EXEC} server.c plog.c server_handle.c
                                     ../common/common_ssl/mbedtls_utility.c)
   target_link_libraries(
     ${tcp_server_EXEC}
-    mbedx509
-    mbedcrypto
-    mbedtls
+    MbedTLS::mbedx509
+    MbedTLS::mbedcrypto
+    MbedTLS::mbedtls
     pthread
     parallax
     rt)
@@ -36,7 +86,7 @@ elseif(SGX_BUILD)
   target_link_libraries(
     ${tcp_server_EXEC}
     openenclave::oeenclave
-    openenclave::ertdeventry # For production link against ertmeshentry
+    openenclave::ertdeventry
     tcp_lib
     openenclave::oehostfs
     openenclave::oehostsock
@@ -76,4 +126,39 @@ install(
 set_target_properties(${tcp_server_EXEC} PROPERTIES OUTPUT_NAME
                                                     ${tcp_server_EXEC})
 
-# find_library(BDB_LIBRARY NAMES libdb.so)
+FetchContent_Declare(
+  log # Recommendation: Stick close to the original name.
+  GIT_REPOSITORY https://github.com/innerout/log.c.git
+  GIT_PROGRESS YES)
+
+FetchContent_GetProperties(log)
+
+if(NOT log_POPULATED)
+  FetchContent_Populate(log)
+  add_subdirectory(${log_SOURCE_DIR} ${log_BINARY_DIR})
+  include_directories(${log_SOURCE_DIR}/include)
+  FetchContent_MakeAvailable(log)
+endif()
+
+if(SGX_BUILD
+   OR ENC_KEYS
+   OR ENC_VALUES)
+  FetchContent_Declare(
+    parallax
+    GIT_REPOSITORY git@carvgit.ics.forth.gr:storage/parallax.git
+    GIT_TAG sgx)
+else()
+  FetchContent_Declare(
+    parallax
+    GIT_REPOSITORY https://github.com/CARV-ICS-FORTH/parallax.git
+    GIT_TAG embed_bloom_filters_in_sst)
+endif()
+
+FetchContent_GetProperties(parallax)
+
+if(NOT parallax_POPULATED)
+  FetchContent_Populate(parallax)
+  add_subdirectory(${parallax_SOURCE_DIR} ${parallax_BINARY_DIR})
+  include_directories(${parallax_SOURCE_DIR}/lib)
+  FetchContent_MakeAvailable(parallax)
+endif()

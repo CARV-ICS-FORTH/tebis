@@ -1,8 +1,6 @@
 #ifndef YCSB_C_TCP_DB_H
 #define YCSB_C_TCP_DB_H
 
-#define NUM_OF_THR 16
-
 extern "C" {
 #include "tcp_client.h"
 }

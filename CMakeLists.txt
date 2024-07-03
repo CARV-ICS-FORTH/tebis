@@ -198,7 +198,6 @@ set(CMAKE_LINKER_FLAGS
 add_subdirectory(tebis_rdma)
 add_subdirectory(tebis_server)
 add_subdirectory(tcp_client)
-add_subdirectory(tcp_server)
 add_subdirectory(YCSB-CXX)
 add_subdirectory(utilities)
 add_subdirectory(tests)
