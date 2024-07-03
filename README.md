@@ -12,7 +12,7 @@ More details can be found in the Eurosys '22 paper [Tebis: Index Shipping for Ef
 - tebis_server contains all the server related code
 - tebis_rdma_client contains the client side code of Tebis
 - File  tebis_rdma_client/tebis_rdma_client.h  contains the public API of the client API
-- tcp_server contains the code for a standalone tcp_server over Parallax
+- tcp_server contains the code for a standalone tcp_server over Parallax, it is a separate cmake project. Detailed information are in the tcp_server folder README.md
 - tcp_client contains the code for the TCP client
 
 # Building Tebis
@@ -107,7 +107,7 @@ The CMake scripts provided support two build configurations; "Release" and
 allow debugging. The build configuration can be defined as a parameter to the
 cmake call as follows:
 
-	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release" 
+	cmake3 .. -DCMAKE_BUILD_TYPE="Debug|Release"
 
 The default build configuration is "Debug".
 
