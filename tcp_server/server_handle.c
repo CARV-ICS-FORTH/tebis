@@ -80,16 +80,18 @@
 	"tcp-server: no options specified\n" \
 	"try 'tcp-server --help' for more information\n"
 
-#define HELP_STRING                                                                \
-	"Usage:\n  tcp-server <-bptf>\nOptions:\n"                                 \
-	" -t, --threads <thread-num>  specify number of server threads.\n"         \
-	" -b, --bind <if-address>     specify the interface that the server will " \
-	"bind to.\n"                                                               \
-	" -p, --port <port>           specify the port that the server will be "   \
-	"listening\n"                                                              \
-	" -f, --file <path>           specify the target (file of db) where "      \
-	"parallax will run\n\n"                                                    \
-	" -h, --help     display this help and exit\n"                             \
+#define HELP_STRING                                                                                             \
+	"Usage:\n  tcp-server <-bptf>\nOptions:\n"                                                              \
+	" -t, --threads <thread-num>  specify number of server threads.\n"                                      \
+	" -b, --bind <if-address>     specify the interface that the server will "                              \
+	"bind to.\n"                                                                                            \
+	" -p, --port <port>           specify the port that the server will be "                                \
+	"listening\n"                                                                                           \
+	" -f, --file <path>           specify the target (file of db) where "                                   \
+	"parallax will run\n\n"                                                                                 \
+	" -L0, --L0_size <size in MB>           sets the L0 size in MB of each region in Parallax\n\n"          \
+	" -GF, --GF <growth factor>           specify the growth factor of levels in each Parallax region\n\n " \
+	" -h, --help     display this help and exit\n"                                                          \
 	" -v, --version  display version information and exit\n"
 #define NECESSARY_OPTIONS 6
 
