@@ -629,7 +629,7 @@ int server_handle_init(sHandle restrict *restrict server_handle, sConfig restric
 				      .options = par_get_default_options() };
 	db_options.options[LEVEL0_SIZE].value = level0_size;
 	db_options.options[GROWTH_FACTOR].value = GF;
-	log_info("Initializing tebis DBs with L0 %u and GF %u", level0_size, GF);
+	log_info("Initializing Parallax DBs with L0 %u and GF %u", level0_size, GF);
 	char actual_db_name[128] = { 0 };
 	for (int i = 0; i < MAX_PARALLAX_DBS; i++) {
 		if (snprintf(actual_db_name, sizeof(actual_db_name), "tcp_server_par_%d", i) < 0) {

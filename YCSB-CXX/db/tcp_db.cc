@@ -10,14 +10,7 @@ extern "C" {
 #include <log.h>
 }
 
-#define LOCALHOST "127.0.0.1"
-#define SITH2_IP_56G "192.168.2.122"
-#define SITH3_IP_56G "192.168.2.123"
-#define SITH4_IP_56G
-#define SITH5_IP_56G "192.168.2.125"
-#define SITH6_IP_56G "192.168.2.126"
-
-#define DEFAULT_HOST SITH3_IP_56G
+#define DEFAULT_HOST "127.0.0.1"
 #define DEFAULT_PORT "8080"
 
 using namespace ycsbc;
@@ -70,12 +63,12 @@ tcpDB::tcpDB(int num, utils::Properties &props) /* OK */
 		exit(EXIT_FAILURE);
 	}
 	std::cout << "Workload Type: " << custom_workload << std::endl;
-	uint32_t ip_size = strlen(props.GetProperty("serverip", DEFAULT_HOST).c_str()) + 1;
-	uint32_t port_size = strlen(props.GetProperty("serverport", DEFAULT_PORT).c_str()) + 1;
+	uint32_t ip_size = strlen(props.GetProperty("par_server_ip", DEFAULT_HOST).c_str()) + 1;
+	uint32_t port_size = strlen(props.GetProperty("par_server_port", DEFAULT_PORT).c_str()) + 1;
 	char *ip = (char *)calloc(1, ip_size);
 	char *port = (char *)calloc(1, port_size);
-	memcpy(ip, props.GetProperty("serverip", DEFAULT_HOST).c_str(), ip_size);
-	memcpy(port, props.GetProperty("serverport", DEFAULT_PORT).c_str(), port_size);
+	memcpy(ip, props.GetProperty("par_server_ip", DEFAULT_HOST).c_str(), ip_size);
+	memcpy(port, props.GetProperty("par_server_port", DEFAULT_PORT).c_str(), port_size);
 	for (int i = 0; i < this->threads; ++i) {
 		if (chandle_init(this->chandle + i, ip, port) < 0) {
 			perror("chandle_init()");
