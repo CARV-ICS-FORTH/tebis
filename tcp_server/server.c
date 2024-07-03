@@ -1,4 +1,3 @@
-#include "plog.h"
 #include "server_handle.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -42,7 +41,7 @@ int main(int argc, char **argv)
 	/** parse/set options **/
 
 	if (server_parse_argv_opts(&sconfig, argc, argv) < 0) {
-		plog(PL_ERROR "server_parse_argv_opts(): %s", strerror(errno));
+		log_fatal("server_parse_argv_opts(): %s", strerror(errno));
 		exit(errno);
 	}
 
@@ -51,17 +50,17 @@ int main(int argc, char **argv)
 	/** start server **/
 
 	if ((server_handle_init(&shandle, sconfig)) < 0) {
-		plog(PL_ERROR "server_handle_init(): ", strerror(errno));
+		log_fatal("server_handle_init(): %s: ", strerror(errno));
 		exit(errno);
 	}
 
 	if (server_print_config(shandle) < 0) {
-		plog(PL_ERROR "server_print_config(): ", strerror(errno));
+		log_fatal("server_print_config(): %s", strerror(errno));
 		exit(errno);
 	}
 
 	if (server_spawn_threads(shandle) < 0) {
-		plog(PL_ERROR "server_spawn_threads(): ", strerror(errno));
+		log_fatal("server_spawn_threads(): %s", strerror(errno));
 		exit(errno);
 	} // blocking call!
 
