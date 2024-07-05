@@ -3,7 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: zookeeper-data-pvc
 spec:
-  storageClassName: manual
+  storageClassName: local-path
   accessModes:
     - ReadWriteOnce
   resources:

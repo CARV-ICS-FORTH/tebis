@@ -5,10 +5,10 @@ metadata:
   labels:
     type: local
 spec:
-  storageClassName: manual
+  storageClassName: local-path
   capacity:
     storage: 5Gi
   accessModes:
     - ReadWriteOnce
   hostPath:
-    path: "/mnt/nvme/Tebis/zookeeper/datalog"
+    path: "/mnt/nvme/Tebis/zookeeper/data"
