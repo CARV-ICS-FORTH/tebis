@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tebis-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tebis
+      replica: replica1
+  template:
+    metadata:
+      labels:
+        app: tebis
+        replica: replica1
+    spec:
+      hostNetwork: true
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+        - 192.168.4.122
+        searches:
+        - cluster.local
+      containers:
+      - name: tebis
+        image: dstath/tebis_test_bench:tebis-app
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        securityContext:
+          privileged: true
+        command: ["/bin/sh", "-c", "--"]
+        args:
+          - |
+            if ! ip addr show | grep -q '192.168.4.1'; then
+              echo "Not rdma found."
+            fi
+            echo "Interface setup complete. Sleeping indefinitely.";
+            sleep infinity;
