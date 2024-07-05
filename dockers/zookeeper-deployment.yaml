@@ -12,6 +12,13 @@ spec:
       labels:
         app: zookeeper
     spec:
+      hostNetwork: true
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+        - 192.168.4.122
+        searches:
+        - cluster.local
       containers:
       - name: zookeeper
         image: dstath/tebis_test_bench:zookeeper
@@ -20,9 +27,9 @@ spec:
         - containerPort: 2181
         volumeMounts:
         - name: zookeeper-data
-          mountPath: "/home/dimos/Tebis/zookeeper/data"
+          mountPath: "/mnt/nvme/Tebis/zookeeper/data"
         - name: zookeeper-datalog
-          mountPath: "/home/dimos/Tebis/zookeeper/datalog"
+          mountPath: "/mnt/nvme/Tebis/zookeeper/datalog"
       volumes:
       - name: zookeeper-data
         persistentVolumeClaim:
