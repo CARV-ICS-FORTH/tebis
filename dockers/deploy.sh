@@ -9,7 +9,7 @@ else
 	exit 1
 fi
 
-echo "Zookeeper PVs to Kubernetes..."
+echo "Zookeeper PVs Deployment to Kubernetes..."
 if sudo kubectl apply -f zookeeper/PVs/zookeeper-datalog-pvc.yaml \
 	-f zookeeper/PVs/zookeeper-data-pvc.yaml \
 	-f zookeeper/PVs/zookeeper-datalog-pv.yaml \
