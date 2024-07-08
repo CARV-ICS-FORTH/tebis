@@ -1,18 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tebis-deployment-temp
+  name: tebis-deployment-2
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: tebis
-      replica: replica2
+      app: tebis-2
   template:
     metadata:
       labels:
-        app: tebis
-        replica: replica2
+        app: tebis-2
     spec:
       hostNetwork: true
       dnsPolicy: None
