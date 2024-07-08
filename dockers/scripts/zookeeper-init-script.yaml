@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zookeeper-init-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: zookeeper-init-script
+        image: dstath/tebis_test_bench:zookeeper-init-script
+        imagePullPolicy: Always
+        command: [ "sh", "-c" ]
+        args:
+          - |
+            until nc -z zookeeper-deployment 2181; do
+              echo "Waiting for Zookeeper to be ready..."
+              sleep 5
+            done
+            echo "Zookeeper is ready!"
+            python /usr/local/bin/tebis_zk_init.py
+        volumeMounts:
+          - name: zookeeper-data
+            mountPath: "/mnt/nvme/Tebis/zookeeper/data"
+          - name: zookeeper-datalog
+            mountPath: "/mnt/nvme/Tebis/zookeeper/datalog"
+      volumes:
+      - name: zookeeper-data
+        persistentVolumeClaim:
+          claimName: zookeeper-data-pvc
+      - name: zookeeper-datalog
+        persistentVolumeClaim:
+          claimName: zookeeper-datalog-pvc
+      restartPolicy: OnFailure
