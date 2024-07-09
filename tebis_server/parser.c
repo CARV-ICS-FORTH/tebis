@@ -6,17 +6,18 @@
 static char doc[] = "Tebis Region Server";
 static char args_doc[] = "";
 
-static struct argp_option options[] = { { "device", 'd', "DEVICE", 0, "Device name", 0 },
-					{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port", 0 },
-					{ "rdma", 'r', "RDMA", 0, "RDMA subnet", 0 },
-					{ "server-port", 'p', "SPORT", 0, "Server port", 0 },
-					{ "num-of-threads", 'c', "THREADS", 0, "Number of threads (min: 2)", 0 },
-					{ "tebis-l0", 't', "T_L0", 0, "TEBIS L0 size in MB (default: 125)", 0 },
-					{ "growth-factor", 'g', "GF", 0, "Growth factor (default: 8)", 0 },
-					{ "index", 'i', "INDEX", 0, "Send index or build index (default: send_index)",
-					  0 },
-					{ "device-size", 's', "DEVICESIZE", 0, "Device size in GB (default: 4)", 0 },
-					{ 0 } };
+static struct argp_option options[] = {
+	{ "device", 'd', "DEVICE", 0, "Device name", 0 },
+	{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port", 0 },
+	{ "rdma", 'r', "RDMA", 0, "RDMA subnet", 0 },
+	{ "server-port", 'p', "SPORT", 0, "Server port", 0 },
+	{ "num-of-threads", 'c', "THREADS", 0, "Number of threads (min: 2)", 0 },
+	{ "tebis-l0", 't', "T_L0", 0, "TEBIS L0 size in MB (default: 8)", 0 },
+	{ "growth-factor", 'g', "GF", 0, "Growth factor (default: 8)", 0 },
+	{ "index", 'i', "INDEX", 0, "Send index or build index (default: send_index)", 0 },
+	{ "device-size", 's', "DEVICESIZE", 0, "Device size in GB (min: 16) (default: 16)", 0 },
+	{ 0 }
+};
 
 struct arguments {
 	char *device_name;
