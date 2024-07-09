@@ -46,6 +46,7 @@
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
+#include "parser.h"
 #include "stats.h"
 #// IWYU pragma: no_forward_declare timespec
 
@@ -903,42 +904,30 @@ int main(int argc, char *argv[])
 	_exit(EXIT_FAILURE);
 #endif
 
+	struct server_config s_config;
+	parse_arguments(argc, argv, &s_config);
+
+	//ensure_device_exists(s_config.device_name, s_config.device_size);
+
 	int num_of_numa_servers = 1;
 
-	if (argc != 8) {
-		log_fatal(
-			"Error args are %d! usage: ./kreon_server <device name>"
-			" <zk_host:zk_port>  <RDMA subnet> <TEBIS_L0 size in KB> <growth factor> <send_index or build_index> <server(s) vector>\n "
-			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
-			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
-			argc);
-		_exit(EXIT_FAILURE);
-	}
-	// argv[0] program name don't care
 	// dev name
-	int next_argv = 1;
-	char *device_name = argv[next_argv++];
-	globals_set_dev(device_name);
-	// zookeeper
-	globals_set_zk_host(argv[next_argv++]);
-	// RDMA subnet
-	globals_set_RDMA_IP_filter(argv[next_argv++]);
-	//TEBIS_L0 size
-	uint32_t TEBIS_L0_size = strtoul(argv[next_argv++], NULL, 10);
-	globals_set_l0_size(TEBIS_L0_size);
-	//growth factor
-	uint32_t growth_factor = strtoul(argv[next_argv++], NULL, 10);
-	globals_set_growth_factor(growth_factor);
+	globals_set_dev(s_config.device_name);
 
-	if (strcmp(argv[next_argv], "send_index") == 0) {
-		globals_set_send_index(1);
-	} else if (strcmp(argv[next_argv], "build_index") == 0) {
-		globals_set_send_index(0);
-	} else {
-		log_fatal("what do you want send or build index?");
-		_exit(EXIT_FAILURE);
-	}
-	++next_argv;
+	// zookeeper
+	globals_set_zk_host(s_config.zk_host);
+
+	// RDMA subnet
+	globals_set_RDMA_IP_filter(s_config.rdma_subnet);
+
+	//TEBIS_L0 size
+	globals_set_l0_size(s_config.tebisl0_size);
+
+	//growth factor
+	globals_set_growth_factor(s_config.growth_factor);
+
+	//send_index
+	globals_set_send_index(s_config.index);
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
@@ -946,44 +935,35 @@ int main(int argc, char *argv[])
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
 
-	char *strtok_saveptr = NULL;
-	char *rest = argv[next_argv];
-	// RDMA port of server
-	char *rdma_port_token = strtok_r(rest, ",", &strtok_saveptr);
-	if (rdma_port_token == NULL) {
-		log_fatal("RDMA port missing in server configuration");
-		_exit(EXIT_FAILURE);
-	}
-	char *ptr = NULL;
-	int rdma_port = strtol(rdma_port_token, &ptr, 10);
+	int rdma_port = s_config.server_port;
 	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
 
 	// Spinning thread of server
-	char *token = strtok_r(NULL, ",", &strtok_saveptr);
-	if (token == NULL) {
-		log_fatal("Spinning thread id missing in server configuration");
-		_exit(EXIT_FAILURE);
-	}
-	int spinning_thread_id = strtol(token, &ptr, 10);
+	int spinning_thread_id = 0;
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
 	// now the worker ids
-	int num_workers = 0;
+	int num_workers = s_config.num_threads - 1;
 	int workers_id[MAX_CORES_PER_NUMA] = { 0 };
 
-	for (token = strtok_r(NULL, ",", &strtok_saveptr); token != NULL; token = strtok_r(NULL, ",", &strtok_saveptr))
-		workers_id[num_workers++] = strtol(token, &ptr, 10);
+	for (int i = 0; i < num_workers; i++)
+		workers_id[i] = i + 1;
 
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);
 		_exit(EXIT_FAILURE);
 	}
+
 	// Double the workers, mirror workers are for server tasks
-	num_workers *= 2;
+	// num_workers *= 2;
 
 	// now we have all info to allocate ds_numa_server, pin,
 	// and inform the root server
 	struct ds_numa_server *server = calloc(1, sizeof(struct ds_numa_server));
+	if (server == NULL) {
+		log_fatal("malloc failed: could not get memory for server");
+		_exit(EXIT_FAILURE);
+	}
 
 	/*But first let's build each numa server's RDMA channel*/
 	/*RDMA channel staff*/
@@ -1049,24 +1029,12 @@ int main(int argc, char *argv[])
 	server->spinner.next_worker_to_submit_job = 0;
 
 	if (pthread_create(&server->socket_thread_cnxt, NULL, socket_thread, (void *)server) != 0) {
-		log_fatal("failed to spawn socket thread  for Server: %d reason follows:", server->server_id);
+		log_fatal("failed to spawn socket thread for Server: %d reason follows:", server->server_id);
 		perror("Reason: \n");
 		_exit(EXIT_FAILURE);
 	}
 
 	// Now pin it in the numa node! Important step so allocations used by spinner and workers to be in the same numa node
-
-	cpu_set_t numa_node_affinity;
-	CPU_ZERO(&numa_node_affinity);
-	CPU_SET(server->spinner.spinner_id, &numa_node_affinity);
-	for (int k = 0; k < server->spinner.num_workers; k++)
-		CPU_SET(server->spinner.worker[k].worker_id, &numa_node_affinity);
-	int status = pthread_setaffinity_np(server->socket_thread_cnxt, sizeof(cpu_set_t), &numa_node_affinity);
-	if (status != 0) {
-		log_fatal("failed to pin socket thread for server %d at port %d", server->server_id, server->rdma_port);
-		_exit(EXIT_FAILURE);
-	}
-
 	log_info("Started socket thread successfully for Server %d", server->server_id);
 
 	log_info("Starting spinning thread for Server %d", server->server_id);
@@ -1075,20 +1043,8 @@ int main(int argc, char *argv[])
 		_exit(EXIT_FAILURE);
 	}
 
-	// spinning thread pin staff
-	log_info("Pinning spinning thread of Server: %d at port %d at core %d", server->server_id, server->rdma_port,
-		 server->spinner.spinner_id);
-	cpu_set_t spinning_thread_affinity_mask;
-	CPU_ZERO(&spinning_thread_affinity_mask);
-	CPU_SET(server->spinner.spinner_id, &spinning_thread_affinity_mask);
-	status = pthread_setaffinity_np(server->spinner_cnxt, sizeof(cpu_set_t), &spinning_thread_affinity_mask);
-	if (status != 0) {
-		log_fatal("failed to pin spinning thread");
-		_exit(EXIT_FAILURE);
-	}
-	log_info("Pinned successfully spinning thread of Server: %d at port %d at "
-		 "core %d",
-		 server->server_id, server->rdma_port, server->spinner.spinner_id);
+	log_info("Pinned successfully spinning thread of Server: %d at port %d at core %d", server->server_id,
+		 server->rdma_port, server->spinner.spinner_id);
 
 	if (pthread_create(&server->meta_server_cnxt, NULL, run_master, &rdma_port)) {
 		log_fatal("Failed to start metadata_server");
