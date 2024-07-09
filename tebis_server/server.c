@@ -25,6 +25,7 @@
 #include "work_task.h"
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <infiniband/verbs.h>
 #include <log.h>
 #include <pthread.h>
@@ -37,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -886,6 +888,33 @@ static void sigint_handler(int signo)
 	sem_post(&exit_main);
 }
 
+static void ensure_device_exists(const char *device_name, int device_size)
+{
+	struct stat st;
+
+	if (stat(device_name, &st) == 0) {
+		return;
+	} else if (errno != ENOENT) {
+		perror("stat failed");
+		exit(EXIT_FAILURE);
+	}
+
+	int fd = open(device_name, O_CREAT | O_RDWR, 0666);
+	if (fd < 0) {
+		perror("Failed to create device file");
+		exit(EXIT_FAILURE);
+	}
+
+	if (fallocate(fd, 0, 0, device_size * 1024LL * 1024 * 1024) != 0) {
+		perror("Failed to allocate space for device file");
+		close(fd);
+		exit(EXIT_FAILURE);
+	}
+
+	close(fd);
+	log_info("Created device file: %s\n", device_name);
+}
+
 #define MAX_CORES_PER_NUMA 64
 int main(int argc, char *argv[])
 {
@@ -907,7 +936,7 @@ int main(int argc, char *argv[])
 	struct server_config s_config;
 	parse_arguments(argc, argv, &s_config);
 
-	//ensure_device_exists(s_config.device_name, s_config.device_size);
+	ensure_device_exists(s_config.device_name, s_config.device_size);
 
 	int num_of_numa_servers = 1;
 
