@@ -77,7 +77,7 @@ struct ds_worker_thread {
 	struct channel_rdma *channel;
 	pthread_t context;
 	/*for affinity purposes*/
-	int cpu_core_id;
+	// int cpu_core_id;
 	int worker_id;
 	/*my parent*/
 	int root_server_id;
@@ -704,20 +704,20 @@ static void *server_spinning_thread_kernel(void *args)
 	cpu_set_t worker_threads_affinity_mask;
 	CPU_ZERO(&worker_threads_affinity_mask);
 	/*pin and create my workers*/
-	for (int i = 0; i < spinner->num_workers; i++)
-		CPU_SET(spinner->worker[i].cpu_core_id, &worker_threads_affinity_mask);
+	// for (int i = 0; i < spinner->num_workers; i++)
+	// 	CPU_SET(spinner->worker[i].cpu_core_id, &worker_threads_affinity_mask);
 
 	for (int i = 0; i < spinner->num_workers; i++) {
 		pthread_create(&spinner->worker[i].context, NULL, worker_thread_kernel, &spinner->worker[i]);
 
 		/*set affinity for this group*/
 		log_info("Spinning thread %d Started worker %d", spinner->spinner_id, i);
-		int status = pthread_setaffinity_np(spinner->worker[i].context, sizeof(cpu_set_t),
-						    &worker_threads_affinity_mask);
-		if (status != 0) {
-			log_fatal("failed to pin workers for spinning thread %d", spinner->spinner_id);
-			_exit(EXIT_FAILURE);
-		}
+		// int status = pthread_setaffinity_np(spinner->worker[i].context, sizeof(cpu_set_t),
+		// 				    &worker_threads_affinity_mask);
+		// if (status != 0) {
+		// 	log_fatal("failed to pin workers for spinning thread %d", spinner->spinner_id);
+		// 	_exit(EXIT_FAILURE);
+		// }
 	}
 
 	// int max_idle_time_usec = globals_get_worker_spin_time_usec();
@@ -973,10 +973,10 @@ int main(int argc, char *argv[])
 
 	// now the worker ids
 	int num_workers = s_config.num_threads - 1;
-	int workers_id[MAX_CORES_PER_NUMA] = { 0 };
+	// int workers_id[MAX_CORES_PER_NUMA] = { 0 };
 
-	for (int i = 0; i < num_workers; i++)
-		workers_id[i] = i + 1;
+	// for (int i = 0; i < num_workers; i++)
+	// 	workers_id[i] = i + 1;
 
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);
@@ -1043,7 +1043,7 @@ int main(int argc, char *argv[])
 
 	for (int worker_id = 0; worker_id < num_workers; worker_id++) {
 		server->spinner.worker[worker_id].worker_id = worker_id;
-		server->spinner.worker[worker_id].cpu_core_id = workers_id[worker_id];
+		// server->spinner.worker[worker_id].cpu_core_id = workers_id[worker_id];
 	}
 	root_server->numa_servers[server_idx] = server;
 
