@@ -11,7 +11,7 @@ struct server_config {
 	uint32_t growth_factor;
 	int index;
 	int server_port;
-	int num_cores;
+	int num_threads;
 	int device_size;
 };
 

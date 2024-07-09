@@ -9,13 +9,13 @@ static char args_doc[] = "";
 static struct argp_option options[] = { { "device", 'd', "DEVICE", 0, "Device name", 0 },
 					{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port", 0 },
 					{ "rdma", 'r', "RDMA", 0, "RDMA subnet", 0 },
-					{ "server-port", 's', "SPORT", 0, "Server port", 0 },
-					{ "num-of-cores", 'c', "CORES", 0, "Number of cores", 0 },
+					{ "server-port", 'p', "SPORT", 0, "Server port", 0 },
+					{ "num-of-threads", 'c', "THREADS", 0, "Number of threads (min: 2)", 0 },
 					{ "tebis-l0", 't', "T_L0", 0, "TEBIS L0 size in MB (default: 125)", 0 },
 					{ "growth-factor", 'g', "GF", 0, "Growth factor (default: 8)", 0 },
 					{ "index", 'i', "INDEX", 0, "Send index or build index (default: send_index)",
 					  0 },
-					{ "device-size", 'e', "DEVICESIZE", 0, "Device size in GB (default: 4)", 0 },
+					{ "device-size", 's', "DEVICESIZE", 0, "Device size in GB (default: 4)", 0 },
 					{ 0 } };
 
 struct arguments {
@@ -26,7 +26,7 @@ struct arguments {
 	uint32_t growth_factor;
 	int index;
 	int server_port;
-	int num_cores;
+	int num_threads;
 	int device_size;
 };
 
@@ -48,7 +48,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		arguments->server_port = strtol(arg, NULL, 10);
 		break;
 	case 'c':
-		arguments->num_cores = strtol(arg, NULL, 10);
+		arguments->num_threads = strtol(arg, NULL, 10);
 		break;
 	case 't':
 		arguments->tebisl0_size = strtoul(arg, NULL, 10);
@@ -71,7 +71,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		break;
 	case ARGP_KEY_END:
 		if (!arguments->device_name || !arguments->zk_host || !arguments->rdma_subnet ||
-		    !arguments->server_port || !arguments->num_cores) {
+		    !arguments->server_port || arguments->num_threads < 2) {
 			argp_usage(state);
 		}
 		break;
@@ -85,7 +85,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL 
 
 void parse_arguments(int argc, char *argv[], struct server_config *config)
 {
-	struct arguments arguments = { .tebisl0_size = 125, .growth_factor = 8, .index = 1, .device_size = 4 };
+	struct arguments arguments = { .tebisl0_size = 8, .growth_factor = 8, .index = 1, .device_size = 16 };
 
 	argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
@@ -96,6 +96,6 @@ void parse_arguments(int argc, char *argv[], struct server_config *config)
 	config->growth_factor = arguments.growth_factor;
 	config->index = arguments.index;
 	config->server_port = arguments.server_port;
-	config->num_cores = arguments.num_cores;
+	config->num_threads = arguments.num_threads;
 	config->device_size = arguments.device_size;
 }
