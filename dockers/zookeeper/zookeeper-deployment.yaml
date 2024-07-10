@@ -13,12 +13,7 @@ spec:
         app: zookeeper
     spec:
       hostNetwork: true
-      dnsPolicy: None
-      dnsConfig:
-        nameservers:
-        - 192.168.4.122
-        searches:
-        - cluster.local
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
       - name: zookeeper
         image: dstath/tebis_test_bench:zookeeper
