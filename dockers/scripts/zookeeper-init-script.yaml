@@ -12,12 +12,12 @@ spec:
         command: [ "sh", "-c" ]
         args:
           - |
-            until nc -z zookeeper-deployment 2181; do
+            until nc -z zookeeper-service 2181; do
               echo "Waiting for Zookeeper to be ready..."
               sleep 5
             done
             echo "Zookeeper is ready!"
-            python /usr/local/bin/tebis_zk_init.py
+            python /usr/local/bin/tebis_zk_init.py /config/hosts_file /config/regions_file zookeeper-service:2181
         volumeMounts:
           - name: zookeeper-data
             mountPath: "/mnt/nvme/Tebis/zookeeper/data"
