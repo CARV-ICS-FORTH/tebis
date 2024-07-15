@@ -2,8 +2,7 @@
 
 function deploy_zookeeper() {
 	echo "Zookeeper deploy from Kubernetes..."
-	if sudo kubectl apply -f zookeeper/zookeeper-deployment.yaml \
-		-f zookeeper/zookeeper-service.yaml; then
+	if sudo kubectl apply -f zookeeper/zookeeper.yaml; then
 		echo "Zookeeper deploy complete."
 	else
 		echo "Zookeeper deploy failed."
@@ -11,15 +10,12 @@ function deploy_zookeeper() {
 	fi
 }
 
-function deploy_pvs() {
-	echo "Zookeeper PVs deploy from Kubernetes..."
-	if sudo kubectl apply -f zookeeper/PVs/zookeeper-datalog-pvc.yaml \
-		-f zookeeper/PVs/zookeeper-data-pvc.yaml \
-		-f zookeeper/PVs/zookeeper-datalog-pv.yaml \
-		-f zookeeper/PVs/zookeeper-data-pv.yaml; then
-		echo "Zookeeper PVs deploy complete."
+function deploy_script() {
+	echo "Zookeeper Script..."
+	if sudo kubectl delete job.batch/zookeeper-init-job && sudo kubectl apply -f zookeeper/zookeeper.yaml; then
+		echo "Zookeeper Scripts re-deploy complete."
 	else
-		echo "Zookeeper PVs deploy failed."
+		echo "Zookeeper Scripts re-deploy failed."
 		exit 1
 	fi
 }
@@ -39,13 +35,12 @@ function deploy_tebis() {
 
 # Flags to track which functions to call
 DO_deploy_ZOOKEEPER=false
-DO_deploy_PVS=false
+DO_deploy_script=false
 DO_deploy_TEBIS=false
 
 # Process input arguments
 if [ "$#" -eq 0 ]; then
 	DO_deploy_ZOOKEEPER=true
-	DO_deploy_PVS=true
 	DO_deploy_TEBIS=true
 else
 	for arg in "$@"; do
@@ -53,14 +48,14 @@ else
 		zoo)
 			DO_deploy_ZOOKEEPER=true
 			;;
-		pv)
-			DO_deploy_PVS=true
+		script)
+			DO_deploy_script=true
 			;;
 		tebis)
 			DO_deploy_TEBIS=true
 			;;
 		*)
-			echo "Invalid parameter: $arg. Use 'zoo', 'pv', 'tebis', or no parameter for all."
+			echo "Invalid parameter: $arg. Use 'zoo', 'script', 'tebis', or no parameter for all."
 			exit 1
 			;;
 		esac
@@ -72,8 +67,8 @@ if [ "$DO_deploy_ZOOKEEPER" = true ]; then
 	deploy_zookeeper
 fi
 
-if [ "$DO_deploy_PVS" = true ]; then
-	deploy_pvs
+if [ "$DO_deploy_script" = true ]; then
+	deploy_script
 fi
 
 if [ "$DO_deploy_TEBIS" = true ]; then

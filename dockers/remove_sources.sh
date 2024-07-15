@@ -2,24 +2,10 @@
 
 function remove_zookeeper() {
 	echo "Zookeeper remove from Kubernetes..."
-	if sudo kubectl delete -f zookeeper/zookeeper-deployment.yaml \
-		-f zookeeper/zookeeper-service.yaml; then
+	if sudo kubectl delete -f zookeeper/zookeeper.yaml; then
 		echo "Zookeeper remove complete."
 	else
 		echo "Zookeeper remove failed."
-		exit 1
-	fi
-}
-
-function remove_pvs() {
-	echo "Zookeeper PVs remove from Kubernetes..."
-	if sudo kubectl delete -f zookeeper/PVs/zookeeper-datalog-pvc.yaml \
-		-f zookeeper/PVs/zookeeper-data-pvc.yaml \
-		-f zookeeper/PVs/zookeeper-datalog-pv.yaml \
-		-f zookeeper/PVs/zookeeper-data-pv.yaml; then
-		echo "Zookeeper PVs remove complete."
-	else
-		echo "Zookeeper PVs remove failed."
 		exit 1
 	fi
 }
@@ -39,22 +25,17 @@ function remove_tebis() {
 
 # Flags to track which functions to call
 DO_REMOVE_ZOOKEEPER=false
-DO_REMOVE_PVS=false
 DO_REMOVE_TEBIS=false
 
 # Process input arguments
 if [ "$#" -eq 0 ]; then
 	DO_REMOVE_ZOOKEEPER=true
-	DO_REMOVE_PVS=true
 	DO_REMOVE_TEBIS=true
 else
 	for arg in "$@"; do
 		case $arg in
 		zoo)
 			DO_REMOVE_ZOOKEEPER=true
-			;;
-		pv)
-			DO_REMOVE_PVS=true
 			;;
 		tebis)
 			DO_REMOVE_TEBIS=true
@@ -70,10 +51,6 @@ fi
 # Call functions based on flags
 if [ "$DO_REMOVE_ZOOKEEPER" = true ]; then
 	remove_zookeeper
-fi
-
-if [ "$DO_REMOVE_PVS" = true ]; then
-	remove_pvs
 fi
 
 if [ "$DO_REMOVE_TEBIS" = true ]; then
