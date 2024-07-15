@@ -30,3 +30,11 @@ spec:
             fi
             echo "Interface setup complete. Sleeping indefinitely.";
             sleep infinity
+        volumeMounts:
+          - name: host-storage
+            mountPath: /mnt/nvme/tebis_2
+      volumes:
+      - name: host-storage
+        hostPath:
+          path: /mnt/nvme/tebis_2
+          type: DirectoryOrCreate
