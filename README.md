@@ -334,33 +334,36 @@ First we need a Zookeeper server. For simplicity we assume that the Zookeeper se
 need to initialize Tebis metadata. This can be done through the command
 <tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
 
-- **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections:0> <role leader or empty>
- Example:
-- sith2.cluster.ics.forth.gr:8080:0 leader (so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)
-- sith3.cluster.ics.forth.gr:8080:0
-- sith6.cluster.ics.forth.gr:8080:0
--**Regions file** Contains the region info in which we split the key space
-<region_id> <min_key_range> <max_key_range> <server1:port:1 (primary)> <server2:port:1 (backup)>
-*Example of regions file*
+**Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections:0> <role leader or empty>
 
-0 -oo MM sith2.cluster.ics.forth.gr:8080:1 sith3.cluster.ics.forth.gr:8080:1
-1 MM  ZZ sith3.cluster.ics.forth.gr:8080:1 sith6.cluster.ics.forth.gr:8080:1
-2 ZZ +oo sith6.cluster.ics.forth.gr:8080:1 sith2.cluster.ics.forth.gr:8080:1
+Example:<br>
+sith2.cluster.ics.forth.gr:8080:0 leader #(so sith2.cluster.ics.forth.gr:8080 will be the initial leader of the system)<br>
+sith3.cluster.ics.forth.gr:8080:0<br>
+sith6.cluster.ics.forth.gr:8080:0
+
+
+**Regions file:** Contains the region info in which we split the key space <br>
+<region_id> <min_key_range> <max_key_range> <server1:port:1 (primary)> <server2:port:1 (backup)><br>
+
+Example:<br>
+0 -oo MM sith2.cluster.ics.forth.gr:8080:1 sith3.cluster.ics.forth.gr:8080:1<br>
+1 MM  ZZ sith3.cluster.ics.forth.gr:8080:1 sith6.cluster.ics.forth.gr:8080:1<br>
+2 ZZ +oo sith6.cluster.ics.forth.gr:8080:1 sith2.cluster.ics.forth.gr:8080:1<br>
 
 In each tebis server we need a allocated file where Tebis will store its data. Each server's storage capacity will be equal
-to the size of the file provided. The server will create its own file (or use dd or fallocate).
-Example
-fallocate -l 100G /path/to/file
+to the size of the file provided. The server will create its own file (or use dd or fallocate).<br>
+*Example: `fallocate -l 100G /path/to/file`*
 
-Then we need to boot first the leader of the Tebis rack
-<tebis_build_root folder>/tebis_server/tebis_server -d <path to tebis file> -z <zk_host:zk_port> -r <RDMA IP subnet> -p <server port>
--c <num of threads> [-t <LSM L0 size in keys>] [-g <growth factor>] [-i <"send_index" | "build_index">] [-s <device size in GB>]
+Then we need to boot first the leader of the Tebis rack <br>
+```
+<tebis_build_root folder>/tebis_server/tebis_server -d <path to tebis file> -z <zk_host:zk_port> -r <RDMA IP subnet> -p <server port> -c <num of threads> [-t <LSM L0 size in keys>] [-g <growth factor>] [-i <"send_index" | "build_index">] [-s <device size in GB>]
+```
 
-example: build/tebis_server/tebis_server -d /nvme/par1.dat -z sith2:2181 -r 192.168.4 -p 8080 -c 3
+example: build/tebis_server/tebis_server -d /nvme/par1.dat -z sith2:2181 -r 192.168.4 -p 8080 -c 3 <br>
 example: build/tebis_server/tebis_server -d /nvme/par1.dat -z sith2:2181 -r 192.168.4 -p 8080 -c 3 -t 16 -g 10 -i send_index -s 100
 
 # Tests
-cd into folder <BUILD_ROOT_FOLDER>/tests/ and type
+cd into folder `<BUILD_ROOT_FOLDER>/tests/` and type
 test_krc_api zk_host:zk_port
 
 ## Acknowledgements
