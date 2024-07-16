@@ -1,11 +1,11 @@
-# Kreon
+# Tebis
 
 This document focuses on setting up a development environment for the
-distributed of Kreon on a local machine.
+distributed of Tebis on a local machine.
 
 ## Set up Development Environment
 
-Kreon uses RDMA for all network communication, which requires support from the
+Tebis uses RDMA for all network communication, which requires support from the
 network interface to run. A software implementation (soft-RoCE) exists and can
 run on all network interfaces.
 
@@ -101,7 +101,7 @@ Example output:
 ---------------------------------------------------------------------------------------
 ```
 
-## Running Kreon
+## Running Tebis
 
 ### Start a Zookeeper Server
 
@@ -123,7 +123,7 @@ Example output:
     ./bin/zkServer.sh start
     ````
 
-### Start a Kreon Server
+### Start a Tebis Server
 <!-- FIXME Mention kreon_server/conf.h:RDMA_IP_FILTER and zookeeper_host_port -->
 
 Follow these steps, while in project's root directory:
@@ -134,16 +134,16 @@ Follow these steps, while in project's root directory:
 
 2. Initialize a file device
     ````
-    fallocate --length 4G /tmp/kreon-disk.dat
-    ./scripts/mkfs.eutropia.single.sh /tmp/kreon-disk.dat 1 1
+    fallocate --length 4G /tmp/tebis-disk.dat
+    ./scripts/mkfs.eutropia.single.sh /tmp/tebis-disk.dat 1 1
     ````
 
 3. Start the server
     ````
-    ./build/kreon_server/kreon_server 6060 /tmp/kreon-disk.dat 4 0 1
+    ./build/tebis_server/tebis_server -d /tmp/tebis-disk.dat -z zk_host:port -r RDMA_device -p 8080 -c 3
     ````
 
-4. Create a Kreon region (will include all possible keys)
+4. Create a Tebis region (will include all possible keys)
     ````
     ./scripts/create_region.sh
     ````
