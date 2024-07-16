@@ -7,8 +7,8 @@ static char doc[] = "Tebis Region Server";
 static char args_doc[] = "";
 
 static struct argp_option options[] = {
-	{ "device", 'd', "DEVICE", 0, "Device name", 0 },
-	{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port", 0 },
+	{ "device", 'd', "DEVICE", 0, "Device file", 0 },
+	{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port <zk_host:port>", 0 },
 	{ "rdma", 'r', "RDMA", 0, "RDMA subnet", 0 },
 	{ "server-port", 'p', "SPORT", 0, "Server port", 0 },
 	{ "num-of-threads", 'c', "THREADS", 0, "Number of threads (min: 2)", 0 },
@@ -45,7 +45,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 	case 'r':
 		arguments->rdma_subnet = arg;
 		break;
-	case 's':
+	case 'p':
 		arguments->server_port = strtol(arg, NULL, 10);
 		break;
 	case 'c':
@@ -67,7 +67,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 			exit(EXIT_FAILURE);
 		}
 		break;
-	case 'e':
+	case 's':
 		arguments->device_size = strtoul(arg, NULL, 10);
 		break;
 	case ARGP_KEY_END:
