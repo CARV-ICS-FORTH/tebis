@@ -7,7 +7,7 @@ static char doc[] = "Tebis Region Server";
 static char args_doc[] = "";
 
 static struct argp_option options[] = {
-	{ "device", 'd', "DEVICE", 0, "Device file", 0 },
+	{ "device", 'd', "DEVICE", 0, "Path to tebis file", 0 },
 	{ "zookeeper", 'z', "ZOOKEEPER", 0, "Zookeeper host and port <zk_host:port>", 0 },
 	{ "rdma", 'r', "RDMA", 0, "RDMA subnet", 0 },
 	{ "server-port", 'p', "SPORT", 0, "Server port", 0 },
