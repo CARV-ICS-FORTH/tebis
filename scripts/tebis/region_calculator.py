@@ -1,3 +1,5 @@
+#!/bin/python3
+
 import sys
 
 letters = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
