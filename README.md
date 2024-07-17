@@ -332,7 +332,7 @@ the memory available to a command (including pages in the buffer cache) to 16GB.
 # Running Tebis on a two server machine configuration
 First we need a Zookeeper server. For simplicity we assume that the Zookeeper service runs at zoo:2181. Then we
 need to initialize Tebis metadata. This can be done through the command
-<tebis_root_folder>/scripts/kreonR/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
+<tebis_root_folder>/scripts/tebis/tebis_zk_init.py <hosts_file> <regions_file> <zookeeper_host>
 
 **Hosts_file:** Contains the servers of the cluster in the form <host1:port_for_incoming_rdma_connections:0> <role leader or empty>
 

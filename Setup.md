@@ -124,11 +124,11 @@ Example output:
     ````
 
 ### Start a Tebis Server
-<!-- FIXME Mention kreon_server/conf.h:RDMA_IP_FILTER and zookeeper_host_port -->
+<!-- FIXME Mention tebis/conf.h:RDMA_IP_FILTER and zookeeper_host_port -->
 
 Follow these steps, while in project's root directory:
 
-1. Set the define RDMA_IP_FILTER in kreon_server/conf.h to the prefix of your
+1. Set the define RDMA_IP_FILTER in tebis_server/conf.h to the prefix of your
    RDMA device (eg. "192.168.122." for the device 192.168.122.105). Recompile
    for the change to take effect.
 
@@ -148,10 +148,10 @@ Follow these steps, while in project's root directory:
     ./scripts/create_region.sh
     ````
 
-### Test Functionality Using YCSB
+<!--### Test Functionality Using YCSB
 
 ````
 cd build/YCSB-CXX
 cp -r ../../ansible/ycsb_execution_plans .
 ./ycsb-kreon -threads 1 -e ycsb_execution_plans/execution_plan_la.txt
-````
+```` -->
