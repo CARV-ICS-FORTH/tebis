@@ -877,7 +877,7 @@ static void sigint_handler(int signo)
 	sem_post(&exit_main);
 }
 
-static void ensure_device_exists(const char *device_name, int device_size)
+static void allocate_device(const char *device_name, int device_size)
 {
 	struct stat st;
 
@@ -894,7 +894,7 @@ static void ensure_device_exists(const char *device_name, int device_size)
 		exit(EXIT_FAILURE);
 	}
 
-	if (fallocate(fd, 0, 0, device_size * 1024LL * 1024 * 1024) != 0) {
+	if (fallocate(fd, 0, 0, GB_TO_BYTES(device_size)) != 0) {
 		perror("Failed to allocate space for device file");
 		close(fd);
 		exit(EXIT_FAILURE);
@@ -922,30 +922,30 @@ int main(int argc, char *argv[])
 	_exit(EXIT_FAILURE);
 #endif
 
-	server_config_t s_config = create_server_config();
-	parse_arguments(argc, argv, s_config);
+	server_config_t s_config = SCONF_create_server_config();
+	SCONF_parse_arguments(argc, argv, s_config);
 
-	ensure_device_exists(get_device_name(s_config), get_device_size(s_config));
+	allocate_device(SCONF_get_device_name(s_config), SCONF_get_device_size(s_config));
 
 	int num_of_numa_servers = 1;
 
 	// dev name
-	globals_set_dev(get_device_name(s_config));
+	globals_set_dev(SCONF_get_device_name(s_config));
 
 	// zookeeper
-	globals_set_zk_host(get_zk_host(s_config));
+	globals_set_zk_host(SCONF_get_zk_host(s_config));
 
 	// RDMA subnet
-	globals_set_RDMA_IP_filter(get_rdma_subnet(s_config));
+	globals_set_RDMA_IP_filter(SCONF_get_rdma_subnet(s_config));
 
 	//TEBIS_L0 size
-	globals_set_l0_size(get_tebisl0_size(s_config));
+	globals_set_l0_size(SCONF_get_tebisl0_size(s_config));
 
 	//growth factor
-	globals_set_growth_factor(get_growth_factor(s_config));
+	globals_set_growth_factor(SCONF_get_growth_factor(s_config));
 
 	//send_index
-	globals_set_send_index(get_index(s_config));
+	globals_set_send_index(SCONF_get_index(s_config));
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
@@ -953,7 +953,7 @@ int main(int argc, char *argv[])
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
 
-	int rdma_port = get_server_port(s_config);
+	int rdma_port = SCONF_get_server_port(s_config);
 	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
 
 	// Spinning thread of server
@@ -961,7 +961,7 @@ int main(int argc, char *argv[])
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
 	// now the worker ids
-	int num_workers = get_num_threads(s_config) - 1;
+	int num_workers = SCONF_get_num_threads(s_config) - 1;
 
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);

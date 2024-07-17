@@ -87,7 +87,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL };
 
-server_config_t create_server_config(void)
+server_config_t SCONF_create_server_config(void)
 {
 	server_config_t config = malloc(sizeof(struct server_config));
 	if (config) {
@@ -99,49 +99,49 @@ server_config_t create_server_config(void)
 	return config;
 }
 
-void destroy_server_config(server_config_t config)
+void SCONF_destroy_server_config(server_config_t config)
 {
 	free(config);
 }
 
-void parse_arguments(int argc, char *argv[], server_config_t config)
+void SCONF_parse_arguments(int argc, char *argv[], server_config_t config)
 {
 	argp_parse(&argp, argc, argv, 0, 0, config);
 }
 
-char *get_device_name(const server_config_t config)
+char *SCONF_get_device_name(const server_config_t config)
 {
 	return config->device_name;
 }
-char *get_zk_host(const server_config_t config)
+char *SCONF_get_zk_host(const server_config_t config)
 {
 	return config->zk_host;
 }
-char *get_rdma_subnet(const server_config_t config)
+char *SCONF_get_rdma_subnet(const server_config_t config)
 {
 	return config->rdma_subnet;
 }
-uint32_t get_tebisl0_size(const server_config_t config)
+uint32_t SCONF_get_tebisl0_size(const server_config_t config)
 {
 	return config->tebisl0_size * 1024;
 }
-uint32_t get_growth_factor(const server_config_t config)
+uint32_t SCONF_get_growth_factor(const server_config_t config)
 {
 	return config->growth_factor;
 }
-int get_index(const server_config_t config)
+int SCONF_get_index(const server_config_t config)
 {
 	return config->index;
 }
-int get_server_port(const server_config_t config)
+int SCONF_get_server_port(const server_config_t config)
 {
 	return config->server_port;
 }
-int get_num_threads(const server_config_t config)
+int SCONF_get_num_threads(const server_config_t config)
 {
 	return config->num_threads;
 }
-int get_device_size(const server_config_t config)
+int SCONF_get_device_size(const server_config_t config)
 {
 	return config->device_size;
 }
