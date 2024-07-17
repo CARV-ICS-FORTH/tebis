@@ -52,6 +52,8 @@
 #include "stats.h"
 #// IWYU pragma: no_forward_declare timespec
 
+#define GB_TO_BYTES(gb) ((uint64_t)(gb) * 1024 * 1024 * 1024)
+
 #ifdef CHECKSUM_DATA_MESSAGES
 #include "djb2.h"
 #endif
@@ -920,30 +922,30 @@ int main(int argc, char *argv[])
 	_exit(EXIT_FAILURE);
 #endif
 
-	struct server_config s_config;
-	parse_arguments(argc, argv, &s_config);
+	server_config_t s_config = create_server_config();
+	parse_arguments(argc, argv, s_config);
 
-	ensure_device_exists(s_config.device_name, s_config.device_size);
+	ensure_device_exists(get_device_name(s_config), get_device_size(s_config));
 
 	int num_of_numa_servers = 1;
 
 	// dev name
-	globals_set_dev(s_config.device_name);
+	globals_set_dev(get_device_name(s_config));
 
 	// zookeeper
-	globals_set_zk_host(s_config.zk_host);
+	globals_set_zk_host(get_zk_host(s_config));
 
 	// RDMA subnet
-	globals_set_RDMA_IP_filter(s_config.rdma_subnet);
+	globals_set_RDMA_IP_filter(get_rdma_subnet(s_config));
 
 	//TEBIS_L0 size
-	globals_set_l0_size(s_config.tebisl0_size);
+	globals_set_l0_size(get_tebisl0_size(s_config));
 
 	//growth factor
-	globals_set_growth_factor(s_config.growth_factor);
+	globals_set_growth_factor(get_growth_factor(s_config));
 
 	//send_index
-	globals_set_send_index(s_config.index);
+	globals_set_send_index(get_index(s_config));
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
@@ -951,7 +953,7 @@ int main(int argc, char *argv[])
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
 
-	int rdma_port = s_config.server_port;
+	int rdma_port = get_server_port(s_config);
 	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
 
 	// Spinning thread of server
@@ -959,7 +961,7 @@ int main(int argc, char *argv[])
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
 	// now the worker ids
-	int num_workers = s_config.num_threads - 1;
+	int num_workers = get_num_threads(s_config) - 1;
 
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);

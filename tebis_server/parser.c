@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define KB 1024
+#define MB KB *KB
+
 static char doc[] = "Tebis Region Server";
 static char args_doc[] = "";
 
@@ -19,7 +22,7 @@ static struct argp_option options[] = {
 	{ 0 }
 };
 
-struct arguments {
+struct server_config {
 	char *device_name;
 	char *zk_host;
 	char *rdma_subnet;
@@ -33,7 +36,7 @@ struct arguments {
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
-	struct arguments *arguments = state->input;
+	struct server_config *arguments = state->input;
 
 	switch (key) {
 	case 'd':
@@ -52,7 +55,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		arguments->num_threads = strtol(arg, NULL, 10);
 		break;
 	case 't':
-		arguments->tebisl0_size = strtoul(arg, NULL, 10);
+		arguments->tebisl0_size = strtoul(arg, NULL, 10) * MB;
 		break;
 	case 'g':
 		arguments->growth_factor = strtoul(arg, NULL, 10);
@@ -84,19 +87,61 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL };
 
-void parse_arguments(int argc, char *argv[], struct server_config *config)
+server_config_t create_server_config(void)
 {
-	struct arguments arguments = { .tebisl0_size = 8, .growth_factor = 8, .index = 1, .device_size = 16 };
+	server_config_t config = malloc(sizeof(struct server_config));
+	if (config) {
+		config->tebisl0_size = 8 * MB;
+		config->growth_factor = 8;
+		config->index = 1;
+		config->device_size = 16;
+	}
+	return config;
+}
 
-	argp_parse(&argp, argc, argv, 0, 0, &arguments);
+void destroy_server_config(server_config_t config)
+{
+	free(config);
+}
 
-	config->device_name = arguments.device_name;
-	config->zk_host = arguments.zk_host;
-	config->rdma_subnet = arguments.rdma_subnet;
-	config->tebisl0_size = arguments.tebisl0_size * 1024;
-	config->growth_factor = arguments.growth_factor;
-	config->index = arguments.index;
-	config->server_port = arguments.server_port;
-	config->num_threads = arguments.num_threads;
-	config->device_size = arguments.device_size;
+void parse_arguments(int argc, char *argv[], server_config_t config)
+{
+	argp_parse(&argp, argc, argv, 0, 0, config);
+}
+
+char *get_device_name(const server_config_t config)
+{
+	return config->device_name;
+}
+char *get_zk_host(const server_config_t config)
+{
+	return config->zk_host;
+}
+char *get_rdma_subnet(const server_config_t config)
+{
+	return config->rdma_subnet;
+}
+uint32_t get_tebisl0_size(const server_config_t config)
+{
+	return config->tebisl0_size * 1024;
+}
+uint32_t get_growth_factor(const server_config_t config)
+{
+	return config->growth_factor;
+}
+int get_index(const server_config_t config)
+{
+	return config->index;
+}
+int get_server_port(const server_config_t config)
+{
+	return config->server_port;
+}
+int get_num_threads(const server_config_t config)
+{
+	return config->num_threads;
+}
+int get_device_size(const server_config_t config)
+{
+	return config->device_size;
 }
