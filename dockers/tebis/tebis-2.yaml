@@ -1,16 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tebis-service-2
+spec:
+  ports:
+  - port: 8081
+    targetPort: 8081
+  selector:
+    app: tebis-2
+  type: ClusterIP
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tebis-deployment-1
+  name: tebis-2
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: tebis-1
+      app: tebis-2
   template:
     metadata:
       labels:
-        app: tebis-1
+        app: tebis-2
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -19,7 +31,7 @@ spec:
         image: dstath/tebis_test_bench:tebis-app
         imagePullPolicy: Always
         ports:
-        - containerPort: 8080
+        - containerPort: 8081
         securityContext:
           privileged: true
         command: ["/bin/sh", "-c", "--"]
@@ -29,12 +41,12 @@ spec:
               echo "Not rdma found."
             fi
             echo "Interface setup complete. Sleeping indefinitely.";
-            sleep infinity;
+            sleep infinity
         volumeMounts:
           - name: host-storage
-            mountPath: /mnt/nvme/tebis_1
+            mountPath: /mnt/nvme/tebis_2
       volumes:
       - name: host-storage
         hostPath:
-          path: /mnt/nvme/tebis_1
+          path: /mnt/nvme/tebis_2
           type: DirectoryOrCreate
