@@ -12,10 +12,8 @@ function remove_zookeeper() {
 
 function remove_tebis() {
 	echo "Tebis remove from Kubernetes..."
-	if sudo kubectl delete -f tebis/tebis-deployment-1.yaml \
-		-f tebis/tebis-service-1.yaml \
-		-f tebis/tebis-deployment-2.yaml \
-		-f tebis/tebis-service-2.yaml; then
+	if sudo kubectl delete -f tebis/tebis-1.yaml \
+		-f tebis/tebis-2.yaml; then
 		echo "Tebis remove complete."
 	else
 		echo "Tebis remove failed."
