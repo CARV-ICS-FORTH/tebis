@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ycsb-cxx
+spec:
+  template:
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: ycsb-cxx
+        image: dstath/tebis_test_bench:tebis-app
+        imagePullPolicy: Always
+        volumeMounts:
+          - name: host-storage
+            mountPath: /mnt/nvme/tebis
+        command: ["/bin/sh"]
+        args: ["-c", "sleep infinity"]
+      volumes:
+      - name: host-storage
+        hostPath:
+          path: /mnt/nvme/tebis
+          type: DirectoryOrCreate
+      restartPolicy: Never
