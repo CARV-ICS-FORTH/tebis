@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Building Tebis images..."
-if docker-compose -f dockerfile-tebis/docker-compose.yml up --build; then
+if docker-compose -f dockerfile-tebis/docker-compose.yml build --no-cache tebis-app; then
 	docker push dstath/tebis_test_bench:tebis-base
 	docker push dstath/tebis_test_bench:tebis-zookeeper
 	docker push dstath/tebis_test_bench:tebis-app
