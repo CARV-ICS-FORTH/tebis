@@ -21,11 +21,38 @@ build_images() {
 	fi
 }
 
-build_images "tebis-build-images.sh" "Tebis"
+# Flags to track which functions to call
+DO_deploy_script=false
+DO_deploy_TEBIS=false
 
-build_images "zookeeper-build-images.sh" "Zookeeper"
+# Process input arguments
+if [ "$#" -eq 0 ]; then
+	DO_deploy_script=true
+	DO_deploy_TEBIS=true
+else
+	for arg in "$@"; do
+		case $arg in
+		script)
+			DO_deploy_script=true
+			;;
+		tebis)
+			DO_deploy_TEBIS=true
+			;;
+		*)
+			echo "Invalid parameter: $arg. Use 'zoo', 'script', 'tebis', or no parameter for all."
+			exit 1
+			;;
+		esac
+	done
+fi
 
-build_images "scripts-build-images.sh" "Scripts"
+if [ "$DO_deploy_script" = true ]; then
+	build_images "scripts-build-images.sh" "Scripts"
+fi
+
+if [ "$DO_deploy_TEBIS" = true ]; then
+	build_images "tebis-build-images.sh" "Tebis"
+fi
 
 cd ..
 echo "All images built successfully."
