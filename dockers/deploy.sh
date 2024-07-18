@@ -22,10 +22,8 @@ function deploy_script() {
 
 function deploy_tebis() {
 	echo "Tebis deploy from Kubernetes..."
-	if sudo kubectl apply -f tebis/tebis-deployment-1.yaml \
-		-f tebis/tebis-service-1.yaml \
-		-f tebis/tebis-deployment-2.yaml \
-		-f tebis/tebis-service-2.yaml; then
+	if sudo kubectl apply -f tebis/tebis-1.yaml \
+		-f tebis/tebis-2.yaml; then
 		echo "Tebis deploy complete."
 	else
 		echo "Tebis deploy failed."
