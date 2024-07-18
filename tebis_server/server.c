@@ -48,7 +48,7 @@
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
-#include "parser.h"
+#include "server_config.h"
 #include "stats.h"
 #// IWYU pragma: no_forward_declare timespec
 

@@ -1,5 +1,5 @@
-#ifndef PARSER_H
-#define PARSER_H
+#ifndef SERVER_CONFIG_H
+#define SERVER_CONFIG_H
 
 #include <stdint.h>
 
@@ -20,4 +20,4 @@ int SCONF_get_server_port(const server_config_t config);
 int SCONF_get_num_threads(const server_config_t config);
 int SCONF_get_device_size(const server_config_t config);
 
-#endif // PARSER_H
+#endif // SERVER_CONFIG_H

@@ -1,4 +1,4 @@
-#include "parser.h"
+#include "server_config.h"
 #include <argp.h>
 #include <stdlib.h>
 #include <string.h>
