@@ -23,7 +23,7 @@ static struct argp_option options[] = {
 	{ 0 }
 };
 
-struct server_config {
+struct SCONF_server_config {
 	char *device_name;
 	char *zk_host;
 	char *rdma_subnet;
@@ -58,7 +58,7 @@ static int SCONF_validate_subnet(const char *subnet)
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
-	struct server_config *arguments = state->input;
+	struct SCONF_server_config *arguments = state->input;
 
 	switch (key) {
 	case 'd':
@@ -113,9 +113,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { options, parse_opt, args_doc, doc, NULL, NULL, NULL };
 
-server_config_t SCONF_create_server_config(void)
+SCONF_server_config_t SCONF_create_server_config(void)
 {
-	server_config_t config = malloc(sizeof(struct server_config));
+	SCONF_server_config_t config = malloc(sizeof(struct SCONF_server_config));
 	if (config) {
 		config->tebisl0_size = 8 * MB;
 		config->growth_factor = 8;
@@ -125,49 +125,49 @@ server_config_t SCONF_create_server_config(void)
 	return config;
 }
 
-void SCONF_destroy_server_config(server_config_t config)
+void SCONF_destroy_server_config(SCONF_server_config_t config)
 {
 	free(config);
 }
 
-void SCONF_parse_arguments(int argc, char *argv[], server_config_t config)
+void SCONF_parse_arguments(int argc, char *argv[], SCONF_server_config_t config)
 {
 	argp_parse(&argp, argc, argv, 0, 0, config);
 }
 
-char *SCONF_get_device_name(const server_config_t config)
+char *SCONF_get_device_name(const SCONF_server_config_t config)
 {
 	return config->device_name;
 }
-char *SCONF_get_zk_host(const server_config_t config)
+char *SCONF_get_zk_host(const SCONF_server_config_t config)
 {
 	return config->zk_host;
 }
-char *SCONF_get_rdma_subnet(const server_config_t config)
+char *SCONF_get_rdma_subnet(const SCONF_server_config_t config)
 {
 	return config->rdma_subnet;
 }
-uint32_t SCONF_get_tebisl0_size(const server_config_t config)
+uint32_t SCONF_get_tebisl0_size(const SCONF_server_config_t config)
 {
 	return config->tebisl0_size;
 }
-uint32_t SCONF_get_growth_factor(const server_config_t config)
+uint32_t SCONF_get_growth_factor(const SCONF_server_config_t config)
 {
 	return config->growth_factor;
 }
-int SCONF_get_index(const server_config_t config)
+int SCONF_get_index(const SCONF_server_config_t config)
 {
 	return config->index;
 }
-int SCONF_get_server_port(const server_config_t config)
+int SCONF_get_server_port(const SCONF_server_config_t config)
 {
 	return config->server_port;
 }
-int SCONF_get_num_threads(const server_config_t config)
+int SCONF_get_num_threads(const SCONF_server_config_t config)
 {
 	return config->num_threads;
 }
-int SCONF_get_device_size(const server_config_t config)
+int SCONF_get_device_size(const SCONF_server_config_t config)
 {
 	return config->device_size;
 }

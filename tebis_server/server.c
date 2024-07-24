@@ -922,7 +922,7 @@ int main(int argc, char *argv[])
 	_exit(EXIT_FAILURE);
 #endif
 
-	server_config_t s_config = SCONF_create_server_config();
+	SCONF_server_config_t s_config = SCONF_create_server_config();
 	SCONF_parse_arguments(argc, argv, s_config);
 
 	allocate_device(SCONF_get_device_name(s_config), SCONF_get_device_size(s_config));
