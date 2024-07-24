@@ -1,5 +1,6 @@
 #include "server_config.h"
 #include <argp.h>
+#include <regex.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -34,6 +35,27 @@ struct server_config {
 	int device_size;
 };
 
+static int SCONF_validate_subnet(const char *subnet)
+{
+	regex_t regex;
+	int reti;
+	reti = regcomp(&regex, "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$", REG_EXTENDED);
+	if (reti) {
+		fprintf(stderr, "Could not compile regex\n");
+		return 0;
+	}
+	reti = regexec(&regex, subnet, 0, NULL, 0);
+	regfree(&regex);
+	if (!reti) {
+		return 1;
+	} else if (reti == REG_NOMATCH) {
+		return 0;
+	} else {
+		fprintf(stderr, "Regex match failed\n");
+		return 0;
+	}
+}
+
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct server_config *arguments = state->input;
@@ -46,6 +68,10 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		arguments->zk_host = arg;
 		break;
 	case 'r':
+		if (!SCONF_validate_subnet(arg)) {
+			fprintf(stderr, "Invalid RDMA subnet format: %s. Expected format example: 192.168.5\n", arg);
+			exit(EXIT_FAILURE);
+		}
 		arguments->rdma_subnet = arg;
 		break;
 	case 'p':
