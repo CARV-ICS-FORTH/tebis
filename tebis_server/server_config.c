@@ -1,5 +1,6 @@
 #include "server_config.h"
 #include <argp.h>
+#include <log.h>
 #include <regex.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +70,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		break;
 	case 'r':
 		if (!SCONF_validate_subnet(arg)) {
-			fprintf(stderr, "Invalid RDMA subnet format: %s. Expected format example: 192.168.5\n", arg);
+			log_fatal("Invalid RDMA subnet format: %s. Expected format example: 192.168.5", arg);
 			exit(EXIT_FAILURE);
 		}
 		arguments->rdma_subnet = arg;
