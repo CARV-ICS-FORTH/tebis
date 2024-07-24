@@ -11,6 +11,8 @@ spec:
       - name: ycsb-cxx
         image: dstath/tebis_test_bench:tebis-app
         imagePullPolicy: Always
+        securityContext:
+          privileged: true
         volumeMounts:
           - name: host-storage
             mountPath: /mnt/nvme/tebis
