@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define KB 1024
-#define MB KB *KB
+#define KB (1024)
+#define MB (KB * KB)
 
 static char doc[] = "Tebis Region Server";
 static char args_doc[] = "";
@@ -123,7 +123,7 @@ char *SCONF_get_rdma_subnet(const server_config_t config)
 }
 uint32_t SCONF_get_tebisl0_size(const server_config_t config)
 {
-	return config->tebisl0_size * 1024;
+	return config->tebisl0_size;
 }
 uint32_t SCONF_get_growth_factor(const server_config_t config)
 {
