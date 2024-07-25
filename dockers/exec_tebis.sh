@@ -22,7 +22,6 @@ ZKHOST=$DEFAULT_ZKHOST
 PORT=$DEFAULT_PORT
 THREADS=$DEFAULT_THREADS
 
-# Parse optional arguments
 while getopts ":z:p:t:" opt; do
 	case ${opt} in
 	z)
@@ -41,14 +40,13 @@ while getopts ":z:p:t:" opt; do
 done
 
 # Get the full pod name matching the partial pod name
-POD_NAME=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" | grep "$PARTIAL_POD_NAME" | head -n 1)
+POD_NAME=$(sudo kubectl get pods --no-headers -o custom-columns=":metadata.name" | grep "$PARTIAL_POD_NAME" | head -n 1)
 
 if [ -z "$POD_NAME" ]; then
 	echo "No pod found with name containing '$PARTIAL_POD_NAME'"
 	exit 1
 fi
 
-COMMAND="./build/tebis_server/tebis_server -d $DEVNAME -z $ZKHOST -r $RDMA -p $PORT -c $THREADS"
+COMMAND=("./build/tebis_server/tebis_server" "-d" "$DEVNAME" "-z" "$ZKHOST" "-r" "$RDMA" "-p" "$PORT" "-c" "$THREADS")
 
-echo "$COMMAND"
-kubectl exec -it "$POD_NAME" -- "$COMMAND"
+sudo kubectl exec -it "$POD_NAME" -- "${COMMAND[@]}"
