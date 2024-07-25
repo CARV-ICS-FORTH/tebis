@@ -84,3 +84,22 @@ Run remove_sources.sh (requires sudo access):
 Stop the K3s daemon:
 
     sudo systemctl stop k3s
+
+## Test changes
+
+To test changes in the code within a Kubernetes environment, follow these steps:
+
+1. **Create a Test Directory**:
+
+   - Navigate to the `dockerfiles/dockerfile-tebis/` directory.
+   - Create a new directory named `test`.
+
+2. **Copy and Modify Files**:
+
+   - Within the `test` directory, replicate the directory structure of the files you intend to change.
+   - Create the corresponding directory structure inside `test`
+   - Copy the files you want to change into this directory
+   - Make your changes to the copied files.
+   - Finally, the overwrite_files script will do the rest.
+
+   >For example, if you want to modify `master.c` located in `tebis_server/master/`, so make `test/tebis_server/master/` and copy `master.c` there.
