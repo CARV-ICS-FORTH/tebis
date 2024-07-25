@@ -17,7 +17,7 @@ spec:
           - name: host-storage
             mountPath: /mnt/nvme/tebis
         command: ["/bin/sh"]
-        args: ["-c", "sleep infinity"]
+        args: ["-c", "cd build/YCSB-CXX && ./ycsb-async-tebis -w s -zookeeper zk-cs:2181"]
       volumes:
       - name: host-storage
         hostPath:

@@ -61,10 +61,10 @@ Run your Tebis pods:
 ./exec_tebis.sh tebis-1 /mnt/nvme/par.dat 192.168.5
 ```
 
-Finally run YCSB:
+Finally deploy YCSB job:
 
 ```
-kubectl exec -it <YCSB-pod-name>- -- ./build/YCSB-CXX/ycsb-async-tebis -w s -zookeeper zk-cs:2181
+./deploy.sh ycsb
 ```
 
 Start Tebis in the pod

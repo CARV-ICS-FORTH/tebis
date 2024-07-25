@@ -51,7 +51,6 @@ DO_deploy_YCSB=false
 if [ "$#" -eq 0 ]; then
 	DO_deploy_ZOOKEEPER=true
 	DO_deploy_TEBIS=true
-	DO_deploy_YCSB=true
 else
 	for arg in "$@"; do
 		case $arg in
