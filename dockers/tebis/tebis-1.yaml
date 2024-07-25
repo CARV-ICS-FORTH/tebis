@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tebis-service-1
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: tebis-1
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tebis-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tebis-1
+  template:
+    metadata:
+      labels:
+        app: tebis-1
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: tebis
+        image: dstath/tebis_test_bench:tebis-app
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        securityContext:
+          privileged: true
+        command: ["/bin/sh", "-c", "--"]
+        args:
+          - |
+            if ! ip addr show | grep -q '192.168.4.1'; then
+              echo "Not rdma found."
+            fi
+            echo "Interface setup complete. Sleeping indefinitely.";
+            sleep infinity;
+        volumeMounts:
+          - name: host-storage
+            mountPath: /mnt/nvme/tebis_1
+      volumes:
+      - name: host-storage
+        hostPath:
+          path: /mnt/nvme/tebis_1
+          type: DirectoryOrCreate

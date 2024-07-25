@@ -1,0 +1,4 @@
+0 -oo A tebis-service-1:8080 tebis-service-2:8081
+1 A B tebis-service-1:8080 tebis-service-2:8081
+2 B C tebis-service-1:8080 tebis-service-2:8081
+3 C D tebis-service-1:8080 tebis-service-2:8081

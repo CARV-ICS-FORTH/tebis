@@ -52,3 +52,6 @@ compile_commands.txt
 .vscode
 notes.txt
 __build/
+dockers/dockerfiles/dockerfile-tebis/test/*
+dockers/dockerfiles/dockerfile-scripts/hosts_file
+dockers/dockerfiles/dockerfile-scripts/regions_file

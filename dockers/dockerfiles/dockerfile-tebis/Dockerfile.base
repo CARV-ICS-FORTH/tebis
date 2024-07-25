@@ -1,0 +1,43 @@
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Athens
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    wget \
+    apt-transport-https \
+    gnupg \
+    build-essential \
+    git
+
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add - \
+    && apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' \
+    && apt-get update
+
+RUN apt-get install -y \
+    cmake \
+    libnuma-dev \
+    libibverbs-dev \
+    librdmacm-dev \
+    openjdk-8-jdk
+
+RUN apt-get install -y \
+    libcppunit-dev
+
+RUN apt-get install -y \
+    maven \
+    pkg-config \
+    ant \
+    libboost-all-dev
+
+RUN apt-get install -y \
+    autoconf \
+    automake \
+    libtool
+
+RUN apt-get install -y \
+    iproute2 \
+    gdb
+
+CMD ["bash"]
