@@ -2,7 +2,7 @@
 
 IMAGE="dstath/tebis_test_bench:zookeeper-init-script"
 
-SCRIPT_SRC="../../scripts/kreonR/tebis_zk_init.py"
+SCRIPT_SRC="../../scripts/tebis/tebis_zk_init.py"
 SCRIPT_DEST="dockerfile-scripts/tebis_zk_init.py"
 
 if [ ! -f "$SCRIPT_SRC" ]; then

@@ -5,6 +5,11 @@ if [ ! -d "/usr/src/test" ]; then
 	exit 1
 fi
 
+if [ -z "$(ls -A /usr/src/test)" ]; then
+	echo "The test directory is empty."
+	exit 0
+fi
+
 # Function to copy files recursively
 copy_files() {
 	local src_dir="$1"
