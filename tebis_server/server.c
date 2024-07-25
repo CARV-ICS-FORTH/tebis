@@ -25,6 +25,7 @@
 #include "work_task.h"
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <infiniband/verbs.h>
 #include <log.h>
 #include <pthread.h>
@@ -37,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -46,8 +48,11 @@
 #include "globals.h"
 #include "messages.h"
 #include "metadata.h"
+#include "server_config.h"
 #include "stats.h"
 #// IWYU pragma: no_forward_declare timespec
+
+#define GB_TO_BYTES(gb) ((uint64_t)(gb) * 1024 * 1024 * 1024)
 
 #ifdef CHECKSUM_DATA_MESSAGES
 #include "djb2.h"
@@ -74,7 +79,6 @@ struct ds_worker_thread {
 	struct channel_rdma *channel;
 	pthread_t context;
 	/*for affinity purposes*/
-	int cpu_core_id;
 	int worker_id;
 	/*my parent*/
 	int root_server_id;
@@ -697,24 +701,12 @@ static void *server_spinning_thread_kernel(void *args)
 		spinner->worker[i].root_server_id = spinner->root_server_id;
 	}
 
-	/*set the proper affinity for my workers*/
-	cpu_set_t worker_threads_affinity_mask;
-	CPU_ZERO(&worker_threads_affinity_mask);
-	/*pin and create my workers*/
-	for (int i = 0; i < spinner->num_workers; i++)
-		CPU_SET(spinner->worker[i].cpu_core_id, &worker_threads_affinity_mask);
+	/*create my workers*/
 
 	for (int i = 0; i < spinner->num_workers; i++) {
 		pthread_create(&spinner->worker[i].context, NULL, worker_thread_kernel, &spinner->worker[i]);
 
-		/*set affinity for this group*/
 		log_info("Spinning thread %d Started worker %d", spinner->spinner_id, i);
-		int status = pthread_setaffinity_np(spinner->worker[i].context, sizeof(cpu_set_t),
-						    &worker_threads_affinity_mask);
-		if (status != 0) {
-			log_fatal("failed to pin workers for spinning thread %d", spinner->spinner_id);
-			_exit(EXIT_FAILURE);
-		}
 	}
 
 	// int max_idle_time_usec = globals_get_worker_spin_time_usec();
@@ -885,6 +877,33 @@ static void sigint_handler(int signo)
 	sem_post(&exit_main);
 }
 
+static void allocate_device(const char *device_name, int device_size)
+{
+	struct stat st;
+
+	if (stat(device_name, &st) == 0) {
+		return;
+	} else if (errno != ENOENT) {
+		perror("stat failed");
+		exit(EXIT_FAILURE);
+	}
+
+	int fd = open(device_name, O_CREAT | O_RDWR, 0666);
+	if (fd < 0) {
+		perror("Failed to create device file");
+		exit(EXIT_FAILURE);
+	}
+
+	if (fallocate(fd, 0, 0, GB_TO_BYTES(device_size)) != 0) {
+		perror("Failed to allocate space for device file");
+		close(fd);
+		exit(EXIT_FAILURE);
+	}
+
+	close(fd);
+	log_info("Created device file: %s\n", device_name);
+}
+
 #define MAX_CORES_PER_NUMA 64
 int main(int argc, char *argv[])
 {
@@ -903,42 +922,30 @@ int main(int argc, char *argv[])
 	_exit(EXIT_FAILURE);
 #endif
 
+	SCONF_server_config_t s_config = SCONF_create_server_config();
+	SCONF_parse_arguments(argc, argv, s_config);
+
+	allocate_device(SCONF_get_device_name(s_config), SCONF_get_device_size(s_config));
+
 	int num_of_numa_servers = 1;
 
-	if (argc != 8) {
-		log_fatal(
-			"Error args are %d! usage: ./kreon_server <device name>"
-			" <zk_host:zk_port>  <RDMA subnet> <TEBIS_L0 size in KB> <growth factor> <send_index or build_index> <server(s) vector>\n "
-			" where server(s) vector is \"<RDMA_PORT>,<Spinning thread core "
-			"id>,<worker id 1>,<worker id 2>,...,<worker id N>\"",
-			argc);
-		_exit(EXIT_FAILURE);
-	}
-	// argv[0] program name don't care
 	// dev name
-	int next_argv = 1;
-	char *device_name = argv[next_argv++];
-	globals_set_dev(device_name);
-	// zookeeper
-	globals_set_zk_host(argv[next_argv++]);
-	// RDMA subnet
-	globals_set_RDMA_IP_filter(argv[next_argv++]);
-	//TEBIS_L0 size
-	uint32_t TEBIS_L0_size = strtoul(argv[next_argv++], NULL, 10);
-	globals_set_l0_size(TEBIS_L0_size);
-	//growth factor
-	uint32_t growth_factor = strtoul(argv[next_argv++], NULL, 10);
-	globals_set_growth_factor(growth_factor);
+	globals_set_dev(SCONF_get_device_name(s_config));
 
-	if (strcmp(argv[next_argv], "send_index") == 0) {
-		globals_set_send_index(1);
-	} else if (strcmp(argv[next_argv], "build_index") == 0) {
-		globals_set_send_index(0);
-	} else {
-		log_fatal("what do you want send or build index?");
-		_exit(EXIT_FAILURE);
-	}
-	++next_argv;
+	// zookeeper
+	globals_set_zk_host(SCONF_get_zk_host(s_config));
+
+	// RDMA subnet
+	globals_set_RDMA_IP_filter(SCONF_get_rdma_subnet(s_config));
+
+	//TEBIS_L0 size
+	globals_set_l0_size(SCONF_get_tebisl0_size(s_config));
+
+	//growth factor
+	globals_set_growth_factor(SCONF_get_growth_factor(s_config));
+
+	//send_index
+	globals_set_send_index(SCONF_get_index(s_config));
 
 	/*time to allocate the root server*/
 	root_server = (struct ds_root_server *)calloc(1, sizeof(struct ds_root_server));
@@ -946,44 +953,31 @@ int main(int argc, char *argv[])
 	int server_idx = 0;
 	// now servers <RDMA port, spinning thread, workers>
 
-	char *strtok_saveptr = NULL;
-	char *rest = argv[next_argv];
-	// RDMA port of server
-	char *rdma_port_token = strtok_r(rest, ",", &strtok_saveptr);
-	if (rdma_port_token == NULL) {
-		log_fatal("RDMA port missing in server configuration");
-		_exit(EXIT_FAILURE);
-	}
-	char *ptr = NULL;
-	int rdma_port = strtol(rdma_port_token, &ptr, 10);
+	int rdma_port = SCONF_get_server_port(s_config);
 	log_info("Staring server no %d rdma port: %d", server_idx, rdma_port);
 
 	// Spinning thread of server
-	char *token = strtok_r(NULL, ",", &strtok_saveptr);
-	if (token == NULL) {
-		log_fatal("Spinning thread id missing in server configuration");
-		_exit(EXIT_FAILURE);
-	}
-	int spinning_thread_id = strtol(token, &ptr, 10);
+	int spinning_thread_id = 0;
 	log_info("Server %d spinning_thread id: %d", server_idx, spinning_thread_id);
 
 	// now the worker ids
-	int num_workers = 0;
-	int workers_id[MAX_CORES_PER_NUMA] = { 0 };
-
-	for (token = strtok_r(NULL, ",", &strtok_saveptr); token != NULL; token = strtok_r(NULL, ",", &strtok_saveptr))
-		workers_id[num_workers++] = strtol(token, &ptr, 10);
+	int num_workers = SCONF_get_num_threads(s_config) - 1;
 
 	if (num_workers == 0) {
 		log_fatal("No workers specified for Server %d", server_idx);
 		_exit(EXIT_FAILURE);
 	}
+
 	// Double the workers, mirror workers are for server tasks
 	num_workers *= 2;
 
 	// now we have all info to allocate ds_numa_server, pin,
 	// and inform the root server
 	struct ds_numa_server *server = calloc(1, sizeof(struct ds_numa_server));
+	if (server == NULL) {
+		log_fatal("malloc failed: could not get memory for server");
+		_exit(EXIT_FAILURE);
+	}
 
 	/*But first let's build each numa server's RDMA channel*/
 	/*RDMA channel staff*/
@@ -1034,7 +1028,6 @@ int main(int argc, char *argv[])
 
 	for (int worker_id = 0; worker_id < num_workers; worker_id++) {
 		server->spinner.worker[worker_id].worker_id = worker_id;
-		server->spinner.worker[worker_id].cpu_core_id = workers_id[worker_id];
 	}
 	root_server->numa_servers[server_idx] = server;
 
@@ -1049,24 +1042,12 @@ int main(int argc, char *argv[])
 	server->spinner.next_worker_to_submit_job = 0;
 
 	if (pthread_create(&server->socket_thread_cnxt, NULL, socket_thread, (void *)server) != 0) {
-		log_fatal("failed to spawn socket thread  for Server: %d reason follows:", server->server_id);
+		log_fatal("failed to spawn socket thread for Server: %d reason follows:", server->server_id);
 		perror("Reason: \n");
 		_exit(EXIT_FAILURE);
 	}
 
 	// Now pin it in the numa node! Important step so allocations used by spinner and workers to be in the same numa node
-
-	cpu_set_t numa_node_affinity;
-	CPU_ZERO(&numa_node_affinity);
-	CPU_SET(server->spinner.spinner_id, &numa_node_affinity);
-	for (int k = 0; k < server->spinner.num_workers; k++)
-		CPU_SET(server->spinner.worker[k].worker_id, &numa_node_affinity);
-	int status = pthread_setaffinity_np(server->socket_thread_cnxt, sizeof(cpu_set_t), &numa_node_affinity);
-	if (status != 0) {
-		log_fatal("failed to pin socket thread for server %d at port %d", server->server_id, server->rdma_port);
-		_exit(EXIT_FAILURE);
-	}
-
 	log_info("Started socket thread successfully for Server %d", server->server_id);
 
 	log_info("Starting spinning thread for Server %d", server->server_id);
@@ -1075,20 +1056,8 @@ int main(int argc, char *argv[])
 		_exit(EXIT_FAILURE);
 	}
 
-	// spinning thread pin staff
-	log_info("Pinning spinning thread of Server: %d at port %d at core %d", server->server_id, server->rdma_port,
-		 server->spinner.spinner_id);
-	cpu_set_t spinning_thread_affinity_mask;
-	CPU_ZERO(&spinning_thread_affinity_mask);
-	CPU_SET(server->spinner.spinner_id, &spinning_thread_affinity_mask);
-	status = pthread_setaffinity_np(server->spinner_cnxt, sizeof(cpu_set_t), &spinning_thread_affinity_mask);
-	if (status != 0) {
-		log_fatal("failed to pin spinning thread");
-		_exit(EXIT_FAILURE);
-	}
-	log_info("Pinned successfully spinning thread of Server: %d at port %d at "
-		 "core %d",
-		 server->server_id, server->rdma_port, server->spinner.spinner_id);
+	log_info("Pinned successfully spinning thread of Server: %d at port %d at core %d", server->server_id,
+		 server->rdma_port, server->spinner.spinner_id);
 
 	if (pthread_create(&server->meta_server_cnxt, NULL, run_master, &rdma_port)) {
 		log_fatal("Failed to start metadata_server");

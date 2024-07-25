@@ -46,7 +46,8 @@ add_executable(
   ../tebis_rdma/rdma.c
   ../tebis_rdma_client/client_utils.c
   ../tebis_rdma_client/msg_factory.c
-  stats.c)
+  stats.c
+  server_config.c)
 
 add_dependencies(tebis_server cjson)
 target_link_libraries(
