@@ -36,6 +36,11 @@ struct SCONF_server_config {
 	int device_size;
 };
 
+/**
+ * @brief Validates if the provided string is a valid subnet format.
+ * @param subnet The string to be validated.
+ * @return 1 if valid, 0 otherwise.
+ */
 static int SCONF_validate_subnet(const char *subnet)
 {
 	regex_t regex;
@@ -57,6 +62,13 @@ static int SCONF_validate_subnet(const char *subnet)
 	}
 }
 
+/**
+ * @brief Parses the command-line options and populates the server configuration.
+ * @param key The key representing the option.
+ * @param arg The argument provided for the option.
+ * @param state The state of the argument parser.
+ * @return Error code indicating success or failure.
+ */
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct SCONF_server_config *arguments = state->input;
