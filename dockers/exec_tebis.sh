@@ -5,7 +5,7 @@ DEFAULT_PORT=8080
 DEFAULT_THREADS=3
 
 usage() {
-	echo "Usage: $0 <partial-pod-name> <devname> <rdma> [-z <zkhost>] [-p <port>] [-t <threads>]"
+	echo "Usage: $0 <partial-pod-name> <device_name> <rdma> [-z <zkhost>] [-p <port>] [-t <threads>]"
 	exit 1
 }
 

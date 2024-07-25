@@ -9,6 +9,8 @@ Tebis and ZooKeeper implemented in K3s.
 - **remove_sources.sh**: Script to remove the application from K3s.
 - **tebis**: Kubernetes deployment and service configuration files for the Tebis component.
 - **zookeeper**: Kubernetes deployment and service configuration files for the ZooKeeper component.
+- **YCSB_CXX**: Kubernetes deployment files for Tebis Pod to run YCSB-CXX.
+- **exec_tebis.sh**: Script to run Tebis inside the pod.
 
 # Run Application
 ## Run Dependencies
@@ -27,23 +29,55 @@ Start the K3s daemon:
 
 Run deploy.sh (requires sudo access):
 
-    ./deploy.sh [zoo] [tebis] [script]
+    ./deploy.sh [zoo] [tebis] [script] [ycsb]
 
-- **./deploy.sh**: Deploys ZooKeeper, PVs, and Tebis.
+- **./deploy.sh**: Deploys ZooKeeper, Tebis, YCSB and re-deploy script.
 - **./deploy.sh zoo**: Deploys only ZooKeeper.
 - **./deploy.sh tebis**: Deploys only Tebis.
 - **./deploy.sh script**: Re-Deploys only Script.
+- **./deploy.sh ycsb**: Deploys only YCSB.
 
->You can use any combination of these arguments.
+Run exec_tebis.sh (requires sudo access):
+
+    ./exec_tebis.sh <partial-pod-name> <device_name> <rdma> [-z <zkhost>] [-p <port>] [-t <threads>]
+
+- **partial-pod-name**: Partial pod-name, ex. "tebis-1".
+- **device_name**: Device file name path, ex. "/mnt/nvme/par.dat".
+- **rdma**: RDMA subnet, ex. "192.168.5".
+- **-z <zkhost>**: ZooKeeper Entrypoint, default(zk-pod): "zk-cs:2181".
+- **-p <port>**: Tebis port, default: "8080".
+- **-t <threads>**: Number of threads, default: "3".
+
+## Run YCSB Tests
+Configure hosts_file and regions_file and build the script image. Afterwards, deploy everything:
+
+```
+./deploy.sh
+```
+
+Run your Tebis pods:
+
+```
+./exec_tebis.sh tebis-1 /mnt/nvme/par.dat 192.168.5
+```
+
+Finally run YCSB:
+
+```
+kubectl exec -it <YCSB-pod-name>- -- ./build/YCSB-CXX/ycsb-async-tebis -w s -zookeeper zk-cs:2181
+```
+
+Start Tebis in the pod
 
 ## Stop Configuration
 Run remove_sources.sh (requires sudo access):
 
-    ./remove_sources.sh [zoo] [tebis]
+    ./remove_sources.sh [zoo] [tebis] [ycsb]
 
 - **./remove_sources.sh**: Removes ZooKeeper, PVs, and Tebis.
 - **./remove_sources.sh zoo**: Removes only ZooKeeper.
 - **./remove_sources.sh tebis**: Removes only Tebis.
+- **./remove_sources.sh ycsb**: Removes only YCSB.
 
 >You can use any combination of these arguments.
 
